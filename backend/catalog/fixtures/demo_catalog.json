@@ -1,0 +1,19 @@
+[
+  { "model": "catalog.category", "pk": 1, "fields": { "name": "Кофе", "icon": "", "sort_order": 1, "is_active": true } },
+  { "model": "catalog.category", "pk": 2, "fields": { "name": "Сэндвичи", "icon": "", "sort_order": 2, "is_active": true } },
+  { "model": "catalog.category", "pk": 3, "fields": { "name": "Боулы", "icon": "", "sort_order": 3, "is_active": true } },
+  { "model": "catalog.category", "pk": 4, "fields": { "name": "Мороженое", "icon": "", "sort_order": 4, "is_active": true } },
+
+  { "model": "catalog.product", "pk": 1, "fields": { "category": 1, "name": "Капучино", "description": "Классический капучино на цельном молоке", "image": "", "price": "250.00", "weight_grams": 200, "is_available": true, "sort_order": 1 } },
+  { "model": "catalog.product", "pk": 2, "fields": { "category": 1, "name": "Латте", "description": "Мягкий латте с молочной пенкой", "image": "", "price": "280.00", "weight_grams": 300, "is_available": true, "sort_order": 2 } },
+  { "model": "catalog.product", "pk": 3, "fields": { "category": 1, "name": "Эспрессо", "description": "Двойной эспрессо", "image": "", "price": "150.00", "weight_grams": 60, "is_available": true, "sort_order": 3 } },
+
+  { "model": "catalog.product", "pk": 4, "fields": { "category": 2, "name": "Сэндвич с курицей", "description": "Курица гриль, сыр, овощи", "image": "", "price": "320.00", "weight_grams": 220, "is_available": true, "sort_order": 1 } },
+  { "model": "catalog.product", "pk": 5, "fields": { "category": 2, "name": "Сэндвич веган", "description": "Хумус, авокадо, овощи", "image": "", "price": "300.00", "weight_grams": 210, "is_available": true, "sort_order": 2 } },
+
+  { "model": "catalog.product", "pk": 6, "fields": { "category": 3, "name": "Боул с лососем", "description": "Рис, лосось, авокадо, эдамаме", "image": "", "price": "540.00", "weight_grams": 350, "is_available": true, "sort_order": 1 } },
+  { "model": "catalog.product", "pk": 7, "fields": { "category": 3, "name": "Боул с тофу", "description": "Киноа, тофу, овощи, кунжут", "image": "", "price": "480.00", "weight_grams": 340, "is_available": true, "sort_order": 2 } },
+
+  { "model": "catalog.product", "pk": 8, "fields": { "category": 4, "name": "Мороженое ванильное", "description": "Пломбир, два шарика", "image": "", "price": "180.00", "weight_grams": 120, "is_available": true, "sort_order": 1 } },
+  { "model": "catalog.product", "pk": 9, "fields": { "category": 4, "name": "Мороженое шоколадное", "description": "Шоколадное, два шарика", "image": "", "price": "190.00", "weight_grams": 120, "is_available": false, "sort_order": 2 } }
+]

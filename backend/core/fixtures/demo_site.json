@@ -1,0 +1,18 @@
+[
+  {
+    "model": "core.sitesettings",
+    "pk": 1,
+    "fields": {
+      "name": "Aloha Cafe",
+      "tagline": "островной вайб · кофе · токены",
+      "logo": "",
+      "phone": "+7 999 000-00-00",
+      "email": "hello@aloha.cafe",
+      "address": "г. Москва, ул. Пляжная, 1",
+      "working_hours": "Пн–Вс · 8:00–22:00",
+      "instagram": "aloha.cafe",
+      "telegram": "aloha_cafe",
+      "about": "Маленькое кафе с тропическим настроением: кофе, боулы, сэндвичи и мороженое. Покупайте токены — платите ими выгоднее."
+    }
+  }
+]

@@ -1,0 +1,74 @@
+[
+  {
+    "model": "users.user",
+    "pk": 1,
+    "fields": {
+      "password": "pbkdf2_sha256$720000$9PRnkOeqrWKFGMqIXpZNLE$wUkdn43xUs2WpfGPmdZhTEkYJ0xZK9J/jw454//FTWE=",
+      "last_login": null,
+      "is_superuser": true,
+      "username": "admin",
+      "first_name": "",
+      "last_name": "",
+      "email": "admin@example.com",
+      "is_staff": true,
+      "is_active": true,
+      "date_joined": "2026-06-01T09:00:00Z",
+      "role": "admin",
+      "phone": "+79990000001"
+    }
+  },
+  {
+    "model": "users.user",
+    "pk": 2,
+    "fields": {
+      "password": "pbkdf2_sha256$720000$9PRnkOeqrWKFGMqIXpZNLE$wUkdn43xUs2WpfGPmdZhTEkYJ0xZK9J/jw454//FTWE=",
+      "last_login": null,
+      "is_superuser": false,
+      "username": "cashier",
+      "first_name": "",
+      "last_name": "",
+      "email": "",
+      "is_staff": false,
+      "is_active": true,
+      "date_joined": "2026-06-01T09:05:00Z",
+      "role": "cashier",
+      "phone": "+79990000002"
+    }
+  },
+  {
+    "model": "users.user",
+    "pk": 3,
+    "fields": {
+      "password": "pbkdf2_sha256$720000$9PRnkOeqrWKFGMqIXpZNLE$wUkdn43xUs2WpfGPmdZhTEkYJ0xZK9J/jw454//FTWE=",
+      "last_login": null,
+      "is_superuser": false,
+      "username": "anna",
+      "first_name": "Анна",
+      "last_name": "",
+      "email": "",
+      "is_staff": false,
+      "is_active": true,
+      "date_joined": "2026-06-02T10:00:00Z",
+      "role": "client",
+      "phone": "+79990000003"
+    }
+  },
+  {
+    "model": "users.user",
+    "pk": 4,
+    "fields": {
+      "password": "pbkdf2_sha256$720000$9PRnkOeqrWKFGMqIXpZNLE$wUkdn43xUs2WpfGPmdZhTEkYJ0xZK9J/jw454//FTWE=",
+      "last_login": null,
+      "is_superuser": false,
+      "username": "boris",
+      "first_name": "Борис",
+      "last_name": "",
+      "email": "",
+      "is_staff": false,
+      "is_active": true,
+      "date_joined": "2026-06-03T11:00:00Z",
+      "role": "client",
+      "phone": "+79990000004"
+    }
+  }
+]

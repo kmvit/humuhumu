@@ -1,0 +1,24 @@
+[
+  {
+    "model": "orders.order",
+    "pk": 1,
+    "fields": {
+      "client": 3,
+      "cashier": 2,
+      "status": "done",
+      "pay_method": "tokens",
+      "total": "250.00",
+      "created_at": "2026-06-10T12:30:00Z"
+    }
+  },
+  {
+    "model": "orders.orderitem",
+    "pk": 1,
+    "fields": {
+      "order": 1,
+      "product": 1,
+      "quantity": 1,
+      "unit_price": "250.00"
+    }
+  }
+]

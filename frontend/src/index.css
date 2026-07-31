@@ -1,0 +1,373 @@
+/* ============ Шрифты ============
+   Jost — геометрический гротеск как в печатном меню (заголовки, цены, бренд).
+   Manrope — спокойный текстовый для интерфейса. Оба с кириллицей. */
+@import url("https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500;600&family=Manrope:wght@400;500;600;700&display=swap");
+
+/* ============ Дизайн-токены: гравюра синим по кремовой бумаге ============ */
+:root {
+  /* палитра фирменного меню и стакана: сливочная бумага + глубокий синий */
+  --brand: #1f58a6;        /* синий как в меню — акценты, цены */
+  --brand-2: #2b6cb8;      /* светлее, для второстепенных акцентов */
+  --brand-soft: #e8eef7;   /* мягкая синяя подложка */
+  --teal-soft: #e3ebf5;    /* вторая подложка (имя историческое) */
+  --grad: linear-gradient(135deg, #1f4e8c 0%, #14335c 100%);
+  --grad-warm: linear-gradient(160deg, #f3ecdd 0%, #e6dcc7 100%);
+  --grad-ocean: linear-gradient(160deg, #e7eef7 0%, #d3e0ef 100%);
+  --grad-palm: linear-gradient(160deg, #efeade 0%, #dfe6dc 100%);
+
+  /* чернильная полоса — как поля печатного меню */
+  --band: #14243a;
+
+  --bg: #f7f1e4;           /* кремовая бумага */
+  --bg-2: #f1e9d8;
+  --surface: #fdfaf3;
+  --surface-solid: #fdfaf3;
+  --fg: #16345e;           /* синие чернила */
+  --muted: #5b7695;
+  --border: rgba(22, 52, 94, 0.18);
+  --rule: rgba(22, 52, 94, 0.28);
+  --shadow: 0 8px 26px -18px rgba(20, 36, 58, 0.5);
+  --shadow-lg: 0 22px 50px -28px rgba(20, 36, 58, 0.55);
+
+  --success: #1d6b4f;
+  --danger: #b3402f;
+
+  --radius: 14px;
+  --radius-sm: 10px;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  font-family: "Manrope", system-ui, sans-serif;
+  color: var(--fg);
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --brand: #8ab8ea;
+  --brand-2: #a8cbf2;
+  --brand-soft: rgba(138, 184, 234, 0.14);
+  --teal-soft: rgba(138, 184, 234, 0.1);
+  --grad: linear-gradient(135deg, #2a5c96 0%, #16345e 100%);
+  --grad-warm: linear-gradient(160deg, #1c3350 0%, #16283d 100%);
+  --grad-ocean: linear-gradient(160deg, #1a3048 0%, #142640 100%);
+  --grad-palm: linear-gradient(160deg, #1d3346 0%, #16283d 100%);
+
+  --band: #f2eadb;
+
+  --bg: #0e2036;           /* синяя ночь */
+  --bg-2: #0a1929;
+  --surface: #14293f;
+  --surface-solid: #14293f;
+  --fg: #f2eadb;           /* сливочные чернила */
+  --muted: #a3b8cf;
+  --border: rgba(242, 234, 219, 0.16);
+  --rule: rgba(242, 234, 219, 0.26);
+  --shadow: 0 12px 34px -20px rgba(0, 0, 0, 0.8);
+  --shadow-lg: 0 26px 60px -30px rgba(0, 0, 0, 0.85);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ============ Фон: бумага в штриховку + гравюрные листья по углам ============ */
+.backdrop { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; color: var(--fg); }
+/* тонкая диагональная штриховка — «бумага гравюры» */
+.backdrop::before {
+  content: ""; position: absolute; inset: 0;
+  background-image: repeating-linear-gradient(45deg, currentColor 0 1px, transparent 1px 9px);
+  opacity: 0.035;
+}
+.backdrop .leaf { position: absolute; width: min(40vw, 400px); height: auto; stroke: currentColor; opacity: 0.07; }
+.backdrop .leaf-tl { top: -70px; left: -90px; transform: rotate(-8deg); }
+.backdrop .leaf-br { bottom: -70px; right: -90px; transform: rotate(8deg); }
+[data-theme="dark"] .backdrop .leaf { opacity: 0.13; }
+[data-theme="dark"] .backdrop::before { opacity: 0.05; }
+
+/* ============ Баннер-сцена ============ */
+.scene { margin: 6px 0 -8px; color: var(--brand); }
+.scene svg { display: block; width: 100%; height: auto; max-height: 260px; stroke: currentColor; }
+.scene svg > g, .scene svg > path { vector-effect: non-scaling-stroke; }
+
+/* день/ночь: солнце сменяется месяцем, гирлянда загорается */
+.scene .moon { display: none; }
+[data-theme="dark"] .scene .sun { display: none; }
+[data-theme="dark"] .scene .moon { display: inline; }
+[data-theme="dark"] .scene .star { animation: twinkle 3.6s var(--ease) infinite; }
+[data-theme="dark"] .scene .bulb {
+  fill: #ffcf7a; stroke: #ffcf7a;
+  filter: drop-shadow(0 0 5px rgba(255, 199, 110, 0.9));
+  animation: glow 3.2s var(--ease) infinite;
+}
+@keyframes glow { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+@keyframes twinkle { 0%, 100% { opacity: 0.9; } 50% { opacity: 0.25; } }
+
+/* волна-разделитель */
+.wave-rule { display: block; width: 100%; height: 12px; color: var(--brand); stroke: currentColor; opacity: 0.5; margin: 6px 0 0; }
+
+a { color: var(--brand); text-decoration: none; font-weight: 600; }
+
+h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-weight: 400; }
+.h1 { font-size: clamp(28px, 5vw, 40px); font-weight: 300; letter-spacing: 0.01em; }
+.section-title { font-size: 20px; font-weight: 400; letter-spacing: 0.04em; margin: 26px 0 12px; }
+
+/* мелкая разрядка заглавными — как «мл руб» в печатном меню */
+.script {
+  font-family: "Jost", sans-serif; font-weight: 400; font-size: 13px !important;
+  text-transform: uppercase; letter-spacing: 0.22em; color: var(--brand) !important;
+}
+
+.container { max-width: 920px; margin: 0 auto; padding: 24px 16px 96px; }
+.muted { color: var(--muted); font-size: 14px; }
+
+/* ============ Шапка (с чернильной полосой, как поля меню) ============ */
+.header {
+  position: sticky; top: 0; z-index: 40;
+  backdrop-filter: blur(12px);
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  border-bottom: 1px solid var(--rule);
+}
+.header::before { content: ""; display: block; height: 7px; background: var(--band); }
+/* три колонки: навигация — логотип по центру — действия */
+.header-inner {
+  max-width: 920px; margin: 0 auto; padding: 10px 16px; gap: 14px;
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+}
+.header-actions { display: flex; align-items: center; gap: 10px; justify-self: end; }
+.brand { display: flex; align-items: center; gap: 10px; justify-self: center; font-family: "Jost", sans-serif; font-weight: 400; font-size: 19px; letter-spacing: 0.06em; line-height: 1; text-transform: lowercase; }
+/* логотип — чёрно-белая графика, поэтому кладём его на бумагу без заливки */
+.brand .logo { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: transparent; border: 1px solid var(--rule); color: var(--fg); overflow: hidden; }
+.brand .logo img { width: 100%; height: 100%; object-fit: contain; padding: 2px; }
+/* если загружен логотип-леттеринг — даём ему ширину и убираем рамку */
+.brand .logo:has(img) { width: auto; height: 52px; max-width: 170px; border: none; border-radius: 0; overflow: visible; }
+.brand .logo:has(img) img { width: auto; height: 52px; max-width: 170px; object-fit: contain; padding: 0; }
+/* в подвале логотип поменьше, чтобы не наезжал на текст */
+.footer .brand .logo:has(img), .footer .brand .logo:has(img) img { height: 40px; max-width: 130px; }
+/* логотип — сам по себе леттеринг, поэтому название рядом не дублируем */
+.brand:has(.logo img) .brand-name { display: none; }
+.header nav { display: flex; gap: 4px; justify-self: start; min-width: 0; }
+/* фильтры категорий — тоже .navlink, поэтому гасим стиль кнопки браузера */
+.navlink { display: flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 999px; font: inherit; font-weight: 600; font-size: 14px; color: var(--muted); background: transparent; border: 1px solid var(--rule); cursor: pointer; white-space: nowrap; transition: all 0.2s var(--ease); }
+.navlink:hover { background: var(--brand-soft); color: var(--brand); }
+.navlink.active { background: var(--grad); color: #fdfaf3; }
+[data-theme="dark"] .navlink.active { color: #f2eadb; }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; background: var(--brand-soft); color: var(--brand); font-weight: 700; font-size: 14px; white-space: nowrap; }
+
+/* ============ Кнопки ============ */
+.btn {
+  font: inherit; font-weight: 600; cursor: pointer; border: none;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 11px 20px; border-radius: var(--radius-sm); min-height: 44px;
+  letter-spacing: 0.02em;
+  color: #fdfaf3; background: var(--grad); box-shadow: var(--shadow);
+  transition: transform 0.18s var(--ease), box-shadow 0.18s var(--ease), filter 0.18s var(--ease);
+}
+[data-theme="dark"] .btn { color: #f2eadb; }
+.btn:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); filter: brightness(1.08); }
+.btn:active { transform: translateY(0) scale(0.97); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; filter: none; }
+.btn.ghost { background: transparent; color: var(--fg); border: 1px solid var(--rule); box-shadow: none; }
+.btn.ghost:hover { background: var(--brand-soft); color: var(--brand); border-color: var(--brand); }
+.btn.ocean { background: var(--grad); }
+.btn.sm { padding: 7px 14px; min-height: 36px; border-radius: 8px; font-size: 14px; }
+.btn.block { width: 100%; }
+.btn.icon { padding: 0; width: 44px; }
+
+.icon-btn { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: transparent; border: 1px solid var(--rule); color: var(--fg); cursor: pointer; transition: all 0.2s var(--ease); }
+.icon-btn:hover { background: var(--brand-soft); color: var(--brand); border-color: var(--brand); }
+
+/* ============ Карточки ============ */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); }
+.card.hover { transition: transform 0.22s var(--ease), box-shadow 0.22s var(--ease), border-color 0.22s var(--ease); }
+.card.hover:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); border-color: var(--rule); }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 14px; }
+.grid.stats { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+
+/* ============ Карточка товара: штриховая графика на бумаге ============ */
+.product { display: flex; flex-direction: column; gap: 6px; overflow: hidden; position: relative; }
+.product .thumb {
+  height: 116px; margin: -20px -20px 8px; display: grid; place-items: center;
+  background: var(--grad-warm); color: var(--brand);
+  border-bottom: 1px solid var(--border); overflow: hidden;
+}
+.product .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.product:nth-child(3n + 2) .thumb { background: var(--grad-ocean); }
+.product:nth-child(3n) .thumb { background: var(--grad-palm); }
+.product h3 { font-size: 16px; font-weight: 400; letter-spacing: 0.01em; }
+.product .price { font-family: "Jost", sans-serif; font-weight: 400; font-size: 20px; color: var(--brand); }
+.unavailable { position: absolute; top: 10px; right: 10px; }
+
+.stepper { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--brand-soft); border-radius: 10px; padding: 4px; }
+.stepper button { width: 32px; height: 32px; border-radius: 7px; border: none; cursor: pointer; background: var(--surface-solid); color: var(--brand); font-size: 18px; font-weight: 600; display: grid; place-items: center; transition: transform 0.15s var(--ease); }
+.stepper button:active { transform: scale(0.88); }
+.stepper .count { font-weight: 700; min-width: 20px; text-align: center; }
+
+/* ============ Меню списком, как в печатном ============ */
+.menu-section { margin: 34px 0 0; }
+.menu-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--rule);
+}
+.menu-head h2 { font-size: clamp(20px, 3.4vw, 26px); font-weight: 400; letter-spacing: 0.01em; color: var(--brand); }
+.menu-head .unit { font-family: "Jost", sans-serif; font-size: 13px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--muted); }
+
+.menu-row {
+  display: grid; grid-template-columns: 1fr auto auto; align-items: start;
+  column-gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--border);
+}
+.menu-row:last-child { border-bottom: none; }
+.menu-row.out { opacity: 0.45; }
+.menu-item h3 { font-family: "Jost", sans-serif; font-size: 19px; font-weight: 400; line-height: 1.25; }
+.menu-desc { margin: 4px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); max-width: 46ch; }
+.menu-price { font-family: "Jost", sans-serif; font-size: 20px; font-weight: 400; color: var(--brand); white-space: nowrap; padding-top: 1px; }
+.menu-add { min-width: 116px; display: flex; justify-content: flex-end; }
+.menu-add .btn.sm.icon { width: 36px; padding: 0; }
+
+@media (max-width: 560px) {
+  .menu-row { column-gap: 10px; }
+  .menu-item h3 { font-size: 17px; }
+  .menu-price { font-size: 18px; }
+  .menu-add { min-width: 104px; }
+}
+
+/* ============ Коворкинг: тарифы ============ */
+.tariff-hero {
+  margin-top: 18px; display: flex; align-items: center; justify-content: space-between;
+  gap: 18px; flex-wrap: wrap;
+}
+.tariff-hero h3 { font-family: "Jost", sans-serif; font-size: 24px; font-weight: 400; }
+.tariff-price { display: flex; align-items: baseline; gap: 8px; }
+.tariff-price .num { font-family: "Jost", sans-serif; font-size: clamp(38px, 7vw, 52px); font-weight: 300; color: var(--brand); line-height: 1; }
+.tariff-price .unit { font-family: "Jost", sans-serif; font-size: 13px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); }
+
+.feature { display: flex; flex-direction: column; gap: 6px; }
+.feature-icon { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: var(--brand-soft); color: var(--brand); margin-bottom: 4px; }
+.feature h3 { font-family: "Jost", sans-serif; font-size: 17px; font-weight: 500; }
+.feature p { margin: 0; }
+
+.grid.tariffs { grid-template-columns: repeat(auto-fit, minmax(216px, 1fr)); margin-top: 16px; }
+.tariff { position: relative; display: flex; flex-direction: column; gap: 2px; }
+.tariff-badge {
+  position: absolute; top: 16px; right: 16px;
+  font-family: "Jost", sans-serif; font-size: 15px; font-weight: 500; letter-spacing: 0.02em;
+  padding: 4px 10px; border-radius: 999px; background: var(--grad); color: #fdfaf3;
+}
+[data-theme="dark"] .tariff-badge { color: #f2eadb; }
+.tariff-amount { font-family: "Jost", sans-serif; font-size: 30px; font-weight: 300; color: var(--fg); margin: 0; }
+.tariff .muted { margin: 0; }
+.tariff-rows { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 7px; font-size: 14px; }
+
+.steps { margin: 16px 0 0; padding: 0; list-style: none; counter-reset: step; display: flex; flex-direction: column; gap: 12px; }
+.steps li { position: relative; padding-left: 42px; line-height: 1.5; counter-increment: step; }
+.steps li::before {
+  content: counter(step); position: absolute; left: 0; top: -2px;
+  width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+  font-family: "Jost", sans-serif; font-size: 14px; color: var(--brand);
+  border: 1px solid var(--rule);
+}
+
+/* ============ Корзина ============ */
+.cartbar { position: fixed; left: 50%; transform: translateX(-50%); bottom: 16px; z-index: 30; width: min(680px, calc(100% - 24px)); display: flex; align-items: center; gap: 14px; justify-content: space-between; padding: 12px 14px 12px 20px; border-radius: var(--radius); background: var(--surface-solid); border: 1px solid var(--rule); box-shadow: var(--shadow-lg); animation: slideUp 0.35s var(--ease); }
+.cartbar .total { font-family: "Jost", sans-serif; font-weight: 400; font-size: 22px; }
+
+/* ============ Баланс: карточка-«билет» с чернильным полем ============ */
+.balance-card { position: relative; overflow: hidden; color: #fdfaf3; border: none; background: var(--grad); box-shadow: var(--shadow-lg); }
+[data-theme="dark"] .balance-card { color: #f2eadb; }
+.balance-card::before { content: ""; position: absolute; inset: 10px; border: 1px solid rgba(253, 250, 243, 0.28); border-radius: 8px; pointer-events: none; }
+.balance-card .amount { font-family: "Jost", sans-serif; font-weight: 300; font-size: 46px; line-height: 1.1; letter-spacing: 0.01em; }
+.balance-card .label { opacity: 0.85; font-weight: 500; text-transform: uppercase; letter-spacing: 0.18em; font-size: 12px; }
+
+/* ============ Бейджи статусов ============ */
+.badge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 600; letter-spacing: 0.03em; border: 1px solid transparent; }
+.badge.pending { background: #f6efdc; color: #8a6a1f; border-color: rgba(138, 106, 31, 0.24); }
+.badge.paid, .badge.ready { background: var(--brand-soft); color: var(--brand); border-color: rgba(31, 88, 166, 0.26); }
+.badge.preparing { background: #e6edf7; color: #2b5a99; border-color: rgba(43, 90, 153, 0.24); }
+.badge.done { background: #eae4d5; color: #5b6b52; border-color: rgba(91, 107, 82, 0.24); }
+.badge.cancelled { background: #f6e5e1; color: var(--danger); border-color: rgba(179, 64, 47, 0.24); }
+[data-theme="dark"] .badge.pending { background: rgba(214, 178, 92, 0.16); color: #e3c579; border-color: rgba(227, 197, 121, 0.3); }
+[data-theme="dark"] .badge.paid, [data-theme="dark"] .badge.ready { background: rgba(138, 184, 234, 0.16); color: #a8cbf2; border-color: rgba(168, 203, 242, 0.3); }
+[data-theme="dark"] .badge.preparing { background: rgba(138, 184, 234, 0.12); color: #8ab8ea; border-color: rgba(138, 184, 234, 0.26); }
+[data-theme="dark"] .badge.done { background: rgba(242, 234, 219, 0.1); color: #cfc4ae; border-color: rgba(207, 196, 174, 0.26); }
+[data-theme="dark"] .badge.cancelled { background: rgba(214, 106, 88, 0.16); color: #e39383; border-color: rgba(227, 147, 131, 0.3); }
+
+/* ============ Формы ============ */
+.field { margin-bottom: 15px; }
+.label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.12em; }
+.input, select.input { font: inherit; font-weight: 500; width: 100%; padding: 12px 14px; min-height: 46px; border: 1px solid var(--rule); border-radius: var(--radius-sm); background: var(--surface-solid); color: var(--fg); transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease); }
+.input::placeholder { color: color-mix(in srgb, var(--muted) 70%, transparent); }
+.input:focus, select.input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+
+/* ============ Списки/строки ============ */
+.row { display: flex; align-items: center; gap: 12px; justify-content: space-between; padding: 13px 0; border-bottom: 1px solid var(--border); }
+.row:last-child { border-bottom: none; }
+.tx-icon { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; flex: none; background: var(--brand-soft); color: var(--brand); }
+.amount-pos { color: var(--success); font-weight: 700; font-variant-numeric: tabular-nums; }
+.amount-neg { color: var(--danger); font-weight: 700; font-variant-numeric: tabular-nums; }
+.num { font-variant-numeric: tabular-nums; }
+
+.error { color: var(--danger); font-size: 14px; font-weight: 600; }
+.success-msg { color: var(--success); font-weight: 600; }
+
+/* ============ Скелетоны ============ */
+.skeleton { border-radius: var(--radius); height: 120px; background: linear-gradient(100deg, var(--surface) 30%, var(--brand-soft) 50%, var(--surface) 70%); background-size: 200% 100%; animation: shimmer 1.3s infinite; }
+
+/* ============ Тосты ============ */
+.toast { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-radius: var(--radius-sm); background: var(--surface-solid); border: 1px solid var(--rule); box-shadow: var(--shadow-lg); font-weight: 600; animation: popIn 0.3s var(--ease); }
+.toast.ok { color: var(--success); }
+.toast.bad { color: var(--danger); }
+
+/* ============ Утилиты ============ */
+.stack { display: flex; flex-direction: column; gap: 8px; }
+.between { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.wrap { display: flex; gap: 8px; flex-wrap: wrap; }
+.scroll-x { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; scrollbar-width: none; }
+.scroll-x::-webkit-scrollbar { display: none; }
+
+.enter { animation: fadeUp 0.5s var(--ease) both; }
+.stagger > * { animation: fadeUp 0.5s var(--ease) both; }
+.stagger > *:nth-child(1) { animation-delay: 0.03s; }
+.stagger > *:nth-child(2) { animation-delay: 0.06s; }
+.stagger > *:nth-child(3) { animation-delay: 0.09s; }
+.stagger > *:nth-child(4) { animation-delay: 0.12s; }
+.stagger > *:nth-child(5) { animation-delay: 0.15s; }
+.stagger > *:nth-child(6) { animation-delay: 0.18s; }
+.stagger > *:nth-child(7) { animation-delay: 0.21s; }
+.stagger > *:nth-child(8) { animation-delay: 0.24s; }
+.stagger > *:nth-child(n + 9) { animation-delay: 0.27s; }
+
+/* ============ Keyframes ============ */
+@keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes slideUp { from { opacity: 0; transform: translate(-50%, 20px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes popIn { from { opacity: 0; transform: translate(-50%, 10px) scale(0.95); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
+@keyframes shimmer { to { background-position: -200% 0; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 0.8s linear infinite; }
+
+/* ============ Подвал ============ */
+.footer { border-top: 1px solid var(--rule); background: transparent; margin-top: 52px; }
+.footer::after { content: ""; display: block; height: 7px; background: var(--band); }
+.footer-inner { max-width: 920px; margin: 0 auto; padding: 30px 16px; display: flex; gap: 28px; flex-wrap: wrap; justify-content: space-between; }
+.footer-item { display: flex; align-items: center; gap: 10px; font-weight: 500; }
+.footer-item a { color: var(--fg); font-weight: 500; }
+.footer-item a:hover { color: var(--brand); }
+.footer-copy { text-align: center; padding: 0 0 22px; margin: 0; }
+
+/* ============ Адаптив ============ */
+@media (max-width: 560px) {
+  .hide-sm { display: none; }
+  .navlink { padding: 9px 11px; }
+  .balance-card .amount { font-size: 38px; }
+}
+
+/* ============ Reduced motion ============ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+  .card.hover:hover, .btn:hover { transform: none; }
+}
