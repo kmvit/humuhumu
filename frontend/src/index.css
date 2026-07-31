@@ -22,10 +22,10 @@
   --bg-2: #f1e9d8;
   --surface: #fdfaf3;
   --surface-solid: #fdfaf3;
-  --fg: #16345e;           /* синие чернила */
-  --muted: #5b7695;
-  --border: rgba(22, 52, 94, 0.18);
-  --rule: rgba(22, 52, 94, 0.28);
+  --fg: #1e4d8c;           /* кобальтовые чернила, как в печатном меню */
+  --muted: #5e7ba6;
+  --border: rgba(30, 77, 140, 0.18);
+  --rule: rgba(30, 77, 140, 0.28);
   --shadow: 0 8px 26px -18px rgba(20, 36, 58, 0.5);
   --shadow-lg: 0 22px 50px -28px rgba(20, 36, 58, 0.55);
 
