@@ -10,7 +10,7 @@
   --brand-2: #2b6cb8;      /* светлее, для второстепенных акцентов */
   --brand-soft: #e8eef7;   /* мягкая синяя подложка */
   --teal-soft: #e3ebf5;    /* вторая подложка (имя историческое) */
-  --grad: linear-gradient(135deg, #1f4e8c 0%, #14335c 100%);
+  --grad: linear-gradient(135deg, #305d9a 0%, #264671 100%);  /* на 15% светлее, ближе к логотипу */
   --grad-warm: linear-gradient(160deg, #f3ecdd 0%, #e6dcc7 100%);
   --grad-ocean: linear-gradient(160deg, #e7eef7 0%, #d3e0ef 100%);
   --grad-palm: linear-gradient(160deg, #efeade 0%, #dfe6dc 100%);
@@ -46,7 +46,7 @@
   --brand-2: #a8cbf2;
   --brand-soft: rgba(138, 184, 234, 0.14);
   --teal-soft: rgba(138, 184, 234, 0.1);
-  --grad: linear-gradient(135deg, #2a5c96 0%, #16345e 100%);
+  --grad: linear-gradient(135deg, #3969a2 0%, #284772 100%);  /* на 15% светлее, ближе к логотипу */
   --grad-warm: linear-gradient(160deg, #1c3350 0%, #16283d 100%);
   --grad-ocean: linear-gradient(160deg, #1a3048 0%, #142640 100%);
   --grad-palm: linear-gradient(160deg, #1d3346 0%, #16283d 100%);
