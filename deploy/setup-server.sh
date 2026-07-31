@@ -47,6 +47,6 @@ cat <<'EOF'
     docker compose -f docker-compose.prod.yml exec backend python manage.py createsuperuser
     docker compose -f docker-compose.prod.yml exec backend python manage.py load_menu
 
-Сайт: http://b5971f2535c5.vps.myjino.ru
-Админка: http://b5971f2535c5.vps.myjino.ru/admin/
+Сайт: https://humuhumunukunukuapua.ru
+Админка: https://humuhumunukunukuapua.ru/admin/
 EOF
