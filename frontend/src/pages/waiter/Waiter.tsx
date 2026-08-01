@@ -24,12 +24,14 @@ export default function Waiter() {
   const [composeFor, setComposeFor] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
   const [busyItem, setBusyItem] = useState<number | null>(null);
+  const [confirmId, setConfirmId] = useState<number | null>(null);
 
+  // подтверждение прямо в UI — нативный confirm() в киоск/встроенных браузерах подавляется
   async function removeItem(order: Order, item: OrderItem) {
-    if (!window.confirm(`Убрать «${item.product_name}» из заказа №${order.id}?`)) return;
     setBusyItem(item.id);
     try {
       await post(`/orders/${order.id}/remove_item/`, { item_id: item.id });
+      setConfirmId(null);
       await reload();
     } finally {
       setBusyItem(null);
@@ -121,17 +123,39 @@ export default function Waiter() {
                     {o.items.map((it) => (
                       <li key={it.id} className="between">
                         <span>{it.product_name} <span className="muted" style={{ fontSize: 12 }}>· {it.station === "kitchen" ? "кухня" : "бар"}</span></span>
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
-                          <span className="num muted">× {it.quantity}</span>
-                          <button
-                            className="icon-btn sm danger"
-                            title="Убрать позицию"
-                            disabled={busyItem === it.id}
-                            onClick={() => removeItem(o, it)}
-                          >
-                            <Icon name="minus" size={14} />
-                          </button>
-                        </span>
+                        {confirmId === it.id ? (
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            <span className="muted" style={{ fontSize: 12.5 }}>Убрать?</span>
+                            <button
+                              className="icon-btn sm danger"
+                              title="Да, убрать"
+                              disabled={busyItem === it.id}
+                              onClick={() => removeItem(o, it)}
+                            >
+                              <Icon name="check" size={14} />
+                            </button>
+                            <button
+                              className="icon-btn sm"
+                              title="Отмена"
+                              onClick={() => setConfirmId(null)}
+                            >
+                              <span style={{ display: "inline-flex", transform: "rotate(45deg)" }}>
+                                <Icon name="plus" size={14} />
+                              </span>
+                            </button>
+                          </span>
+                        ) : (
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+                            <span className="num muted">× {it.quantity}</span>
+                            <button
+                              className="icon-btn sm danger"
+                              title="Убрать позицию"
+                              onClick={() => setConfirmId(it.id)}
+                            >
+                              <Icon name="minus" size={14} />
+                            </button>
+                          </span>
+                        )}
                       </li>
                     ))}
                   </ul>
