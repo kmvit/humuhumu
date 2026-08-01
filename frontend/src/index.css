@@ -195,6 +195,13 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 }
 .card.new-order { border-color: var(--brand); animation: newOrderPulse 1.3s var(--ease) 4; }
 
+/* канбан-доски кухни/бара */
+.kanban { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 16px; align-items: start; }
+.kanban-col { min-width: 0; }
+.kanban-head { display: flex; justify-content: space-between; align-items: center; font-family: "Fredoka", sans-serif; font-weight: 600; padding-bottom: 8px; margin-bottom: 12px; border-bottom: 2px solid var(--border); }
+.chip.sm { padding: 2px 9px; font-size: 12.5px; }
+@media (max-width: 720px) { .kanban { grid-template-columns: 1fr; } }
+
 /* плитки столов у официанта */
 .table-tile { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 16px 10px; cursor: pointer; text-align: center; }
 .table-tile.free { opacity: 0.7; }

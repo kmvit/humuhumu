@@ -18,9 +18,9 @@ class OrderViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action == "create":
             return [IsWaiterOrAdmin()]
-        if self.action == "food_ready":
+        if self.action == "food_status":
             return [IsCookOrAdmin()]
-        if self.action == "drinks_ready":
+        if self.action == "drinks_status":
             return [IsBarOrAdmin()]
         if self.action in ("close_table", "cancel"):
             return [IsWaiterOrAdmin()]
@@ -29,18 +29,16 @@ class OrderViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = Order.objects.prefetch_related("items__product__category")
         params = self.request.query_params
-        # доска кухни: открытые заказы с неготовой едой
+        # доска кухни: все открытые заказы с едой (канбан — видно все статусы)
         if params.get("station") == "kitchen":
             return qs.filter(
                 status=Order.Status.OPEN,
-                food_ready=False,
                 items__product__category__station="kitchen",
             ).distinct()
-        # доска бара: открытые заказы с неготовыми напитками
+        # доска бара: все открытые заказы с напитками
         if params.get("station") == "bar":
             return qs.filter(
                 status=Order.Status.OPEN,
-                drinks_ready=False,
                 items__product__category__station="bar",
             ).distinct()
         if params.get("status"):
@@ -67,21 +65,27 @@ class OrderViewSet(viewsets.ModelViewSet):
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
-    @action(detail=True, methods=["patch"])
-    def food_ready(self, request, pk=None):
-        """Повар: еда готова."""
+    def _set_station_status(self, request, field):
         order = self.get_object()
-        order.food_ready = True
-        order.save(update_fields=["food_ready"])
+        value = request.data.get("status")
+        valid = {c for c, _ in Order.StationStatus.choices}
+        if value not in valid:
+            return Response(
+                {"detail": "Неверный статус"}, status=status.HTTP_400_BAD_REQUEST
+            )
+        setattr(order, field, value)
+        order.save(update_fields=[field])
         return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["patch"])
-    def drinks_ready(self, request, pk=None):
-        """Бар: напитки готовы."""
-        order = self.get_object()
-        order.drinks_ready = True
-        order.save(update_fields=["drinks_ready"])
-        return Response(OrderSerializer(order).data)
+    def food_status(self, request, pk=None):
+        """Повар двигает еду по канбану: new/in_progress/ready."""
+        return self._set_station_status(request, "food_status")
+
+    @action(detail=True, methods=["patch"])
+    def drinks_status(self, request, pk=None):
+        """Бар двигает напитки по канбану: new/in_progress/ready."""
+        return self._set_station_status(request, "drinks_status")
 
     @action(detail=True, methods=["patch"])
     def cancel(self, request, pk=None):

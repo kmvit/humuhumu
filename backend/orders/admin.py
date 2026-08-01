@@ -13,9 +13,9 @@ class OrderItemInline(admin.TabularInline):
 class OrderAdmin(admin.ModelAdmin):
     list_display = (
         "id", "table", "waiter", "status",
-        "food_ready", "drinks_ready", "total", "created_at",
+        "food_status", "drinks_status", "total", "created_at",
     )
-    list_filter = ("status", "food_ready", "drinks_ready", "created_at")
+    list_filter = ("status", "food_status", "drinks_status", "created_at")
     search_fields = ("table", "waiter__username", "client__username", "client__phone")
     inlines = [OrderItemInline]
     date_hierarchy = "created_at"

@@ -15,6 +15,8 @@ export type Role = "client" | "waiter" | "cook" | "bar" | "admin";
 
 export type Station = "kitchen" | "bar";
 
+export type StationStatus = "new" | "in_progress" | "ready";
+
 export interface Me {
   id: number;
   username: string;
@@ -64,8 +66,8 @@ export interface Order {
   table: string;
   status: OrderStatus;
   status_display: string;
-  food_ready: boolean;
-  drinks_ready: boolean;
+  food_status: StationStatus;
+  drinks_status: StationStatus;
   has_food: boolean;
   has_drinks: boolean;
   is_ready: boolean;

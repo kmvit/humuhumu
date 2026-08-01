@@ -16,6 +16,11 @@ class Order(models.Model):
         CASH = "cash", "Наличные"
         CARD = "card", "Карта"
 
+    class StationStatus(models.TextChoices):
+        NEW = "new", "Новый"
+        IN_PROGRESS = "in_progress", "В процессе"
+        READY = "ready", "Готов"
+
     client = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
@@ -44,9 +49,13 @@ class Order(models.Model):
     status = models.CharField(
         "Статус", max_length=16, choices=Status.choices, default=Status.OPEN
     )
-    # готовность по станциям: кухня отмечает еду, бар — напитки
-    food_ready = models.BooleanField("Еда готова", default=False)
-    drinks_ready = models.BooleanField("Напитки готовы", default=False)
+    # канбан-статус по станциям: кухня ведёт еду, бар — напитки
+    food_status = models.CharField(
+        "Еда", max_length=12, choices=StationStatus.choices, default=StationStatus.NEW
+    )
+    drinks_status = models.CharField(
+        "Напитки", max_length=12, choices=StationStatus.choices, default=StationStatus.NEW
+    )
     pay_method = models.CharField(
         "Способ оплаты", max_length=16, choices=PayMethod.choices,
         blank=True, default=PayMethod.CASH,
@@ -78,9 +87,9 @@ class Order(models.Model):
     @property
     def is_ready(self) -> bool:
         """Заказ готов, когда готовы обе задействованные станции."""
-        return (self.food_ready or not self.has_food) and (
-            self.drinks_ready or not self.has_drinks
-        )
+        food_ok = not self.has_food or self.food_status == self.StationStatus.READY
+        drinks_ok = not self.has_drinks or self.drinks_status == self.StationStatus.READY
+        return food_ok and drinks_ok
 
 
 class OrderItem(models.Model):

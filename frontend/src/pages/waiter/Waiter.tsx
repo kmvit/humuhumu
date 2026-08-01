@@ -1,11 +1,22 @@
 import { useMemo, useState } from "react";
 import { post } from "../../api";
-import type { Order } from "../../types";
+import type { Order, StationStatus } from "../../types";
 import Icon from "../../components/Icon";
 import { useLiveOrders } from "../../useLiveOrders";
 import Compose from "./Compose";
 
 const TABLES = Array.from({ length: 10 }, (_, i) => String(i + 1));
+
+const STATUS_LABEL: Record<StationStatus, string> = {
+  new: "новый",
+  in_progress: "готовится",
+  ready: "готово",
+};
+const STATUS_CLASS: Record<StationStatus, string> = {
+  new: "open",
+  in_progress: "preparing",
+  ready: "ready",
+};
 
 export default function Waiter() {
   const { orders, reload } = useLiveOrders("/orders/?status=open", { sound: false });
@@ -104,10 +115,10 @@ export default function Waiter() {
                   </ul>
                   <div className="wrap" style={{ marginTop: 8 }}>
                     {o.has_food && (
-                      <span className={"badge " + (o.food_ready ? "ready" : "preparing")}>Кухня: {o.food_ready ? "готово" : "готовится"}</span>
+                      <span className={"badge " + STATUS_CLASS[o.food_status]}>Кухня: {STATUS_LABEL[o.food_status]}</span>
                     )}
                     {o.has_drinks && (
-                      <span className={"badge " + (o.drinks_ready ? "ready" : "preparing")}>Бар: {o.drinks_ready ? "готово" : "готовится"}</span>
+                      <span className={"badge " + STATUS_CLASS[o.drinks_status]}>Бар: {STATUS_LABEL[o.drinks_status]}</span>
                     )}
                   </div>
                 </div>
