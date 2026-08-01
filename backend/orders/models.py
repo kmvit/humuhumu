@@ -3,25 +3,33 @@ from django.db import models
 
 
 class Order(models.Model):
-    """Заказ клиента."""
+    """Заказ. Создаёт официант, готовит повар, оплату фиксирует кассир-бармен."""
 
     class Status(models.TextChoices):
-        PENDING = "pending", "Ожидает оплаты"
-        PAID = "paid", "Оплачен"
-        PREPARING = "preparing", "Готовится"
+        PREPARING = "preparing", "На кухне"
         READY = "ready", "Готов"
-        DONE = "done", "Выдан"
+        PAID = "paid", "Оплачен"
         CANCELLED = "cancelled", "Отменён"
 
     class PayMethod(models.TextChoices):
+        CASH = "cash", "Наличные"
         CARD = "card", "Карта"
-        TOKENS = "tokens", "Токены"
 
     client = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
+        null=True,
+        blank=True,
         related_name="orders",
         verbose_name="Клиент",
+    )
+    waiter = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="waiter_orders",
+        verbose_name="Официант",
     )
     cashier = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -29,12 +37,16 @@ class Order(models.Model):
         null=True,
         blank=True,
         related_name="handled_orders",
-        verbose_name="Кассир",
+        verbose_name="Кассир-бармен",
     )
+    table = models.CharField("Стол", max_length=32, blank=True)
     status = models.CharField(
-        "Статус", max_length=16, choices=Status.choices, default=Status.PENDING
+        "Статус", max_length=16, choices=Status.choices, default=Status.PREPARING
     )
-    pay_method = models.CharField("Способ оплаты", max_length=16, choices=PayMethod.choices)
+    pay_method = models.CharField(
+        "Способ оплаты", max_length=16, choices=PayMethod.choices,
+        blank=True, default=PayMethod.CASH,
+    )
     total = models.DecimalField("Сумма", max_digits=12, decimal_places=2, default=0)
     created_at = models.DateTimeField("Создан", auto_now_add=True)
 

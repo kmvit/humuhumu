@@ -9,11 +9,17 @@ const NAV: Record<string, { to: string; label: string; icon: IconName }[]> = {
   client: [
     { to: "/client", label: "Меню", icon: "coffee" },
     { to: "/coworking", label: "Коворкинг", icon: "laptop" },
-    { to: "/client/orders", label: "Заказы", icon: "receipt" },
-    { to: "/client/wallet", label: "Кошелёк", icon: "wallet" },
+  ],
+  waiter: [
+    { to: "/waiter", label: "Новый заказ", icon: "receipt" },
+    { to: "/coworking", label: "Коворкинг", icon: "laptop" },
+  ],
+  cook: [
+    { to: "/kitchen", label: "Кухня", icon: "sandwich" },
+    { to: "/coworking", label: "Коворкинг", icon: "laptop" },
   ],
   cashier: [
-    { to: "/cashier", label: "Касса", icon: "store" },
+    { to: "/cashier", label: "Касса-бар", icon: "store" },
     { to: "/coworking", label: "Коворкинг", icon: "laptop" },
   ],
   admin: [

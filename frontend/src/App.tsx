@@ -5,14 +5,16 @@ import { PaperBackdrop } from "./components/Ornaments";
 import Login from "./pages/Login";
 import Coworking from "./pages/Coworking";
 import Menu from "./pages/client/Menu";
-import Orders from "./pages/client/Orders";
-import Wallet from "./pages/client/Wallet";
+import Waiter from "./pages/waiter/Waiter";
+import Kitchen from "./pages/kitchen/Kitchen";
 import Cashier from "./pages/cashier/Cashier";
 import Admin from "./pages/admin/Admin";
 import type { Role } from "./types";
 
 const HOME_BY_ROLE: Record<Role, string> = {
   client: "/client",
+  waiter: "/waiter",
+  cook: "/kitchen",
   cashier: "/cashier",
   admin: "/admin",
 };
@@ -44,13 +46,9 @@ export default function App() {
         {/* коворкинг — информационная страница, открыта всем */}
         <Route path="/coworking" element={<Coworking />} />
         {!user && <Route path="/" element={<Menu />} />}
-        {user?.role === "client" && (
-          <>
-            <Route path="/client" element={<Menu />} />
-            <Route path="/client/orders" element={<Orders />} />
-            <Route path="/client/wallet" element={<Wallet />} />
-          </>
-        )}
+        {user?.role === "client" && <Route path="/client" element={<Menu />} />}
+        {user?.role === "waiter" && <Route path="/waiter" element={<Waiter />} />}
+        {user?.role === "cook" && <Route path="/kitchen" element={<Kitchen />} />}
         {user?.role === "cashier" && <Route path="/cashier" element={<Cashier />} />}
         {user?.role === "admin" && <Route path="/admin" element={<Admin />} />}
         <Route path="*" element={<Navigate to={home} replace />} />

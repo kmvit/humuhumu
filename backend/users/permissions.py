@@ -13,12 +13,32 @@ class IsAdminRole(BasePermission):
 
 
 class IsCashierOrAdmin(BasePermission):
-    """Доступ кассиру или админу."""
+    """Доступ кассиру-бармену или админу."""
 
     def has_permission(self, request, view):
         return bool(
             request.user.is_authenticated
             and request.user.role in (User.Role.CASHIER, User.Role.ADMIN)
+        )
+
+
+class IsWaiterOrAdmin(BasePermission):
+    """Доступ официанту или админу (создание заказов)."""
+
+    def has_permission(self, request, view):
+        return bool(
+            request.user.is_authenticated
+            and request.user.role in (User.Role.WAITER, User.Role.ADMIN)
+        )
+
+
+class IsCookOrAdmin(BasePermission):
+    """Доступ повару или админу (перевод заказа в «готов»)."""
+
+    def has_permission(self, request, view):
+        return bool(
+            request.user.is_authenticated
+            and request.user.role in (User.Role.COOK, User.Role.ADMIN)
         )
 
 

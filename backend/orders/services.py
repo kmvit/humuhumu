@@ -11,19 +11,24 @@ class OrderError(Exception):
 
 
 @transaction.atomic
-def create_order(*, client, pay_method: str, items: list[dict]) -> Order:
-    """Создать заказ. items = [{'product': id, 'quantity': n}, ...].
+def create_order(*, waiter, items: list[dict], table: str = "") -> Order:
+    """Создать заказ официантом. items = [{'product': id, 'quantity': n}, ...].
 
-    Цены берём с сервера (не доверяем фронту). При оплате токенами списываем сразу.
-    При оплате картой заказ остаётся в статусе «ожидает оплаты» (платёж подключим позже).
+    Цены берём с сервера (не доверяем фронту). Заказ сразу уходит на кухню
+    (статус «На кухне»). Оплату позже фиксирует кассир-бармен вручную.
     """
     if not items:
         raise OrderError("Пустой заказ")
 
-    order = Order.objects.create(client=client, pay_method=pay_method)
+    order = Order.objects.create(
+        waiter=waiter, table=table, status=Order.Status.PREPARING
+    )
 
     for line in items:
-        product = Product.objects.get(pk=line["product"], is_available=True)
+        try:
+            product = Product.objects.get(pk=line["product"], is_available=True)
+        except Product.DoesNotExist:
+            raise OrderError("Товар недоступен или не найден")
         quantity = int(line.get("quantity", 1))
         if quantity < 1:
             raise OrderError("Количество должно быть положительным")
@@ -36,13 +41,5 @@ def create_order(*, client, pay_method: str, items: list[dict]) -> Order:
 
     order.recalc_total()
     order.save(update_fields=["total"])
-
-    if pay_method == Order.PayMethod.TOKENS:
-        # списываем токены атомарно; при нехватке откатится вся транзакция (и заказ)
-        from wallet.services import spend_tokens
-
-        spend_tokens(client.wallet.id, order.total, order=order)
-        order.status = Order.Status.PAID
-        order.save(update_fields=["status"])
 
     return order

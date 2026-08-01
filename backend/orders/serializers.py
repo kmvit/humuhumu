@@ -24,7 +24,9 @@ class OrderSerializer(serializers.ModelSerializer):
         fields = (
             "id",
             "client",
+            "waiter",
             "cashier",
+            "table",
             "status",
             "status_display",
             "pay_method",
@@ -40,13 +42,16 @@ class OrderItemCreateSerializer(serializers.Serializer):
 
 
 class OrderCreateSerializer(serializers.Serializer):
-    """Создание заказа клиентом."""
+    """Создание заказа официантом."""
 
-    pay_method = serializers.ChoiceField(choices=Order.PayMethod.choices)
+    table = serializers.CharField(max_length=32, required=False, allow_blank=True)
     items = OrderItemCreateSerializer(many=True)
 
 
 class OrderStatusSerializer(serializers.Serializer):
-    """Смена статуса заказа кассиром/админом."""
+    """Смена статуса заказа поваром / кассиром-барменом / админом."""
 
     status = serializers.ChoiceField(choices=Order.Status.choices)
+    pay_method = serializers.ChoiceField(
+        choices=Order.PayMethod.choices, required=False
+    )

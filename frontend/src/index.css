@@ -187,6 +187,17 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 .card.hover { transition: transform 0.22s var(--ease), box-shadow 0.22s var(--ease), border-color 0.22s var(--ease); }
 .card.hover:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); border-color: var(--rule); }
 
+/* подсветка только что прилетевшего заказа на доске кухни/кассы */
+@keyframes newOrderPulse {
+  0%   { box-shadow: 0 0 0 0 rgba(31, 88, 166, 0.55); }
+  70%  { box-shadow: 0 0 0 14px rgba(31, 88, 166, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(31, 88, 166, 0); }
+}
+.card.new-order { border-color: var(--brand); animation: newOrderPulse 1.3s var(--ease) 4; }
+@media (prefers-reduced-motion: reduce) {
+  .card.new-order { animation: none; }
+}
+
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 14px; }
 .grid.stats { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
 

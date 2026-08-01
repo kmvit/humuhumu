@@ -42,7 +42,7 @@ export default function Admin() {
         <div className="between">
           <div>
             <strong style={{ fontFamily: "Fredoka", fontSize: 17 }}>Управление каталогом</strong>
-            <p className="muted" style={{ margin: "4px 0 0" }}>Товары, категории и пакеты токенов</p>
+            <p className="muted" style={{ margin: "4px 0 0" }}>Товары и категории</p>
           </div>
           <a className="btn sm" href="http://localhost:8000/admin/" target="_blank" rel="noreferrer">
             Открыть <Icon name="arrowUp" size={15} />
@@ -57,7 +57,7 @@ export default function Admin() {
             <span className="tx-icon"><Icon name="receipt" size={17} /></span>
             <div className="stack" style={{ gap: 2, flex: 1 }}>
               <strong>Заказ №{o.id}</strong>
-              <span className="muted">{o.items.length} поз. · {o.pay_method === "tokens" ? "токены" : "карта"}</span>
+              <span className="muted">{o.items.length} поз. · {o.pay_method === "card" ? "карта" : "наличные"}</span>
             </div>
             <span className={"badge " + o.status}>{o.status_display}</span>
             <strong className="num">{o.total}</strong>

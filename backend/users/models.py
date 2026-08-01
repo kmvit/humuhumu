@@ -3,11 +3,13 @@ from django.db import models
 
 
 class User(AbstractUser):
-    """Пользователь сервиса: клиент, кассир или админ."""
+    """Пользователь сервиса: клиент, официант, повар, кассир-бармен или админ."""
 
     class Role(models.TextChoices):
         CLIENT = "client", "Клиент"
-        CASHIER = "cashier", "Кассир"
+        WAITER = "waiter", "Официант"
+        COOK = "cook", "Повар"
+        CASHIER = "cashier", "Кассир-бармен"
         ADMIN = "admin", "Админ"
 
     role = models.CharField(
@@ -23,7 +25,12 @@ class User(AbstractUser):
 
     @property
     def is_staff_role(self) -> bool:
-        return self.role in (self.Role.CASHIER, self.Role.ADMIN)
+        return self.role in (
+            self.Role.WAITER,
+            self.Role.COOK,
+            self.Role.CASHIER,
+            self.Role.ADMIN,
+        )
 
     def __str__(self):
         return self.phone or self.username

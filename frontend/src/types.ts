@@ -11,7 +11,7 @@ export interface Site {
   about: string;
 }
 
-export type Role = "client" | "cashier" | "admin";
+export type Role = "client" | "waiter" | "cook" | "cashier" | "admin";
 
 export interface Me {
   id: number;
@@ -50,21 +50,19 @@ export interface OrderItem {
   subtotal: string;
 }
 
-export type OrderStatus =
-  | "pending"
-  | "paid"
-  | "preparing"
-  | "ready"
-  | "done"
-  | "cancelled";
+export type OrderStatus = "preparing" | "ready" | "paid" | "cancelled";
+
+export type PayMethod = "cash" | "card";
 
 export interface Order {
   id: number;
-  client: number;
+  client: number | null;
+  waiter: number | null;
   cashier: number | null;
+  table: string;
   status: OrderStatus;
   status_display: string;
-  pay_method: "card" | "tokens";
+  pay_method: PayMethod;
   total: string;
   items: OrderItem[];
   created_at: string;
