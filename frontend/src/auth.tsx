@@ -5,7 +5,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { clearTokens, get, post, setTokens, getToken } from "./api";
+import { ApiError, clearTokens, get, post, setTokens, getToken } from "./api";
 import type { Me } from "./types";
 
 interface AuthState {
@@ -31,8 +31,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     try {
       setUser(await get<Me>("/users/me/"));
-    } catch {
-      clearTokens();
+    } catch (e) {
+      // токены сбрасываем только если refresh не помог (реальный 401);
+      // при сетевом сбое оставляем сессию — попробуем позже
+      if (e instanceof ApiError && e.status === 401) clearTokens();
       setUser(null);
     } finally {
       setLoading(false);

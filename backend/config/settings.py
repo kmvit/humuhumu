@@ -108,8 +108,10 @@ REST_FRAMEWORK = {
 }
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=14),
+    # access живёт недолго, но фронт тихо продлевает его по refresh —
+    # персонал не разлогинивается до истечения refresh (планшеты кухни/бара)
+    "ACCESS_TOKEN_LIFETIME": timedelta(hours=1),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=30),
 }
 
 CORS_ALLOWED_ORIGINS = os.getenv(
