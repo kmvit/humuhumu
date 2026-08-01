@@ -22,7 +22,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             return [IsCookOrAdmin()]
         if self.action == "drinks_status":
             return [IsBarOrAdmin()]
-        if self.action in ("close_table", "cancel"):
+        if self.action in ("close_table", "cancel", "remove_item"):
             return [IsWaiterOrAdmin()]
         return [IsAuthenticated()]
 
@@ -94,6 +94,34 @@ class OrderViewSet(viewsets.ModelViewSet):
         order.status = Order.Status.CANCELLED
         order.closed_by = request.user
         order.save(update_fields=["status", "closed_by"])
+        return Response(OrderSerializer(order).data)
+
+    @action(detail=True, methods=["post"])
+    def remove_item(self, request, pk=None):
+        """Официант убирает позицию из открытого заказа (гость передумал)."""
+        order = self.get_object()
+        if order.status != Order.Status.OPEN:
+            return Response(
+                {"detail": "Менять можно только открытый заказ"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        item = order.items.filter(id=request.data.get("item_id")).first()
+        if not item:
+            return Response(
+                {"detail": "Позиция не найдена"}, status=status.HTTP_404_NOT_FOUND
+            )
+        item.delete()
+        # перечитываем заказ — сбрасываем кэш prefetch, иначе сумма/позиции стухнут
+        order = Order.objects.prefetch_related("items__product__category").get(pk=order.pk)
+        if order.items.exists():
+            order.recalc_total()
+            order.save(update_fields=["total"])
+        else:
+            # убрали последнюю позицию — заказ пустой, отменяем
+            order.total = 0
+            order.status = Order.Status.CANCELLED
+            order.closed_by = request.user
+            order.save(update_fields=["total", "status", "closed_by"])
         return Response(OrderSerializer(order).data)
 
     @action(detail=False, methods=["post"])

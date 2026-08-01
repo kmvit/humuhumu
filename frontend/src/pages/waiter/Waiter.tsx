@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { post } from "../../api";
-import type { Order, StationStatus } from "../../types";
+import type { Order, OrderItem, StationStatus } from "../../types";
 import Icon from "../../components/Icon";
 import { useLiveOrders } from "../../useLiveOrders";
 import Compose from "./Compose";
@@ -23,6 +23,18 @@ export default function Waiter() {
   const [selected, setSelected] = useState<string | null>(null);
   const [composeFor, setComposeFor] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
+  const [busyItem, setBusyItem] = useState<number | null>(null);
+
+  async function removeItem(order: Order, item: OrderItem) {
+    if (!window.confirm(`Убрать «${item.product_name}» из заказа №${order.id}?`)) return;
+    setBusyItem(item.id);
+    try {
+      await post(`/orders/${order.id}/remove_item/`, { item_id: item.id });
+      await reload();
+    } finally {
+      setBusyItem(null);
+    }
+  }
 
   const byTable = useMemo(() => {
     const m: Record<string, Order[]> = {};
@@ -109,7 +121,17 @@ export default function Waiter() {
                     {o.items.map((it) => (
                       <li key={it.id} className="between">
                         <span>{it.product_name} <span className="muted" style={{ fontSize: 12 }}>· {it.station === "kitchen" ? "кухня" : "бар"}</span></span>
-                        <span className="num muted">× {it.quantity}</span>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+                          <span className="num muted">× {it.quantity}</span>
+                          <button
+                            className="icon-btn sm danger"
+                            title="Убрать позицию"
+                            disabled={busyItem === it.id}
+                            onClick={() => removeItem(o, it)}
+                          >
+                            <Icon name="minus" size={14} />
+                          </button>
+                        </span>
                       </li>
                     ))}
                   </ul>

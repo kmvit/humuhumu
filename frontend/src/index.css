@@ -181,6 +181,9 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 
 .icon-btn { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: transparent; border: 1px solid var(--rule); color: var(--fg); cursor: pointer; transition: all 0.2s var(--ease); }
 .icon-btn:hover { background: var(--brand-soft); color: var(--brand); border-color: var(--brand); }
+.icon-btn.sm { width: 30px; height: 30px; border-radius: 8px; }
+.icon-btn.danger:hover { background: #fdecec; color: #c0392b; border-color: #e2b3b3; }
+[data-theme="dark"] .icon-btn.danger:hover { background: rgba(192, 57, 43, 0.16); color: #f0a0a0; border-color: rgba(240, 160, 160, 0.4); }
 
 /* ============ Карточки ============ */
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); }
