@@ -7,7 +7,7 @@ import Coworking from "./pages/Coworking";
 import Menu from "./pages/client/Menu";
 import Waiter from "./pages/waiter/Waiter";
 import Kitchen from "./pages/kitchen/Kitchen";
-import Cashier from "./pages/cashier/Cashier";
+import Bar from "./pages/bar/Bar";
 import Admin from "./pages/admin/Admin";
 import type { Role } from "./types";
 
@@ -15,7 +15,7 @@ const HOME_BY_ROLE: Record<Role, string> = {
   client: "/client",
   waiter: "/waiter",
   cook: "/kitchen",
-  cashier: "/cashier",
+  bar: "/bar",
   admin: "/admin",
 };
 
@@ -49,7 +49,7 @@ export default function App() {
         {user?.role === "client" && <Route path="/client" element={<Menu />} />}
         {user?.role === "waiter" && <Route path="/waiter" element={<Waiter />} />}
         {user?.role === "cook" && <Route path="/kitchen" element={<Kitchen />} />}
-        {user?.role === "cashier" && <Route path="/cashier" element={<Cashier />} />}
+        {user?.role === "bar" && <Route path="/bar" element={<Bar />} />}
         {user?.role === "admin" && <Route path="/admin" element={<Admin />} />}
         <Route path="*" element={<Navigate to={home} replace />} />
       </Route>

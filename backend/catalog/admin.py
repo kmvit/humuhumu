@@ -5,8 +5,9 @@ from .models import Category, Product
 
 @admin.register(Category)
 class CategoryAdmin(admin.ModelAdmin):
-    list_display = ("name", "sort_order", "is_active")
-    list_editable = ("sort_order", "is_active")
+    list_display = ("name", "station", "sort_order", "is_active")
+    list_editable = ("station", "sort_order", "is_active")
+    list_filter = ("station",)
 
 
 @admin.register(Product)

@@ -4,8 +4,16 @@ from django.db import models
 class Category(models.Model):
     """Категория товаров (кофе, сэндвичи, боулы, мороженое и т.д.)."""
 
+    class Station(models.TextChoices):
+        KITCHEN = "kitchen", "Кухня"
+        BAR = "bar", "Бар"
+
     name = models.CharField("Название", max_length=100)
     icon = models.ImageField("Иконка", upload_to="categories/", null=True, blank=True)
+    station = models.CharField(
+        "Станция", max_length=8, choices=Station.choices, default=Station.BAR,
+        help_text="Куда уходят позиции этой категории: на кухню (еда) или в бар (напитки)",
+    )
     sort_order = models.PositiveIntegerField("Порядок сортировки", default=0)
     is_active = models.BooleanField("Активна", default=True)
 

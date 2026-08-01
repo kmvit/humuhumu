@@ -12,13 +12,13 @@ class IsAdminRole(BasePermission):
         )
 
 
-class IsCashierOrAdmin(BasePermission):
-    """Доступ кассиру-бармену или админу."""
+class IsBarOrAdmin(BasePermission):
+    """Доступ бару или админу (перевод напитков в «готово»)."""
 
     def has_permission(self, request, view):
         return bool(
             request.user.is_authenticated
-            and request.user.role in (User.Role.CASHIER, User.Role.ADMIN)
+            and request.user.role in (User.Role.BAR, User.Role.ADMIN)
         )
 
 

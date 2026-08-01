@@ -4,7 +4,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from users.permissions import IsCashierOrAdmin
+from users.permissions import IsAdminRole
 
 from .models import TokenPackage, Wallet
 from .serializers import (
@@ -48,7 +48,7 @@ class TokenPackageViewSet(viewsets.ReadOnlyModelViewSet):
 class TopupView(APIView):
     """POST /api/wallet/topup/ — кассир/админ пополняет кошелёк клиента по пакету."""
 
-    permission_classes = [IsCashierOrAdmin]
+    permission_classes = [IsAdminRole]
 
     def post(self, request):
         serializer = TopupSerializer(data=request.data)

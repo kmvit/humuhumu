@@ -1,14 +1,15 @@
 from django.conf import settings
 from django.db import models
 
+from catalog.models import Category
+
 
 class Order(models.Model):
     """Заказ. Создаёт официант, готовит повар, оплату фиксирует кассир-бармен."""
 
     class Status(models.TextChoices):
-        PREPARING = "preparing", "На кухне"
-        READY = "ready", "Готов"
-        PAID = "paid", "Оплачен"
+        OPEN = "open", "Открыт"
+        PAID = "paid", "Закрыт"
         CANCELLED = "cancelled", "Отменён"
 
     class PayMethod(models.TextChoices):
@@ -31,18 +32,21 @@ class Order(models.Model):
         related_name="waiter_orders",
         verbose_name="Официант",
     )
-    cashier = models.ForeignKey(
+    closed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name="handled_orders",
-        verbose_name="Кассир-бармен",
+        related_name="closed_orders",
+        verbose_name="Закрыл счёт",
     )
     table = models.CharField("Стол", max_length=32, blank=True)
     status = models.CharField(
-        "Статус", max_length=16, choices=Status.choices, default=Status.PREPARING
+        "Статус", max_length=16, choices=Status.choices, default=Status.OPEN
     )
+    # готовность по станциям: кухня отмечает еду, бар — напитки
+    food_ready = models.BooleanField("Еда готова", default=False)
+    drinks_ready = models.BooleanField("Напитки готовы", default=False)
     pay_method = models.CharField(
         "Способ оплаты", max_length=16, choices=PayMethod.choices,
         blank=True, default=PayMethod.CASH,
@@ -62,6 +66,21 @@ class Order(models.Model):
         """Пересчитать сумму по позициям."""
         self.total = sum((item.subtotal for item in self.items.all()), start=0)
         return self.total
+
+    @property
+    def has_food(self) -> bool:
+        return any(i.station == Category.Station.KITCHEN for i in self.items.all())
+
+    @property
+    def has_drinks(self) -> bool:
+        return any(i.station == Category.Station.BAR for i in self.items.all())
+
+    @property
+    def is_ready(self) -> bool:
+        """Заказ готов, когда готовы обе задействованные станции."""
+        return (self.food_ready or not self.has_food) and (
+            self.drinks_ready or not self.has_drinks
+        )
 
 
 class OrderItem(models.Model):
@@ -83,6 +102,11 @@ class OrderItem(models.Model):
     @property
     def subtotal(self):
         return self.unit_price * self.quantity
+
+    @property
+    def station(self):
+        """Куда идёт позиция — определяется станцией её категории."""
+        return self.product.category.station
 
     def __str__(self):
         return f"{self.product} × {self.quantity}"

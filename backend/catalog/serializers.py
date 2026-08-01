@@ -8,7 +8,7 @@ class CategorySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Category
-        fields = ("id", "name", "icon", "sort_order", "is_active")
+        fields = ("id", "name", "icon", "station", "sort_order", "is_active")
 
     def get_icon(self, obj):
         # относительный URL (/media/...), чтобы работало через прокси независимо от хоста

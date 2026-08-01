@@ -9,7 +9,7 @@ class User(AbstractUser):
         CLIENT = "client", "Клиент"
         WAITER = "waiter", "Официант"
         COOK = "cook", "Повар"
-        CASHIER = "cashier", "Кассир-бармен"
+        BAR = "bar", "Бар"
         ADMIN = "admin", "Админ"
 
     role = models.CharField(
@@ -28,7 +28,7 @@ class User(AbstractUser):
         return self.role in (
             self.Role.WAITER,
             self.Role.COOK,
-            self.Role.CASHIER,
+            self.Role.BAR,
             self.Role.ADMIN,
         )
 

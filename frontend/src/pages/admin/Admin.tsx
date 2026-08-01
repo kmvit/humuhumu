@@ -14,7 +14,7 @@ export default function Admin() {
     () => orders.filter((o) => o.status !== "cancelled").reduce((s, o) => s + Number(o.total), 0),
     [orders]
   );
-  const active = orders.filter((o) => ["paid", "preparing", "ready"].includes(o.status)).length;
+  const active = orders.filter((o) => o.status === "open").length;
 
   const stats = [
     { icon: "receipt", label: "Всего заказов", value: orders.length },
@@ -57,7 +57,7 @@ export default function Admin() {
             <span className="tx-icon"><Icon name="receipt" size={17} /></span>
             <div className="stack" style={{ gap: 2, flex: 1 }}>
               <strong>Заказ №{o.id}</strong>
-              <span className="muted">{o.items.length} поз. · {o.pay_method === "card" ? "карта" : "наличные"}</span>
+              <span className="muted">{o.items.length} поз.{o.table ? ` · стол ${o.table}` : ""}</span>
             </div>
             <span className={"badge " + o.status}>{o.status_display}</span>
             <strong className="num">{o.total}</strong>

@@ -21,7 +21,7 @@ def create_order(*, waiter, items: list[dict], table: str = "") -> Order:
         raise OrderError("Пустой заказ")
 
     order = Order.objects.create(
-        waiter=waiter, table=table, status=Order.Status.PREPARING
+        waiter=waiter, table=table, status=Order.Status.OPEN
     )
 
     for line in items:

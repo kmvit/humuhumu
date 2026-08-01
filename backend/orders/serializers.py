@@ -6,10 +6,14 @@ from .models import Order, OrderItem
 class OrderItemSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source="product.name", read_only=True)
     subtotal = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    station = serializers.CharField(read_only=True)
 
     class Meta:
         model = OrderItem
-        fields = ("id", "product", "product_name", "quantity", "unit_price", "subtotal")
+        fields = (
+            "id", "product", "product_name", "station",
+            "quantity", "unit_price", "subtotal",
+        )
         read_only_fields = ("unit_price",)
 
 
@@ -18,6 +22,9 @@ class OrderSerializer(serializers.ModelSerializer):
 
     items = OrderItemSerializer(many=True, read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    has_food = serializers.BooleanField(read_only=True)
+    has_drinks = serializers.BooleanField(read_only=True)
+    is_ready = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = Order
@@ -25,11 +32,15 @@ class OrderSerializer(serializers.ModelSerializer):
             "id",
             "client",
             "waiter",
-            "cashier",
+            "closed_by",
             "table",
             "status",
             "status_display",
-            "pay_method",
+            "food_ready",
+            "drinks_ready",
+            "has_food",
+            "has_drinks",
+            "is_ready",
             "total",
             "items",
             "created_at",
@@ -46,12 +57,3 @@ class OrderCreateSerializer(serializers.Serializer):
 
     table = serializers.CharField(max_length=32, required=False, allow_blank=True)
     items = OrderItemCreateSerializer(many=True)
-
-
-class OrderStatusSerializer(serializers.Serializer):
-    """Смена статуса заказа поваром / кассиром-барменом / админом."""
-
-    status = serializers.ChoiceField(choices=Order.Status.choices)
-    pay_method = serializers.ChoiceField(
-        choices=Order.PayMethod.choices, required=False
-    )

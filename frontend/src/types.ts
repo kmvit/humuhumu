@@ -11,7 +11,9 @@ export interface Site {
   about: string;
 }
 
-export type Role = "client" | "waiter" | "cook" | "cashier" | "admin";
+export type Role = "client" | "waiter" | "cook" | "bar" | "admin";
+
+export type Station = "kitchen" | "bar";
 
 export interface Me {
   id: number;
@@ -25,6 +27,7 @@ export interface Category {
   id: number;
   name: string;
   icon: string | null;
+  station: Station;
   sort_order: number;
   is_active: boolean;
 }
@@ -45,24 +48,27 @@ export interface OrderItem {
   id: number;
   product: number;
   product_name: string;
+  station: Station;
   quantity: number;
   unit_price: string;
   subtotal: string;
 }
 
-export type OrderStatus = "preparing" | "ready" | "paid" | "cancelled";
-
-export type PayMethod = "cash" | "card";
+export type OrderStatus = "open" | "paid" | "cancelled";
 
 export interface Order {
   id: number;
   client: number | null;
   waiter: number | null;
-  cashier: number | null;
+  closed_by: number | null;
   table: string;
   status: OrderStatus;
   status_display: string;
-  pay_method: PayMethod;
+  food_ready: boolean;
+  drinks_ready: boolean;
+  has_food: boolean;
+  has_drinks: boolean;
+  is_ready: boolean;
   total: string;
   items: OrderItem[];
   created_at: string;

@@ -3,14 +3,14 @@ import { patch } from "../../api";
 import Icon from "../../components/Icon";
 import { useLiveOrders } from "../../useLiveOrders";
 
-export default function Kitchen() {
-  const { orders, setOrders, highlight } = useLiveOrders("/orders/?station=kitchen");
+export default function Bar() {
+  const { orders, setOrders, highlight } = useLiveOrders("/orders/?station=bar");
   const [busyId, setBusyId] = useState<number | null>(null);
 
   async function markReady(id: number) {
     setBusyId(id);
     try {
-      await patch(`/orders/${id}/food_ready/`, {});
+      await patch(`/orders/${id}/drinks_ready/`, {});
       setOrders((os) => os.filter((o) => o.id !== id));
     } finally {
       setBusyId(null);
@@ -20,14 +20,14 @@ export default function Kitchen() {
   return (
     <>
       <div className="between">
-        <h1 className="h1">Кухня</h1>
+        <h1 className="h1">Бар</h1>
         <span className="chip"><Icon name="spark" size={15} /> {orders.length}</span>
       </div>
-      <p className="muted" style={{ marginTop: 4 }}>Еда в работе</p>
+      <p className="muted" style={{ marginTop: 4 }}>Напитки в работе</p>
 
       {orders.length === 0 ? (
         <p className="muted" style={{ marginTop: 32, textAlign: "center" }}>
-          Нет заказов на кухне
+          Нет заказов в баре
         </p>
       ) : (
         <div className="grid" style={{ marginTop: 16, gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
@@ -38,7 +38,7 @@ export default function Kitchen() {
                 {o.table && <span className="badge open">Стол {o.table}</span>}
               </div>
               <ul className="stack" style={{ gap: 4, margin: "12px 0", listStyle: "none", padding: 0 }}>
-                {o.items.filter((it) => it.station === "kitchen").map((it) => (
+                {o.items.filter((it) => it.station === "bar").map((it) => (
                   <li key={it.id} className="between">
                     <span>{it.product_name}</span>
                     <span className="num muted">× {it.quantity}</span>

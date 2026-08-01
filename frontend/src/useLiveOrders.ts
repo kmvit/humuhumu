@@ -3,9 +3,13 @@ import { get } from "./api";
 import type { Order } from "./types";
 import { playChime } from "./sound";
 
-// Живая доска заказов: опрашивает сервер по интервалу, при появлении
-// новых заказов проигрывает сигнал и возвращает их id для подсветки.
-export function useLiveOrders(status: string, intervalMs = 5000) {
+// Живая доска заказов: опрашивает `path` по интервалу. При появлении новых
+// заказов (по id) проигрывает сигнал (если sound=true) и подсвечивает их.
+export function useLiveOrders(
+  path: string,
+  opts: { intervalMs?: number; sound?: boolean } = {}
+) {
+  const { intervalMs = 5000, sound = true } = opts;
   const [orders, setOrders] = useState<Order[]>([]);
   const [highlight, setHighlight] = useState<Set<number>>(new Set());
   const seen = useRef<Set<number>>(new Set());
@@ -14,15 +18,15 @@ export function useLiveOrders(status: string, intervalMs = 5000) {
   const reload = useCallback(async () => {
     let data: Order[];
     try {
-      data = await get<Order[]>(`/orders/?status=${status}`);
+      data = await get<Order[]>(path);
     } catch {
       return;
     }
     const fresh = data.filter((o) => !seen.current.has(o.id)).map((o) => o.id);
     data.forEach((o) => seen.current.add(o.id));
-    // на самой первой загрузке не сигналим — иначе пикнет на все текущие заказы
+    // на первой загрузке не сигналим — иначе пикнет на все текущие заказы
     if (!firstLoad.current && fresh.length) {
-      playChime();
+      if (sound) playChime();
       setHighlight((h) => new Set([...h, ...fresh]));
       window.setTimeout(() => {
         setHighlight((h) => {
@@ -34,7 +38,7 @@ export function useLiveOrders(status: string, intervalMs = 5000) {
     }
     firstLoad.current = false;
     setOrders(data);
-  }, [status]);
+  }, [path, sound]);
 
   useEffect(() => {
     reload();
