@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { get, post, ApiError } from "../../api";
 import type { Category, Order, Product } from "../../types";
 import Icon, { categoryIcon } from "../../components/Icon";
+import Lightbox from "../../components/Lightbox";
 
 // Сбор заказа для конкретного стола. Меню + степперы + «Отправить».
 export default function Compose({
@@ -20,6 +21,7 @@ export default function Compose({
   const [toast, setToast] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [zoom, setZoom] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -112,8 +114,14 @@ export default function Compose({
             {items.map((p) => (
               <div className={"menu-row" + (p.is_available ? "" : " out")} key={p.id}>
                 <div className="menu-lead">
-                  {p.image && (
-                    <img className="menu-thumb" src={p.image} alt="" loading="lazy" />
+                  {p.thumbnail && (
+                    <img
+                      className="menu-thumb zoomable"
+                      src={p.thumbnail}
+                      alt=""
+                      loading="lazy"
+                      onClick={() => p.image && setZoom(p.image)}
+                    />
                   )}
                   <div className="menu-item">
                     <h3>{p.name}</h3>
@@ -163,6 +171,8 @@ export default function Compose({
           </button>
         </div>
       )}
+
+      {zoom && <Lightbox src={zoom} onClose={() => setZoom(null)} />}
     </>
   );
 }

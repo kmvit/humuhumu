@@ -41,6 +41,7 @@ export interface Product {
   name: string;
   description: string;
   image: string | null;
+  thumbnail: string | null;
   price: string;
   weight_grams: number | null;
   is_available: boolean;

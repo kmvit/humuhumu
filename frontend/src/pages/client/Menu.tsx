@@ -3,12 +3,14 @@ import { get } from "../../api";
 import type { Category, Product } from "../../types";
 import Icon, { categoryIcon } from "../../components/Icon";
 import { SceneBanner, WaveRule } from "../../components/Ornaments";
+import Lightbox from "../../components/Lightbox";
 
 export default function Menu() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [activeCat, setActiveCat] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [zoom, setZoom] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -74,8 +76,14 @@ export default function Menu() {
             {items.map((p) => (
               <div className={"menu-row" + (p.is_available ? "" : " out")} key={p.id}>
                 <div className="menu-lead">
-                  {p.image && (
-                    <img className="menu-thumb" src={p.image} alt="" loading="lazy" />
+                  {p.thumbnail && (
+                    <img
+                      className="menu-thumb zoomable"
+                      src={p.thumbnail}
+                      alt=""
+                      loading="lazy"
+                      onClick={() => p.image && setZoom(p.image)}
+                    />
                   )}
                   <div className="menu-item">
                     <h3>{p.name}</h3>
@@ -89,6 +97,8 @@ export default function Menu() {
           </section>
         ))
       )}
+
+      {zoom && <Lightbox src={zoom} onClose={() => setZoom(null)} />}
     </>
   );
 }

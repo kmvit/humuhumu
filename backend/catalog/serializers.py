@@ -18,6 +18,7 @@ class CategorySerializer(serializers.ModelSerializer):
 class ProductSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     image = serializers.SerializerMethodField()
+    thumbnail = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -28,6 +29,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "name",
             "description",
             "image",
+            "thumbnail",
             "price",
             "weight_grams",
             "is_available",
@@ -35,4 +37,10 @@ class ProductSerializer(serializers.ModelSerializer):
         )
 
     def get_image(self, obj):
+        return obj.image.url if obj.image else None
+
+    def get_thumbnail(self, obj):
+        # если превью ещё не сгенерировано — отдаём полное изображение
+        if obj.thumbnail:
+            return obj.thumbnail.url
         return obj.image.url if obj.image else None
