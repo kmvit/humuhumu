@@ -30,6 +30,14 @@ export default function Waiter() {
   const [closed, setClosed] = useState<Order[]>([]);
   const [splitN, setSplitN] = useState(2);
   const [busyGuest, setBusyGuest] = useState<number | null>(null);
+  const [openClosed, setOpenClosed] = useState<Set<number>>(new Set());
+
+  const toggleClosed = (id: number) =>
+    setOpenClosed((s) => {
+      const n = new Set(s);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
 
   useEffect(() => {
     if (view === "closed") get<Order[]>("/orders/?status=paid").then(setClosed).catch(() => {});
@@ -91,16 +99,17 @@ export default function Waiter() {
   const selOrders = selected ? byTable[selected] ?? [] : [];
   const selTotal = selOrders.reduce((s, o) => s + Number(o.total), 0);
 
-  // разбивка суммы стола по гостям (0 = общий)
-  const guestBreakdown = (() => {
+  // разбивка суммы по гостям (0 = общий)
+  const breakdownOf = (list: Order[]) => {
     const map = new Map<number, number>();
-    for (const o of selOrders)
+    for (const o of list)
       for (const it of o.items) {
         const g = it.guest ?? 0;
         map.set(g, (map.get(g) ?? 0) + Number(it.unit_price) * it.quantity);
       }
     return [...map.entries()].sort((a, b) => a[0] - b[0]);
-  })();
+  };
+  const guestBreakdown = breakdownOf(selOrders);
   const hasGuests = guestBreakdown.some(([g]) => g !== 0);
 
   async function closeTable(table: string) {
@@ -131,17 +140,51 @@ export default function Waiter() {
             {closed.length === 0 ? (
               <p className="muted" style={{ textAlign: "center", marginTop: 24 }}>Закрытых счетов нет</p>
             ) : (
-              closed.map((o) => (
-                <div className="card" key={o.id}>
-                  <div className="between">
-                    <strong>Стол {o.table || "—"} <span className="muted" style={{ fontWeight: 400 }}>· №{o.id}</span></strong>
-                    <span className="num">{Number(o.total).toLocaleString("ru")} ₽</span>
+              closed.map((o) => {
+                const open = openClosed.has(o.id);
+                const bd = breakdownOf([o]);
+                return (
+                  <div className="card hover" key={o.id} style={{ cursor: "pointer" }} onClick={() => toggleClosed(o.id)}>
+                    <div className="between">
+                      <strong>Стол {o.table || "—"} <span className="muted" style={{ fontWeight: 400 }}>· №{o.id}</span></strong>
+                      <span className="num">{Number(o.total).toLocaleString("ru")} ₽</span>
+                    </div>
+                    <div className="between" style={{ marginTop: 2 }}>
+                      <span className="muted" style={{ fontSize: 12 }}>
+                        закрыт {o.closed_at ? fmtClock(o.closed_at) : "—"} · {o.items.length} поз.
+                      </span>
+                      <span className="muted" style={{ fontSize: 12 }}>{open ? "скрыть" : "позиции"}</span>
+                    </div>
+
+                    {open && (
+                      <div style={{ marginTop: 10, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+                        <ul className="stack" style={{ gap: 4, listStyle: "none", padding: 0, margin: 0 }}>
+                          {o.items.map((it) => (
+                            <li key={it.id} className="between">
+                              <span>
+                                {it.product_name}
+                                {it.guest ? <span className="badge open" style={{ marginLeft: 6, padding: "1px 7px", fontSize: 11 }}>Гость {it.guest}</span> : null}
+                              </span>
+                              <span className="num muted">× {it.quantity} · {Number(it.subtotal).toLocaleString("ru")} ₽</span>
+                            </li>
+                          ))}
+                        </ul>
+                        {bd.some(([g]) => g !== 0) && (
+                          <div className="stack" style={{ gap: 3, marginTop: 8 }}>
+                            <div className="muted" style={{ fontSize: 12 }}>По гостям:</div>
+                            {bd.map(([g, sum]) => (
+                              <div className="between" key={g}>
+                                <span>{g === 0 ? "Общий" : `Гость ${g}`}</span>
+                                <span className="num">{sum.toLocaleString("ru")} ₽</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
-                    закрыт {o.closed_at ? fmtClock(o.closed_at) : "—"} · {o.items.length} поз.
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </>
