@@ -7,7 +7,7 @@ class OrderItemInline(admin.TabularInline):
     model = OrderItem
     extra = 0
     readonly_fields = ("subtotal",)
-    fields = ("product", "quantity", "unit_price", "status", "subtotal")
+    fields = ("product", "quantity", "unit_price", "guest", "status", "subtotal")
 
 
 @admin.register(Order)

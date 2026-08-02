@@ -32,11 +32,13 @@ def create_order(*, waiter, items: list[dict], table: str = "") -> Order:
         quantity = int(line.get("quantity", 1))
         if quantity < 1:
             raise OrderError("Количество должно быть положительным")
+        guest = line.get("guest")
         OrderItem.objects.create(
             order=order,
             product=product,
             quantity=quantity,
             unit_price=product.price,  # фиксируем цену на момент покупки
+            guest=guest if guest else None,  # 0/None → общий
         )
 
     order.recalc_total()

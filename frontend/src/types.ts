@@ -53,6 +53,7 @@ export interface OrderItem {
   product_name: string;
   station: Station;
   status: StationStatus;
+  guest: number | null;
   quantity: number;
   unit_price: string;
   subtotal: string;

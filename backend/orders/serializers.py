@@ -11,7 +11,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = OrderItem
         fields = (
-            "id", "product", "product_name", "station", "status",
+            "id", "product", "product_name", "station", "status", "guest",
             "quantity", "unit_price", "subtotal",
         )
         read_only_fields = ("unit_price",)
@@ -57,6 +57,7 @@ class OrderSerializer(serializers.ModelSerializer):
 class OrderItemCreateSerializer(serializers.Serializer):
     product = serializers.IntegerField()
     quantity = serializers.IntegerField(min_value=1, default=1)
+    guest = serializers.IntegerField(min_value=1, required=False, allow_null=True)
 
 
 class OrderCreateSerializer(serializers.Serializer):

@@ -130,6 +130,8 @@ class OrderItem(models.Model):
         "Статус", max_length=12,
         choices=Order.StationStatus.choices, default=Order.StationStatus.NEW,
     )
+    # номер гостя для раздельного счёта; пусто = общий заказ
+    guest = models.PositiveSmallIntegerField("Гость", null=True, blank=True)
 
     class Meta:
         verbose_name = "Позиция заказа"

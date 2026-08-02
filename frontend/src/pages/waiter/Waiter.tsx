@@ -61,6 +61,18 @@ export default function Waiter() {
   const selOrders = selected ? byTable[selected] ?? [] : [];
   const selTotal = selOrders.reduce((s, o) => s + Number(o.total), 0);
 
+  // разбивка суммы стола по гостям (0 = общий)
+  const guestBreakdown = (() => {
+    const map = new Map<number, number>();
+    for (const o of selOrders)
+      for (const it of o.items) {
+        const g = it.guest ?? 0;
+        map.set(g, (map.get(g) ?? 0) + Number(it.unit_price) * it.quantity);
+      }
+    return [...map.entries()].sort((a, b) => a[0] - b[0]);
+  })();
+  const hasGuests = guestBreakdown.some(([g]) => g !== 0);
+
   async function closeTable(table: string) {
     setClosing(true);
     try {
@@ -126,7 +138,11 @@ export default function Waiter() {
                   <ul className="stack" style={{ gap: 3, margin: "8px 0 0", listStyle: "none", padding: 0 }}>
                     {o.items.map((it) => (
                       <li key={it.id} className="between">
-                        <span>{it.product_name} <span className="muted" style={{ fontSize: 12 }}>· {it.station === "kitchen" ? "кухня" : "бар"}</span></span>
+                        <span>
+                          {it.product_name}
+                          <span className="muted" style={{ fontSize: 12 }}> · {it.station === "kitchen" ? "кухня" : "бар"}</span>
+                          {it.guest && <span className="badge open" style={{ marginLeft: 6, padding: "1px 7px", fontSize: 11 }}>Гость {it.guest}</span>}
+                        </span>
                         {confirmId === it.id ? (
                           <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                             <span className="muted" style={{ fontSize: 12.5 }}>Убрать?</span>
@@ -173,6 +189,20 @@ export default function Waiter() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {selOrders.length > 0 && hasGuests && (
+            <div style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+              <div className="muted" style={{ fontSize: 12.5, marginBottom: 6 }}>Счёт по гостям</div>
+              <div className="stack" style={{ gap: 4 }}>
+                {guestBreakdown.map(([g, sum]) => (
+                  <div className="between" key={g}>
+                    <span>{g === 0 ? "Общий" : `Гость ${g}`}</span>
+                    <span className="num">{sum.toLocaleString("ru")} ₽</span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
