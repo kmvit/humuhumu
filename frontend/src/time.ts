@@ -5,6 +5,10 @@ export function minutesBetween(from: string, to?: string | null): number {
   return Math.max(0, Math.round((end - start) / 60000));
 }
 
+export function fmtClock(iso: string): string {
+  return new Date(iso).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" });
+}
+
 export function fmtDuration(mins: number): string {
   if (mins < 1) return "меньше мин";
   if (mins < 60) return `${mins} мин`;

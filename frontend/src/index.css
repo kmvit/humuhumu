@@ -325,6 +325,10 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 .badge.pending { background: #f6efdc; color: #8a6a1f; border-color: rgba(138, 106, 31, 0.24); }
 .badge.paid, .badge.ready { background: var(--brand-soft); color: var(--brand); border-color: rgba(31, 88, 166, 0.26); }
 .badge.preparing, .badge.open { background: #e6edf7; color: #2b5a99; border-color: rgba(43, 90, 153, 0.24); }
+.badge.guest-chip { cursor: pointer; padding: 1px 8px; font-size: 11px; font-weight: 600; color: var(--muted); background: transparent; border: 1px dashed var(--rule); transition: all 0.15s var(--ease); }
+.badge.guest-chip:hover { border-color: var(--brand); color: var(--brand); }
+.badge.guest-chip.open { border-style: solid; }
+.badge.guest-chip:disabled { opacity: 0.5; }
 [data-theme="dark"] .badge.open { background: rgba(138, 184, 234, 0.12); color: #8ab8ea; border-color: rgba(138, 184, 234, 0.26); }
 .badge.done { background: #eae4d5; color: #5b6b52; border-color: rgba(91, 107, 82, 0.24); }
 .badge.cancelled { background: #f6e5e1; color: var(--danger); border-color: rgba(179, 64, 47, 0.24); }

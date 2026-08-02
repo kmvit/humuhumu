@@ -1,9 +1,9 @@
-import { useMemo, useState } from "react";
-import { post } from "../../api";
+import { useEffect, useMemo, useState } from "react";
+import { get, patch, post } from "../../api";
 import type { Order, OrderItem, StationStatus } from "../../types";
 import Icon from "../../components/Icon";
 import { useLiveOrders } from "../../useLiveOrders";
-import { fmtDuration, minutesBetween } from "../../time";
+import { fmtClock, fmtDuration, minutesBetween } from "../../time";
 import Compose from "./Compose";
 
 const TABLES = Array.from({ length: 10 }, (_, i) => String(i + 1));
@@ -26,6 +26,23 @@ export default function Waiter() {
   const [closing, setClosing] = useState(false);
   const [busyItem, setBusyItem] = useState<number | null>(null);
   const [confirmId, setConfirmId] = useState<number | null>(null);
+  const [view, setView] = useState<"open" | "closed">("open");
+  const [closed, setClosed] = useState<Order[]>([]);
+  const [splitN, setSplitN] = useState(2);
+  const [busyGuest, setBusyGuest] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (view === "closed") get<Order[]>("/orders/?status=paid").then(setClosed).catch(() => {});
+  }, [view]);
+
+  // при открытии стола подставляем N = число уже отмеченных гостей (минимум 2)
+  useEffect(() => {
+    if (!selected) return;
+    const os = byTable[selected] ?? [];
+    const maxG = Math.max(0, ...os.flatMap((o) => o.items.map((i) => i.guest ?? 0)));
+    setSplitN(Math.max(2, maxG));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
 
   // подтверждение прямо в UI — нативный confirm() в киоск/встроенных браузерах подавляется
   async function removeItem(order: Order, item: OrderItem) {
@@ -36,6 +53,19 @@ export default function Waiter() {
       await reload();
     } finally {
       setBusyItem(null);
+    }
+  }
+
+  // разбиение счёта: тап по позиции меняет её гостя (0 = общий, дальше 1..splitN)
+  async function cycleGuest(order: Order, item: OrderItem) {
+    const cur = item.guest ?? 0;
+    const next = cur >= splitN ? 0 : cur + 1;
+    setBusyGuest(item.id);
+    try {
+      await patch(`/orders/${order.id}/item_guest/`, { item_id: item.id, guest: next || null });
+      await reload();
+    } finally {
+      setBusyGuest(null);
     }
   }
 
@@ -86,7 +116,37 @@ export default function Waiter() {
 
   return (
     <>
-      <h1 className="h1">Столы</h1>
+      <div className="between">
+        <h1 className="h1">Столы</h1>
+        <div className="wrap">
+          <button className={"btn sm" + (view === "open" ? "" : " ghost")} onClick={() => setView("open")}>Открытые</button>
+          <button className={"btn sm" + (view === "closed" ? "" : " ghost")} onClick={() => { setView("closed"); setSelected(null); }}>Закрытые</button>
+        </div>
+      </div>
+
+      {view === "closed" ? (
+        <>
+          <p className="muted" style={{ marginTop: 4 }}>Закрытые счета</p>
+          <div className="stack" style={{ gap: 10, marginTop: 16 }}>
+            {closed.length === 0 ? (
+              <p className="muted" style={{ textAlign: "center", marginTop: 24 }}>Закрытых счетов нет</p>
+            ) : (
+              closed.map((o) => (
+                <div className="card" key={o.id}>
+                  <div className="between">
+                    <strong>Стол {o.table || "—"} <span className="muted" style={{ fontWeight: 400 }}>· №{o.id}</span></strong>
+                    <span className="num">{Number(o.total).toLocaleString("ru")} ₽</span>
+                  </div>
+                  <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                    закрыт {o.closed_at ? fmtClock(o.closed_at) : "—"} · {o.items.length} поз.
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </>
+      ) : (
+      <>
       <p className="muted" style={{ marginTop: 4 }}>Выберите стол, чтобы создать заказ или закрыть счёт</p>
 
       <div className="grid" style={{ marginTop: 16, gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))" }}>
@@ -141,7 +201,15 @@ export default function Waiter() {
                         <span>
                           {it.product_name}
                           <span className="muted" style={{ fontSize: 12 }}> · {it.station === "kitchen" ? "кухня" : "бар"}</span>
-                          {it.guest && <span className="badge open" style={{ marginLeft: 6, padding: "1px 7px", fontSize: 11 }}>Гость {it.guest}</span>}
+                          <button
+                            className={"badge guest-chip" + (it.guest ? " open" : "")}
+                            style={{ marginLeft: 6 }}
+                            disabled={busyGuest === it.id}
+                            title="Тап — сменить гостя"
+                            onClick={() => cycleGuest(o, it)}
+                          >
+                            {it.guest ? `Гость ${it.guest}` : "общий"}
+                          </button>
                         </span>
                         {confirmId === it.id ? (
                           <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -192,17 +260,29 @@ export default function Waiter() {
             </div>
           )}
 
-          {selOrders.length > 0 && hasGuests && (
+          {selOrders.length > 0 && (
             <div style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
-              <div className="muted" style={{ fontSize: 12.5, marginBottom: 6 }}>Счёт по гостям</div>
-              <div className="stack" style={{ gap: 4 }}>
-                {guestBreakdown.map(([g, sum]) => (
-                  <div className="between" key={g}>
-                    <span>{g === 0 ? "Общий" : `Гость ${g}`}</span>
-                    <span className="num">{sum.toLocaleString("ru")} ₽</span>
-                  </div>
-                ))}
+              <div className="between">
+                <span className="muted" style={{ fontSize: 12.5 }}>Разбить по гостям</span>
+                <div className="stepper" style={{ width: 108 }}>
+                  <button onClick={() => setSplitN((n) => Math.max(2, n - 1))} aria-label="Меньше"><Icon name="minus" size={14} /></button>
+                  <span className="count num">{splitN}</span>
+                  <button onClick={() => setSplitN((n) => Math.min(12, n + 1))} aria-label="Больше"><Icon name="plus" size={14} /></button>
+                </div>
               </div>
+              <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                Тапайте позицию, чтобы назначить гостя (Общий → 1 … {splitN})
+              </div>
+              {hasGuests && (
+                <div className="stack" style={{ gap: 4, marginTop: 10 }}>
+                  {guestBreakdown.map(([g, sum]) => (
+                    <div className="between" key={g}>
+                      <span>{g === 0 ? "Общий" : `Гость ${g}`}</span>
+                      <span className="num">{sum.toLocaleString("ru")} ₽</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -221,6 +301,8 @@ export default function Waiter() {
             )}
           </div>
         </section>
+      )}
+      </>
       )}
     </>
   );
