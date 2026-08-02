@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { patch } from "../../api";
-import type { Order, Station, StationStatus } from "../../types";
+import type { Order, OrderItem, Station, StationStatus } from "../../types";
 import Icon from "../../components/Icon";
 import { useLiveOrders } from "../../useLiveOrders";
+import { fmtDuration, minutesBetween } from "../../time";
 
 const COLUMNS: { key: StationStatus; label: string }[] = [
   { key: "new", label: "Новый" },
@@ -10,26 +11,62 @@ const COLUMNS: { key: StationStatus; label: string }[] = [
   { key: "ready", label: "Готов" },
 ];
 
-// Канбан-доска станции: три колонки, карточки двигаются вперёд/назад.
-// Одна и та же для кухни и бара — отличается станцией и полем статуса.
+// Канбан станции: карточка в колонке по агрегату, готовность — по каждой позиции.
 export default function StationBoard({ station }: { station: Station }) {
   const isKitchen = station === "kitchen";
   const title = isKitchen ? "Кухня" : "Бар";
-  const subtitle = isKitchen ? "Еда — двигайте по статусам" : "Напитки — двигайте по статусам";
+  const subtitle = isKitchen ? "Еда — отмечайте готовность позиций" : "Напитки — отмечайте готовность позиций";
   const empty = isKitchen ? "Нет заказов на кухне" : "Нет заказов в баре";
   const statusField: "food_status" | "drinks_status" = isKitchen ? "food_status" : "drinks_status";
 
   const { orders, setOrders, highlight } = useLiveOrders(`/orders/?station=${station}`);
-  const [busyId, setBusyId] = useState<number | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
 
-  async function move(o: Order, target: StationStatus) {
-    setBusyId(o.id);
+  function apply(updated: Order) {
+    setOrders((os) => os.map((x) => (x.id === updated.id ? updated : x)));
+  }
+
+  async function setItem(order: Order, item: OrderItem, target: StationStatus) {
+    setBusy(`i${item.id}`);
     try {
-      await patch(`/orders/${o.id}/${statusField}/`, { status: target });
-      setOrders((os) => os.map((x) => (x.id === o.id ? { ...x, [statusField]: target } : x)));
+      apply(await patch<Order>(`/orders/${order.id}/item_status/`, { item_id: item.id, status: target }));
     } finally {
-      setBusyId(null);
+      setBusy(null);
     }
+  }
+
+  async function allReady(order: Order) {
+    setBusy(`o${order.id}`);
+    try {
+      apply(await patch<Order>(`/orders/${order.id}/${statusField}/`, { status: "ready" }));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function itemControl(order: Order, it: OrderItem) {
+    if (it.status === "ready") {
+      return (
+        <button
+          className="icon-btn sm"
+          title="Вернуть в работу"
+          disabled={busy === `i${it.id}`}
+          onClick={() => setItem(order, it, "in_progress")}
+        >
+          <Icon name="check" size={14} />
+        </button>
+      );
+    }
+    const next: StationStatus = it.status === "new" ? "in_progress" : "ready";
+    return (
+      <button
+        className={"btn sm" + (it.status === "new" ? " ghost" : "")}
+        disabled={busy === `i${it.id}`}
+        onClick={() => setItem(order, it, next)}
+      >
+        {it.status === "new" ? "В работу" : "Готово"}
+      </button>
+    );
   }
 
   return (
@@ -53,42 +90,40 @@ export default function StationBoard({ station }: { station: Station }) {
                   <span className="chip sm">{cards.length}</span>
                 </div>
                 <div className="stack" style={{ gap: 10 }}>
-                  {cards.map((o) => (
-                    <div className={"card" + (highlight.has(o.id) ? " new-order" : "")} key={o.id}>
-                      <div className="between">
-                        <strong style={{ fontFamily: "Fredoka", fontSize: 17 }}>№{o.id}</strong>
-                        {o.table && <span className="badge open">Стол {o.table}</span>}
-                      </div>
-                      <ul className="stack" style={{ gap: 3, margin: "10px 0", listStyle: "none", padding: 0 }}>
-                        {o.items.filter((it) => it.station === station).map((it) => (
-                          <li key={it.id} className="between">
-                            <span>{it.product_name}</span>
-                            <span className="num muted">× {it.quantity}</span>
-                          </li>
-                        ))}
-                      </ul>
-                      <div className="wrap">
-                        {col.key !== "new" && (
+                  {cards.map((o) => {
+                    const its = o.items.filter((it) => it.station === station);
+                    const notAllReady = its.some((it) => it.status !== "ready");
+                    return (
+                      <div className={"card" + (highlight.has(o.id) ? " new-order" : "")} key={o.id}>
+                        <div className="between">
+                          <strong style={{ fontFamily: "Fredoka", fontSize: 17 }}>№{o.id}</strong>
+                          {o.table && <span className="badge open">Стол {o.table}</span>}
+                        </div>
+                        <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>
+                          <Icon name="spark" size={12} /> {fmtDuration(minutesBetween(o.created_at))}
+                        </div>
+                        <ul className="stack" style={{ gap: 6, margin: "10px 0", listStyle: "none", padding: 0 }}>
+                          {its.map((it) => (
+                            <li key={it.id} className="between" style={{ gap: 8 }}>
+                              <span style={{ opacity: it.status === "ready" ? 0.55 : 1, textDecoration: it.status === "ready" ? "line-through" : "none" }}>
+                                {it.product_name} <span className="num muted">× {it.quantity}</span>
+                              </span>
+                              {itemControl(o, it)}
+                            </li>
+                          ))}
+                        </ul>
+                        {its.length > 1 && notAllReady && (
                           <button
-                            className="btn sm ghost"
-                            disabled={busyId === o.id}
-                            onClick={() => move(o, col.key === "ready" ? "in_progress" : "new")}
+                            className="btn sm block"
+                            disabled={busy === `o${o.id}`}
+                            onClick={() => allReady(o)}
                           >
-                            <Icon name="minus" size={15} /> Назад
-                          </button>
-                        )}
-                        {col.key !== "ready" && (
-                          <button
-                            className="btn sm"
-                            disabled={busyId === o.id}
-                            onClick={() => move(o, col.key === "new" ? "in_progress" : "ready")}
-                          >
-                            {col.key === "new" ? "В работу" : "Готово"} <Icon name="check" size={15} />
+                            <Icon name="check" size={16} /> Готово всё
                           </button>
                         )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {cards.length === 0 && (
                     <p className="muted" style={{ fontSize: 13, textAlign: "center", padding: "6px 0" }}>—</p>
                   )}

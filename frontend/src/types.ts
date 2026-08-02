@@ -51,6 +51,7 @@ export interface OrderItem {
   product: number;
   product_name: string;
   station: Station;
+  status: StationStatus;
   quantity: number;
   unit_price: string;
   subtotal: string;
@@ -74,6 +75,11 @@ export interface Order {
   total: string;
   items: OrderItem[];
   created_at: string;
+  food_started_at: string | null;
+  food_ready_at: string | null;
+  drinks_started_at: string | null;
+  drinks_ready_at: string | null;
+  closed_at: string | null;
 }
 
 export interface Wallet {

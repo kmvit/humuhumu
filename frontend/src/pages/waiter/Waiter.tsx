@@ -3,6 +3,7 @@ import { post } from "../../api";
 import type { Order, OrderItem, StationStatus } from "../../types";
 import Icon from "../../components/Icon";
 import { useLiveOrders } from "../../useLiveOrders";
+import { fmtDuration, minutesBetween } from "../../time";
 import Compose from "./Compose";
 
 const TABLES = Array.from({ length: 10 }, (_, i) => String(i + 1));
@@ -118,6 +119,9 @@ export default function Waiter() {
                     <span className={"badge " + (o.is_ready ? "ready" : "preparing")}>
                       {o.is_ready ? "готов" : "готовится"}
                     </span>
+                  </div>
+                  <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                    <Icon name="spark" size={12} /> {fmtDuration(minutesBetween(o.created_at))} · с открытия
                   </div>
                   <ul className="stack" style={{ gap: 3, margin: "8px 0 0", listStyle: "none", padding: 0 }}>
                     {o.items.map((it) => (

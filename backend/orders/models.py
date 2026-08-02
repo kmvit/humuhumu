@@ -49,19 +49,18 @@ class Order(models.Model):
     status = models.CharField(
         "Статус", max_length=16, choices=Status.choices, default=Status.OPEN
     )
-    # канбан-статус по станциям: кухня ведёт еду, бар — напитки
-    food_status = models.CharField(
-        "Еда", max_length=12, choices=StationStatus.choices, default=StationStatus.NEW
-    )
-    drinks_status = models.CharField(
-        "Напитки", max_length=12, choices=StationStatus.choices, default=StationStatus.NEW
-    )
     pay_method = models.CharField(
         "Способ оплаты", max_length=16, choices=PayMethod.choices,
         blank=True, default=PayMethod.CASH,
     )
     total = models.DecimalField("Сумма", max_digits=12, decimal_places=2, default=0)
     created_at = models.DateTimeField("Создан", auto_now_add=True)
+    # учёт времени по этапам техпроцесса (проставляются при смене статуса станции)
+    food_started_at = models.DateTimeField("Кухня взяла", null=True, blank=True)
+    food_ready_at = models.DateTimeField("Кухня готова", null=True, blank=True)
+    drinks_started_at = models.DateTimeField("Бар взял", null=True, blank=True)
+    drinks_ready_at = models.DateTimeField("Бар готов", null=True, blank=True)
+    closed_at = models.DateTimeField("Закрыт", null=True, blank=True)
 
     class Meta:
         verbose_name = "Заказ"
@@ -76,20 +75,44 @@ class Order(models.Model):
         self.total = sum((item.subtotal for item in self.items.all()), start=0)
         return self.total
 
+    @staticmethod
+    def aggregate_status(statuses):
+        """Агрегат статуса станции из статусов её позиций."""
+        statuses = list(statuses)
+        if not statuses:
+            return None
+        if all(s == Order.StationStatus.READY for s in statuses):
+            return Order.StationStatus.READY
+        if any(s != Order.StationStatus.NEW for s in statuses):
+            return Order.StationStatus.IN_PROGRESS
+        return Order.StationStatus.NEW
+
+    def _station_items(self, station):
+        return [i for i in self.items.all() if i.station == station]
+
     @property
     def has_food(self) -> bool:
-        return any(i.station == Category.Station.KITCHEN for i in self.items.all())
+        return bool(self._station_items(Category.Station.KITCHEN))
 
     @property
     def has_drinks(self) -> bool:
-        return any(i.station == Category.Station.BAR for i in self.items.all())
+        return bool(self._station_items(Category.Station.BAR))
+
+    @property
+    def food_status(self):
+        agg = self.aggregate_status(i.status for i in self._station_items(Category.Station.KITCHEN))
+        return agg or self.StationStatus.NEW
+
+    @property
+    def drinks_status(self):
+        agg = self.aggregate_status(i.status for i in self._station_items(Category.Station.BAR))
+        return agg or self.StationStatus.NEW
 
     @property
     def is_ready(self) -> bool:
-        """Заказ готов, когда готовы обе задействованные станции."""
-        food_ok = not self.has_food or self.food_status == self.StationStatus.READY
-        drinks_ok = not self.has_drinks or self.drinks_status == self.StationStatus.READY
-        return food_ok and drinks_ok
+        """Заказ готов, когда все его позиции готовы."""
+        items = list(self.items.all())
+        return bool(items) and all(i.status == self.StationStatus.READY for i in items)
 
 
 class OrderItem(models.Model):
@@ -103,6 +126,10 @@ class OrderItem(models.Model):
     )
     quantity = models.PositiveIntegerField("Количество", default=1)
     unit_price = models.DecimalField("Цена за единицу", max_digits=10, decimal_places=2)
+    status = models.CharField(
+        "Статус", max_length=12,
+        choices=Order.StationStatus.choices, default=Order.StationStatus.NEW,
+    )
 
     class Meta:
         verbose_name = "Позиция заказа"

@@ -1,17 +1,25 @@
+from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from catalog.models import Category
+from users.models import User
 from users.permissions import IsBarOrAdmin, IsCookOrAdmin, IsWaiterOrAdmin
 
-from .models import Order
+from .models import Order, OrderItem
 from .serializers import OrderCreateSerializer, OrderSerializer
 from .services import OrderError, create_order
 
+STATION_TIMES = {
+    Category.Station.KITCHEN: ("food_started_at", "food_ready_at"),
+    Category.Station.BAR: ("drinks_started_at", "drinks_ready_at"),
+}
+
 
 class OrderViewSet(viewsets.ModelViewSet):
-    """Заказы. Создаёт официант; кухня/бар отмечают готовность; официант закрывает счёт."""
+    """Заказы: официант создаёт/закрывает; кухня и бар ведут готовность позиций."""
 
     http_method_names = ["get", "post", "patch"]
 
@@ -24,18 +32,18 @@ class OrderViewSet(viewsets.ModelViewSet):
             return [IsBarOrAdmin()]
         if self.action in ("close_table", "cancel", "remove_item"):
             return [IsWaiterOrAdmin()]
+        # item_status — право проверяем внутри по станции позиции
         return [IsAuthenticated()]
 
     def get_queryset(self):
         qs = Order.objects.prefetch_related("items__product__category")
         params = self.request.query_params
-        # доска кухни: все открытые заказы с едой (канбан — видно все статусы)
+        # доски кухни/бара: все открытые заказы с позициями этой станции
         if params.get("station") == "kitchen":
             return qs.filter(
                 status=Order.Status.OPEN,
                 items__product__category__station="kitchen",
             ).distinct()
-        # доска бара: все открытые заказы с напитками
         if params.get("station") == "bar":
             return qs.filter(
                 status=Order.Status.OPEN,
@@ -65,27 +73,82 @@ class OrderViewSet(viewsets.ModelViewSet):
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
-    def _set_station_status(self, request, field):
+    # --- готовность станций/позиций ---
+
+    def _sync_times(self, order, station):
+        """Проставить/сбросить таймстемпы станции по агрегату статусов её позиций."""
+        started, ready = STATION_TIMES[station]
+        agg = Order.aggregate_status(
+            i.status for i in order.items.all() if i.station == station
+        )
+        now = timezone.now()
+        changed = []
+        if agg in (Order.StationStatus.IN_PROGRESS, Order.StationStatus.READY):
+            if getattr(order, started) is None:
+                setattr(order, started, now); changed.append(started)
+        if agg == Order.StationStatus.READY:
+            if getattr(order, ready) is None:
+                setattr(order, ready, now); changed.append(ready)
+        elif getattr(order, ready) is not None:
+            setattr(order, ready, None); changed.append(ready)
+        if changed:
+            order.save(update_fields=changed)
+
+    def _reload_and_respond(self, pk, *stations):
+        order = Order.objects.prefetch_related("items__product__category").get(pk=pk)
+        for st in stations:
+            self._sync_times(order, st)
+        return Response(OrderSerializer(order).data)
+
+    @staticmethod
+    def _valid_status(value):
+        return value in {c for c, _ in Order.StationStatus.choices}
+
+    def _bulk_station(self, request, station):
         order = self.get_object()
         value = request.data.get("status")
-        valid = {c for c, _ in Order.StationStatus.choices}
-        if value not in valid:
-            return Response(
-                {"detail": "Неверный статус"}, status=status.HTTP_400_BAD_REQUEST
-            )
-        setattr(order, field, value)
-        order.save(update_fields=[field])
-        return Response(OrderSerializer(order).data)
+        if not self._valid_status(value):
+            return Response({"detail": "Неверный статус"}, status=status.HTTP_400_BAD_REQUEST)
+        items = [i for i in order.items.all() if i.station == station]
+        for it in items:
+            it.status = value
+        if items:
+            OrderItem.objects.bulk_update(items, ["status"])
+        return self._reload_and_respond(order.pk, station)
 
     @action(detail=True, methods=["patch"])
     def food_status(self, request, pk=None):
-        """Повар двигает еду по канбану: new/in_progress/ready."""
-        return self._set_station_status(request, "food_status")
+        """Повар: перевести всю еду заказа в статус new/in_progress/ready."""
+        return self._bulk_station(request, Category.Station.KITCHEN)
 
     @action(detail=True, methods=["patch"])
     def drinks_status(self, request, pk=None):
-        """Бар двигает напитки по канбану: new/in_progress/ready."""
-        return self._set_station_status(request, "drinks_status")
+        """Бар: перевести все напитки заказа в статус new/in_progress/ready."""
+        return self._bulk_station(request, Category.Station.BAR)
+
+    @action(detail=True, methods=["patch"])
+    def item_status(self, request, pk=None):
+        """Готовность отдельной позиции. Повар — кухня, бар — бар, админ — всё."""
+        order = self.get_object()
+        value = request.data.get("status")
+        if not self._valid_status(value):
+            return Response({"detail": "Неверный статус"}, status=status.HTTP_400_BAD_REQUEST)
+        item = order.items.filter(id=request.data.get("item_id")).first()
+        if not item:
+            return Response({"detail": "Позиция не найдена"}, status=status.HTTP_404_NOT_FOUND)
+        role, st = request.user.role, item.station
+        allowed = (
+            role == User.Role.ADMIN
+            or (role == User.Role.COOK and st == Category.Station.KITCHEN)
+            or (role == User.Role.BAR and st == Category.Station.BAR)
+        )
+        if not allowed:
+            return Response(
+                {"detail": "Нет прав на эту позицию"}, status=status.HTTP_403_FORBIDDEN
+            )
+        item.status = value
+        item.save(update_fields=["status"])
+        return self._reload_and_respond(order.pk, st)
 
     @action(detail=True, methods=["patch"])
     def cancel(self, request, pk=None):
@@ -93,7 +156,8 @@ class OrderViewSet(viewsets.ModelViewSet):
         order = self.get_object()
         order.status = Order.Status.CANCELLED
         order.closed_by = request.user
-        order.save(update_fields=["status", "closed_by"])
+        order.closed_at = timezone.now()
+        order.save(update_fields=["status", "closed_by", "closed_at"])
         return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["post"])
@@ -111,17 +175,19 @@ class OrderViewSet(viewsets.ModelViewSet):
                 {"detail": "Позиция не найдена"}, status=status.HTTP_404_NOT_FOUND
             )
         item.delete()
-        # перечитываем заказ — сбрасываем кэш prefetch, иначе сумма/позиции стухнут
         order = Order.objects.prefetch_related("items__product__category").get(pk=order.pk)
         if order.items.exists():
             order.recalc_total()
             order.save(update_fields=["total"])
+            # агрегат станций мог измениться — освежаем таймстемпы
+            self._sync_times(order, Category.Station.KITCHEN)
+            self._sync_times(order, Category.Station.BAR)
         else:
-            # убрали последнюю позицию — заказ пустой, отменяем
             order.total = 0
             order.status = Order.Status.CANCELLED
             order.closed_by = request.user
-            order.save(update_fields=["total", "status", "closed_by"])
+            order.closed_at = timezone.now()
+            order.save(update_fields=["total", "status", "closed_by", "closed_at"])
         return Response(OrderSerializer(order).data)
 
     @action(detail=False, methods=["post"])
@@ -134,6 +200,8 @@ class OrderViewSet(viewsets.ModelViewSet):
             )
         open_orders = Order.objects.filter(table=table, status=Order.Status.OPEN)
         count = open_orders.update(
-            status=Order.Status.PAID, closed_by=request.user
+            status=Order.Status.PAID,
+            closed_by=request.user,
+            closed_at=timezone.now(),
         )
         return Response({"table": table, "closed": count})

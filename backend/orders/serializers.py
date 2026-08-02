@@ -11,7 +11,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = OrderItem
         fields = (
-            "id", "product", "product_name", "station",
+            "id", "product", "product_name", "station", "status",
             "quantity", "unit_price", "subtotal",
         )
         read_only_fields = ("unit_price",)
@@ -25,6 +25,8 @@ class OrderSerializer(serializers.ModelSerializer):
     has_food = serializers.BooleanField(read_only=True)
     has_drinks = serializers.BooleanField(read_only=True)
     is_ready = serializers.BooleanField(read_only=True)
+    food_status = serializers.ReadOnlyField()
+    drinks_status = serializers.ReadOnlyField()
 
     class Meta:
         model = Order
@@ -44,6 +46,11 @@ class OrderSerializer(serializers.ModelSerializer):
             "total",
             "items",
             "created_at",
+            "food_started_at",
+            "food_ready_at",
+            "drinks_started_at",
+            "drinks_ready_at",
+            "closed_at",
         )
 
 
