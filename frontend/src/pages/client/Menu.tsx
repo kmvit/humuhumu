@@ -73,9 +73,14 @@ export default function Menu() {
 
             {items.map((p) => (
               <div className={"menu-row" + (p.is_available ? "" : " out")} key={p.id}>
-                <div className="menu-item">
-                  <h3>{p.name}</h3>
-                  {p.description && <p className="menu-desc">{p.description}</p>}
+                <div className="menu-lead">
+                  {p.image && (
+                    <img className="menu-thumb" src={p.image} alt="" loading="lazy" />
+                  )}
+                  <div className="menu-item">
+                    <h3>{p.name}</h3>
+                    {p.description && <p className="menu-desc">{p.description}</p>}
+                  </div>
                 </div>
                 <span className="menu-price num">{Number(p.price).toLocaleString("ru")}</span>
                 {!p.is_available && <span className="muted" style={{ fontSize: 13 }}>нет</span>}
