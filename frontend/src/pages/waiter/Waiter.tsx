@@ -19,6 +19,9 @@ const STATUS_CLASS: Record<StationStatus, string> = {
 
 export default function Waiter() {
   const { orders, reload } = useLiveOrders("/orders/?status=open", { sound: false });
+  // заявки от клиентов (без стола) — со звуком, чтобы официант заметил
+  const { orders: requests, highlight: reqHighlight, reload: reloadRequests } =
+    useLiveOrders("/orders/?status=requested", { sound: true });
   const [selected, setSelected] = useState<string | null>(null);
   const [composeFor, setComposeFor] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
@@ -30,6 +33,7 @@ export default function Waiter() {
   const [busyGuest, setBusyGuest] = useState<number | null>(null);
   const [openClosed, setOpenClosed] = useState<Set<number>>(new Set());
   const [tables, setTables] = useState<string[]>([]);
+  const [busyReq, setBusyReq] = useState<number | null>(null);
 
   useEffect(() => {
     get<Table[]>("/tables/").then((ts) => setTables(ts.map((t) => t.name))).catch(() => {});
@@ -126,6 +130,17 @@ export default function Waiter() {
     }
   }
 
+  // официант подтверждает заявку клиента, назначая стол
+  async function confirmRequest(order: Order, table: string) {
+    setBusyReq(order.id);
+    try {
+      await patch(`/orders/${order.id}/confirm/`, { table });
+      await Promise.all([reloadRequests(), reload()]);
+    } finally {
+      setBusyReq(null);
+    }
+  }
+
   return (
     <>
       <div className="between">
@@ -194,6 +209,42 @@ export default function Waiter() {
       ) : (
       <>
       <p className="muted" style={{ marginTop: 4 }}>Выберите стол, чтобы создать заказ или закрыть счёт</p>
+
+      {requests.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div className="between">
+            <strong style={{ fontFamily: "Fredoka", fontSize: 17 }}>Заявки клиентов</strong>
+            <span className="chip"><Icon name="spark" size={15} /> {requests.length}</span>
+          </div>
+          <div className="grid" style={{ marginTop: 10, gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
+            {requests.map((o) => (
+              <div className={"card" + (reqHighlight.has(o.id) ? " new-order" : "")} key={o.id}>
+                <div className="between">
+                  <strong>{o.customer_name || "Клиент"}</strong>
+                  <span className="num">{Number(o.total).toLocaleString("ru")} ₽</span>
+                </div>
+                <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                  <Icon name="spark" size={12} /> {fmtDuration(minutesBetween(o.created_at))} · {o.items.length} поз.
+                </div>
+                <ul className="stack" style={{ gap: 3, margin: "8px 0", listStyle: "none", padding: 0 }}>
+                  {o.items.map((it) => (
+                    <li key={it.id} className="between">
+                      <span>{it.product_name}</span>
+                      <span className="num muted">× {it.quantity}</span>
+                    </li>
+                  ))}
+                </ul>
+                <div className="muted" style={{ fontSize: 12 }}>Принять на стол:</div>
+                <div className="scroll-x" style={{ marginTop: 6 }}>
+                  {tables.map((t) => (
+                    <button key={t} className="navlink" disabled={busyReq === o.id} onClick={() => confirmRequest(o, t)}>{t}</button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid" style={{ marginTop: 16, gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))" }}>
         {tables.map((t) => {

@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { get } from "../../api";
-import type { Category, Product } from "../../types";
+import { get, post, ApiError } from "../../api";
+import type { Category, Order, Product } from "../../types";
 import Icon, { categoryIcon } from "../../components/Icon";
 import { SceneBanner, WaveRule } from "../../components/Ornaments";
 import Lightbox from "../../components/Lightbox";
+
+const TOKEN_KEY = "humu_order_token";
 
 export default function Menu() {
   const [categories, setCategories] = useState<Category[]>([]);
@@ -11,6 +13,13 @@ export default function Menu() {
   const [activeCat, setActiveCat] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [zoom, setZoom] = useState<string | null>(null);
+
+  const [cart, setCart] = useState<Record<number, number>>({});
+  const [name, setName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
+  const [tracked, setTracked] = useState<Order | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -21,13 +30,128 @@ export default function Menu() {
       .finally(() => setLoading(false));
   }, []);
 
-  // меню собираем разделами, как в печатном: заголовок категории + строки блюд
+  // отслеживание своего заказа по токену (пока он есть в localStorage)
+  useEffect(() => {
+    if (!token) {
+      setTracked(null);
+      return;
+    }
+    let stop = false;
+    const poll = () =>
+      get<Order>(`/orders/track/?token=${token}`)
+        .then((o) => !stop && setTracked(o))
+        .catch((e) => {
+          if (e instanceof ApiError && e.status === 404) {
+            localStorage.removeItem(TOKEN_KEY);
+            if (!stop) { setToken(null); setTracked(null); }
+          }
+        });
+    poll();
+    const t = window.setInterval(poll, 5000);
+    return () => { stop = true; window.clearInterval(t); };
+  }, [token]);
+
   const sections = useMemo(() => {
     const all = categories
       .map((c) => ({ cat: c, items: products.filter((p) => p.category === c.id) }))
       .filter((s) => s.items.length > 0);
     return activeCat ? all.filter((s) => s.cat.id === activeCat) : all;
   }, [categories, products, activeCat]);
+  const total = useMemo(
+    () =>
+      Object.entries(cart).reduce((s, [id, q]) => {
+        const p = products.find((x) => x.id === Number(id));
+        return s + (p ? Number(p.price) * q : 0);
+      }, 0),
+    [cart, products]
+  );
+  const count = Object.values(cart).reduce((a, b) => a + b, 0);
+
+  const add = (id: number) => setCart((c) => ({ ...c, [id]: (c[id] || 0) + 1 }));
+  const remove = (id: number) =>
+    setCart((c) => {
+      const n = { ...c, [id]: (c[id] || 0) - 1 };
+      if (n[id] <= 0) delete n[id];
+      return n;
+    });
+
+  async function submit() {
+    if (!name.trim()) {
+      setToast("Укажите имя, чтобы официант нашёл заказ");
+      setTimeout(() => setToast(null), 3000);
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const items = Object.entries(cart).map(([product, quantity]) => ({
+        product: Number(product),
+        quantity,
+      }));
+      const order = await post<Order>("/orders/place/", { customer_name: name.trim(), items });
+      if (order.public_token) {
+        localStorage.setItem(TOKEN_KEY, order.public_token);
+        setToken(order.public_token);
+        setTracked(order);
+      }
+      setCart({});
+    } catch (err) {
+      setToast(err instanceof ApiError ? err.message : "Ошибка");
+      setTimeout(() => setToast(null), 3500);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function newOrder() {
+    localStorage.removeItem(TOKEN_KEY);
+    setToken(null);
+    setTracked(null);
+    setName("");
+  }
+
+  // --- экран статуса своего заказа ---
+  if (tracked) {
+    const st = tracked.status;
+    const head =
+      st === "requested" ? "Заявка принята"
+      : st === "open" ? (tracked.is_ready ? "Готово!" : "Готовится")
+      : st === "paid" ? "Заказ закрыт"
+      : "Заказ отменён";
+    const note =
+      st === "requested" ? `Подойдите к стойке и назовите имя «${tracked.customer_name}» — официант оформит заказ.`
+      : st === "open" ? (tracked.is_ready ? "Ваш заказ готов, можно забирать." : `Заказ готовится${tracked.table ? `, стол ${tracked.table}` : ""}.`)
+      : st === "paid" ? "Спасибо, что были у нас!"
+      : "Заказ отменён.";
+    return (
+      <>
+        <h1 className="h1">Ваш заказ</h1>
+        <div className="card enter" style={{ marginTop: 16 }}>
+          <div className="between">
+            <strong style={{ fontFamily: "Fredoka", fontSize: 20 }}>{head}</strong>
+            <span className={"badge " + (st === "requested" ? "pending" : tracked.is_ready ? "ready" : st === "open" ? "preparing" : st === "paid" ? "paid" : "cancelled")}>
+              {tracked.status_display}
+            </span>
+          </div>
+          <p className="muted" style={{ marginTop: 6 }}>{note}</p>
+          <ul className="stack" style={{ gap: 4, margin: "14px 0 0", listStyle: "none", padding: 0 }}>
+            {tracked.items.map((it) => (
+              <li key={it.id} className="between">
+                <span>{it.product_name}</span>
+                <span className="num muted">× {it.quantity}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="between" style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+            <strong>Итого</strong>
+            <strong className="num">{Number(tracked.total).toLocaleString("ru")} ₽</strong>
+          </div>
+        </div>
+        <button className="btn ghost block" style={{ marginTop: 16 }} onClick={newOrder}>
+          <Icon name="plus" size={18} /> Новый заказ
+        </button>
+      </>
+    );
+  }
 
   return (
     <>
@@ -36,7 +160,7 @@ export default function Menu() {
       </p>
       <h1 className="h1">Меню</h1>
       <p className="muted" style={{ marginTop: 4 }}>
-        Позовите официанта, чтобы сделать заказ
+        Соберите заказ и отправьте — потом подойдите к стойке
       </p>
 
       <SceneBanner />
@@ -91,11 +215,63 @@ export default function Menu() {
                   </div>
                 </div>
                 <span className="menu-price num">{Number(p.price).toLocaleString("ru")}</span>
-                {!p.is_available && <span className="muted" style={{ fontSize: 13 }}>нет</span>}
+                <div className="menu-add">
+                  {cart[p.id] ? (
+                    <div className="stepper" style={{ width: 116 }}>
+                      <button onClick={() => remove(p.id)} aria-label="Убрать"><Icon name="minus" size={16} /></button>
+                      <span className="count num">{cart[p.id]}</span>
+                      <button onClick={() => add(p.id)} aria-label="Добавить"><Icon name="plus" size={16} /></button>
+                    </div>
+                  ) : (
+                    <button
+                      className="btn sm icon"
+                      onClick={() => add(p.id)}
+                      disabled={!p.is_available}
+                      aria-label={`Добавить «${p.name}»`}
+                    >
+                      <Icon name={p.is_available ? "plus" : "spark"} size={16} />
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </section>
         ))
+      )}
+
+      {count > 0 && (
+        <div className="card" style={{ marginTop: 18, marginBottom: 92 }}>
+          <label className="field" style={{ display: "block", marginBottom: 0 }}>
+            <span className="muted" style={{ fontSize: 13 }}>Ваше имя</span>
+            <input
+              className="input"
+              style={{ marginTop: 6 }}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Как вас зовут?"
+              maxLength={120}
+            />
+          </label>
+        </div>
+      )}
+
+      {toast && (
+        <div className="toast bad" role="status">
+          <Icon name="spark" size={18} /> {toast}
+        </div>
+      )}
+
+      {count > 0 && (
+        <div className="cartbar">
+          <div className="stack" style={{ gap: 0 }}>
+            <span className="muted">{count} поз.</span>
+            <span className="total num">{total.toLocaleString("ru")} ₽</span>
+          </div>
+          <button className="btn" onClick={submit} disabled={submitting}>
+            <Icon name={submitting ? "spark" : "check"} size={18} />
+            Отправить
+          </button>
+        </div>
       )}
 
       {zoom && <Lightbox src={zoom} onClose={() => setZoom(null)} />}

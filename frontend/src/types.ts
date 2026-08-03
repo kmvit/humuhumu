@@ -67,7 +67,7 @@ export interface OrderItem {
   subtotal: string;
 }
 
-export type OrderStatus = "open" | "paid" | "cancelled";
+export type OrderStatus = "requested" | "open" | "paid" | "cancelled";
 
 export interface Order {
   id: number;
@@ -75,6 +75,8 @@ export interface Order {
   waiter: number | null;
   closed_by: number | null;
   table: string;
+  customer_name: string;
+  public_token: string | null;
   status: OrderStatus;
   status_display: string;
   food_status: StationStatus;

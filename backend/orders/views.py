@@ -1,7 +1,7 @@
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from catalog.models import Category
@@ -9,8 +9,13 @@ from users.models import User
 from users.permissions import IsBarOrAdmin, IsCookOrAdmin, IsWaiterOrAdmin
 
 from .models import Order, OrderItem, Table
-from .serializers import OrderCreateSerializer, OrderSerializer, TableSerializer
-from .services import OrderError, create_order
+from .serializers import (
+    ClientOrderSerializer,
+    OrderCreateSerializer,
+    OrderSerializer,
+    TableSerializer,
+)
+from .services import OrderError, create_order, create_request
 
 
 class TableViewSet(viewsets.ReadOnlyModelViewSet):
@@ -32,13 +37,15 @@ class OrderViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch"]
 
     def get_permissions(self):
+        if self.action in ("place", "track"):
+            return [AllowAny()]  # клиент без авторизации
         if self.action == "create":
             return [IsWaiterOrAdmin()]
         if self.action == "food_status":
             return [IsCookOrAdmin()]
         if self.action == "drinks_status":
             return [IsBarOrAdmin()]
-        if self.action in ("close_table", "cancel", "remove_item", "item_guest"):
+        if self.action in ("close_table", "cancel", "remove_item", "item_guest", "confirm"):
             return [IsWaiterOrAdmin()]
         # item_status — право проверяем внутри по станции позиции
         return [IsAuthenticated()]
@@ -80,6 +87,58 @@ class OrderViewSet(viewsets.ModelViewSet):
         except OrderError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
+
+    # --- клиентские заявки без авторизации ---
+
+    @action(detail=False, methods=["post"])
+    def place(self, request):
+        """Клиент отправляет заявку (имя + позиции). Стол назначит официант."""
+        serializer = ClientOrderSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            order = create_request(
+                customer_name=serializer.validated_data.get("customer_name", ""),
+                items=serializer.validated_data["items"],
+            )
+        except OrderError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["get"])
+    def track(self, request):
+        """Клиент смотрит статус своей заявки/заказа по токену."""
+        token = request.query_params.get("token")
+        order = None
+        if token:
+            order = (
+                Order.objects.prefetch_related("items__product__category")
+                .filter(public_token=token)
+                .first()
+            )
+        if not order:
+            return Response(
+                {"detail": "Заказ не найден"}, status=status.HTTP_404_NOT_FOUND
+            )
+        return Response(OrderSerializer(order).data)
+
+    @action(detail=True, methods=["patch"])
+    def confirm(self, request, pk=None):
+        """Официант подтверждает заявку клиента: назначает стол, заказ идёт в работу."""
+        order = self.get_object()
+        if order.status != Order.Status.REQUESTED:
+            return Response(
+                {"detail": "Это не заявка"}, status=status.HTTP_400_BAD_REQUEST
+            )
+        table = str(request.data.get("table", "")).strip()
+        if not table:
+            return Response(
+                {"detail": "Не указан стол"}, status=status.HTTP_400_BAD_REQUEST
+            )
+        order.table = table
+        order.status = Order.Status.OPEN
+        order.waiter = request.user
+        order.save(update_fields=["table", "status", "waiter"])
+        return Response(OrderSerializer(order).data)
 
     # --- готовность станций/позиций ---
 

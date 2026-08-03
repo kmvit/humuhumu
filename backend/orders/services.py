@@ -1,4 +1,6 @@
 """Бизнес-логика заказов."""
+import uuid
+
 from django.db import transaction
 
 from catalog.models import Product
@@ -10,20 +12,8 @@ class OrderError(Exception):
     pass
 
 
-@transaction.atomic
-def create_order(*, waiter, items: list[dict], table: str = "") -> Order:
-    """Создать заказ официантом. items = [{'product': id, 'quantity': n}, ...].
-
-    Цены берём с сервера (не доверяем фронту). Заказ сразу уходит на кухню
-    (статус «На кухне»). Оплату позже фиксирует кассир-бармен вручную.
-    """
-    if not items:
-        raise OrderError("Пустой заказ")
-
-    order = Order.objects.create(
-        waiter=waiter, table=table, status=Order.Status.OPEN
-    )
-
+def _add_items(order: Order, items: list[dict]) -> None:
+    """Добавить позиции к заказу, беря цены с сервера."""
     for line in items:
         try:
             product = Product.objects.get(pk=line["product"], is_available=True)
@@ -41,7 +31,35 @@ def create_order(*, waiter, items: list[dict], table: str = "") -> Order:
             guest=guest if guest else None,  # 0/None → общий
         )
 
+
+@transaction.atomic
+def create_order(*, waiter, items: list[dict], table: str = "") -> Order:
+    """Заказ, созданный официантом сразу на столе (статус «Открыт»)."""
+    if not items:
+        raise OrderError("Пустой заказ")
+    order = Order.objects.create(
+        waiter=waiter, table=table, status=Order.Status.OPEN
+    )
+    _add_items(order, items)
     order.recalc_total()
     order.save(update_fields=["total"])
+    return order
 
+
+@transaction.atomic
+def create_request(*, customer_name: str, items: list[dict]) -> Order:
+    """Заявка от клиента без авторизации (статус «Ждёт официанта»).
+
+    Стол и официант появятся позже, когда официант подтвердит заявку.
+    """
+    if not items:
+        raise OrderError("Пустой заказ")
+    order = Order.objects.create(
+        status=Order.Status.REQUESTED,
+        customer_name=customer_name,
+        public_token=uuid.uuid4(),
+    )
+    _add_items(order, items)
+    order.recalc_total()
+    order.save(update_fields=["total"])
     return order

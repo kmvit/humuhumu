@@ -24,6 +24,7 @@ class Order(models.Model):
     """Заказ. Создаёт официант, готовит повар, оплату фиксирует кассир-бармен."""
 
     class Status(models.TextChoices):
+        REQUESTED = "requested", "Ждёт официанта"
         OPEN = "open", "Открыт"
         PAID = "paid", "Закрыт"
         CANCELLED = "cancelled", "Отменён"
@@ -64,6 +65,11 @@ class Order(models.Model):
     table = models.CharField("Стол", max_length=32, blank=True)
     status = models.CharField(
         "Статус", max_length=16, choices=Status.choices, default=Status.OPEN
+    )
+    # клиентская заявка без авторизации: имя и токен для отслеживания статуса
+    customer_name = models.CharField("Имя клиента", max_length=120, blank=True)
+    public_token = models.UUIDField(
+        "Токен отслеживания", null=True, blank=True, unique=True, editable=False
     )
     pay_method = models.CharField(
         "Способ оплаты", max_length=16, choices=PayMethod.choices,

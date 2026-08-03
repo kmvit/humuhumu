@@ -42,6 +42,8 @@ class OrderSerializer(serializers.ModelSerializer):
             "waiter",
             "closed_by",
             "table",
+            "customer_name",
+            "public_token",
             "status",
             "status_display",
             "food_status",
@@ -70,4 +72,11 @@ class OrderCreateSerializer(serializers.Serializer):
     """Создание заказа официантом."""
 
     table = serializers.CharField(max_length=32, required=False, allow_blank=True)
+    items = OrderItemCreateSerializer(many=True)
+
+
+class ClientOrderSerializer(serializers.Serializer):
+    """Заявка от клиента без авторизации: имя + позиции."""
+
+    customer_name = serializers.CharField(max_length=120, required=False, allow_blank=True)
     items = OrderItemCreateSerializer(many=True)

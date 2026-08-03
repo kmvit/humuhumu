@@ -20,7 +20,7 @@ class OrderItemInline(admin.TabularInline):
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
     list_display = (
-        "id", "table", "waiter", "status",
+        "id", "table", "customer_name", "waiter", "status",
         "food_status", "drinks_status", "total", "created_at",
     )
     list_filter = ("status", "created_at")
