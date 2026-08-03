@@ -5,7 +5,7 @@ export type Theme = "light" | "dark";
 function initial(): Theme {
   const saved = localStorage.getItem("theme") as Theme | null;
   if (saved) return saved;
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return "light"; // по умолчанию — светлая тема (сохранённый выбор пользователя имеет приоритет)
 }
 
 export function applyTheme(theme: Theme) {
