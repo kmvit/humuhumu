@@ -86,7 +86,7 @@ export default function Menu() {
                     />
                   )}
                   <div className="menu-item">
-                    <h3>{p.name}</h3>
+                    <h3>{p.name} <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>#{p.id}</span></h3>
                     {p.description && <p className="menu-desc">{p.description}</p>}
                   </div>
                 </div>
