@@ -241,7 +241,31 @@ export default function Menu() {
 
       {count > 0 && (
         <div className="card" style={{ marginTop: 18, marginBottom: 92 }}>
-          <label className="field" style={{ display: "block", marginBottom: 0 }}>
+          <strong style={{ fontFamily: "Fredoka", fontSize: 18 }}>Ваш заказ</strong>
+          <ul className="stack" style={{ gap: 10, margin: "12px 0 0", listStyle: "none", padding: 0 }}>
+            {Object.entries(cart).map(([id, qty]) => {
+              const p = products.find((x) => x.id === Number(id));
+              if (!p) return null;
+              return (
+                <li key={id} className="between" style={{ gap: 10 }}>
+                  <span>{p.name} <span className="muted" style={{ fontSize: 12 }}>#{p.id}</span></span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 12 }}>
+                    <span className="num muted" style={{ minWidth: 62, textAlign: "right" }}>{(Number(p.price) * qty).toLocaleString("ru")} ₽</span>
+                    <div className="stepper" style={{ width: 104 }}>
+                      <button onClick={() => remove(Number(id))} aria-label="Убрать"><Icon name="minus" size={15} /></button>
+                      <span className="count num">{qty}</span>
+                      <button onClick={() => add(Number(id))} aria-label="Добавить"><Icon name="plus" size={15} /></button>
+                    </div>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="between" style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+            <strong>Итого</strong>
+            <strong className="num">{total.toLocaleString("ru")} ₽</strong>
+          </div>
+          <label className="field" style={{ display: "block", margin: "14px 0 0" }}>
             <span className="muted" style={{ fontSize: 13 }}>Ваше имя</span>
             <input
               className="input"
