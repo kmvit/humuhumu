@@ -75,6 +75,7 @@ export interface Order {
   waiter: number | null;
   closed_by: number | null;
   table: string;
+  comment: string;
   customer_name: string;
   public_token: string | null;
   status: OrderStatus;

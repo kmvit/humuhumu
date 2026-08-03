@@ -45,7 +45,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             return [IsCookOrAdmin()]
         if self.action == "drinks_status":
             return [IsBarOrAdmin()]
-        if self.action in ("close_table", "cancel", "remove_item", "item_guest", "confirm"):
+        if self.action in ("close_table", "cancel", "remove_item", "item_guest", "confirm", "set_comment"):
             return [IsWaiterOrAdmin()]
         # item_status — право проверяем внутри по станции позиции
         return [IsAuthenticated()]
@@ -83,6 +83,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 waiter=request.user,
                 items=serializer.validated_data["items"],
                 table=serializer.validated_data.get("table", ""),
+                comment=serializer.validated_data.get("comment", ""),
             )
         except OrderError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -138,6 +139,14 @@ class OrderViewSet(viewsets.ModelViewSet):
         order.status = Order.Status.OPEN
         order.waiter = request.user
         order.save(update_fields=["table", "status", "waiter"])
+        return Response(OrderSerializer(order).data)
+
+    @action(detail=True, methods=["patch"], url_path="comment")
+    def set_comment(self, request, pk=None):
+        """Официант добавляет/меняет комментарий к заказу."""
+        order = self.get_object()
+        order.comment = str(request.data.get("comment", "")).strip()[:300]
+        order.save(update_fields=["comment"])
         return Response(OrderSerializer(order).data)
 
     # --- готовность станций/позиций ---

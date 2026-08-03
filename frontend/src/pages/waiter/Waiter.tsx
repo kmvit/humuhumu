@@ -31,6 +31,8 @@ export default function Waiter() {
   const [closed, setClosed] = useState<Order[]>([]);
   const [splitN, setSplitN] = useState(2);
   const [busyGuest, setBusyGuest] = useState<number | null>(null);
+  const [commentEdit, setCommentEdit] = useState<number | null>(null);
+  const [commentText, setCommentText] = useState("");
   const [openClosed, setOpenClosed] = useState<Set<number>>(new Set());
   const [tables, setTables] = useState<string[]>([]);
   const [busyReq, setBusyReq] = useState<number | null>(null);
@@ -118,6 +120,12 @@ export default function Waiter() {
   };
   const guestBreakdown = breakdownOf(selOrders);
   const hasGuests = guestBreakdown.some(([g]) => g !== 0);
+
+  async function saveComment(order: Order) {
+    await patch(`/orders/${order.id}/comment/`, { comment: commentText.trim() });
+    setCommentEdit(null);
+    await reload();
+  }
 
   async function closeTable(table: string) {
     setClosing(true);
@@ -352,6 +360,38 @@ export default function Waiter() {
                       <span className={"badge " + STATUS_CLASS[o.drinks_status]}>Бар: {STATUS_LABEL[o.drinks_status]}</span>
                     )}
                   </div>
+
+                  {commentEdit === o.id ? (
+                    <div className="wrap" style={{ gap: 8, marginTop: 10 }}>
+                      <input
+                        className="input"
+                        style={{ flex: 1, minWidth: 160 }}
+                        value={commentText}
+                        onChange={(e) => setCommentText(e.target.value)}
+                        placeholder="без лука, аллергия, стол у окна…"
+                        maxLength={300}
+                        autoFocus
+                      />
+                      <button className="icon-btn" onClick={() => saveComment(o)} aria-label="Сохранить"><Icon name="check" size={16} /></button>
+                      <button className="icon-btn" onClick={() => setCommentEdit(null)} aria-label="Отмена"><Icon name="minus" size={16} /></button>
+                    </div>
+                  ) : o.comment ? (
+                    <button
+                      className="order-note"
+                      onClick={() => { setCommentEdit(o.id); setCommentText(o.comment); }}
+                      title="Изменить комментарий"
+                    >
+                      <Icon name="edit" size={14} /> {o.comment}
+                    </button>
+                  ) : (
+                    <button
+                      className="btn sm ghost"
+                      style={{ marginTop: 10 }}
+                      onClick={() => { setCommentEdit(o.id); setCommentText(""); }}
+                    >
+                      <Icon name="plus" size={15} /> Комментарий
+                    </button>
+                  )}
                 </div>
               ))}
             </div>

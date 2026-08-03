@@ -42,6 +42,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "waiter",
             "closed_by",
             "table",
+            "comment",
             "customer_name",
             "public_token",
             "status",
@@ -72,6 +73,7 @@ class OrderCreateSerializer(serializers.Serializer):
     """Создание заказа официантом."""
 
     table = serializers.CharField(max_length=32, required=False, allow_blank=True)
+    comment = serializers.CharField(max_length=300, required=False, allow_blank=True)
     items = OrderItemCreateSerializer(many=True)
 
 

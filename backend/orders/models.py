@@ -63,6 +63,10 @@ class Order(models.Model):
         verbose_name="Закрыл счёт",
     )
     table = models.CharField("Стол", max_length=32, blank=True)
+    comment = models.CharField(
+        "Комментарий официанта", max_length=300, blank=True,
+        help_text="Пожелания к заказу: «без лука», «аллергия», «стол у окна» и т.п.",
+    )
     status = models.CharField(
         "Статус", max_length=16, choices=Status.choices, default=Status.OPEN
     )

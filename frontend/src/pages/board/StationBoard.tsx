@@ -102,6 +102,11 @@ export default function StationBoard({ station }: { station: Station }) {
                         <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>
                           <Icon name="spark" size={12} /> {fmtDuration(minutesBetween(o.created_at))}
                         </div>
+                        {o.comment && (
+                          <div className="order-note static" style={{ marginTop: 8 }}>
+                            <Icon name="edit" size={13} /> {o.comment}
+                          </div>
+                        )}
                         <ul className="stack" style={{ gap: 6, margin: "10px 0", listStyle: "none", padding: 0 }}>
                           {its.map((it) => (
                             <li key={it.id} className="between" style={{ gap: 8 }}>

@@ -33,12 +33,12 @@ def _add_items(order: Order, items: list[dict]) -> None:
 
 
 @transaction.atomic
-def create_order(*, waiter, items: list[dict], table: str = "") -> Order:
+def create_order(*, waiter, items: list[dict], table: str = "", comment: str = "") -> Order:
     """Заказ, созданный официантом сразу на столе (статус «Открыт»)."""
     if not items:
         raise OrderError("Пустой заказ")
     order = Order.objects.create(
-        waiter=waiter, table=table, status=Order.Status.OPEN
+        waiter=waiter, table=table, comment=comment, status=Order.Status.OPEN
     )
     _add_items(order, items)
     order.recalc_total()

@@ -21,6 +21,7 @@ export default function Compose({
   const [cart, setCart] = useState<Record<string, number>>({}); // "guest:productId" -> qty
   const [guests, setGuests] = useState(0); // сколько именованных гостей (0 = только общий)
   const [activeGuest, setActiveGuest] = useState(0); // 0 = общий
+  const [comment, setComment] = useState("");
   const [toast, setToast] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -75,7 +76,7 @@ export default function Compose({
         const [g, pid] = k.split(":").map(Number);
         return { product: pid, quantity, guest: g === 0 ? null : g };
       });
-      await post<Order>("/orders/", { items, table });
+      await post<Order>("/orders/", { items, table, comment: comment.trim() });
       onCreated();
     } catch (err) {
       setToast(err instanceof ApiError ? err.message : "Ошибка");
@@ -117,6 +118,17 @@ export default function Compose({
           <Icon name="plus" size={15} /> гость
         </button>
       </div>
+
+      <label className="field" style={{ display: "block", marginTop: 12 }}>
+        <span className="label">Комментарий к заказу</span>
+        <input
+          className="input"
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          placeholder="напр. без лука, аллергия на орехи, стол у окна"
+          maxLength={300}
+        />
+      </label>
 
       <div className="scroll-x" style={{ margin: "10px 0 4px" }}>
         <button className={"navlink" + (activeCat === null ? " active" : "")} onClick={() => setActiveCat(null)}>
