@@ -17,6 +17,7 @@ export default function Menu() {
   const [cart, setCart] = useState<Record<number, number>>({});
   const [name, setName] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [cartOpen, setCartOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [tracked, setTracked] = useState<Order | null>(null);
@@ -77,6 +78,7 @@ export default function Menu() {
 
   async function submit() {
     if (!name.trim()) {
+      setCartOpen(true);
       setToast("Укажите имя, чтобы официант нашёл заказ");
       setTimeout(() => setToast(null), 3000);
       return;
@@ -239,10 +241,13 @@ export default function Menu() {
         ))
       )}
 
-      {count > 0 && (
-        <div className="card" style={{ marginTop: 18, marginBottom: 92 }}>
-          <strong style={{ fontFamily: "Fredoka", fontSize: 18 }}>Ваш заказ</strong>
-          <ul className="stack" style={{ gap: 10, margin: "12px 0 0", listStyle: "none", padding: 0 }}>
+      {count > 0 && cartOpen && (
+        <div className="cart-sheet">
+          <div className="between" style={{ marginBottom: 4 }}>
+            <strong style={{ fontFamily: "Fredoka", fontSize: 18 }}>Ваш заказ</strong>
+            <button className="btn sm ghost" onClick={() => setCartOpen(false)}>Свернуть</button>
+          </div>
+          <ul className="stack" style={{ gap: 10, margin: "8px 0 0", listStyle: "none", padding: 0 }}>
             {Object.entries(cart).map(([id, qty]) => {
               const p = products.find((x) => x.id === Number(id));
               if (!p) return null;
@@ -287,10 +292,13 @@ export default function Menu() {
 
       {count > 0 && (
         <div className="cartbar">
-          <div className="stack" style={{ gap: 0 }}>
-            <span className="muted">{count} поз.</span>
-            <span className="total num">{total.toLocaleString("ru")} ₽</span>
-          </div>
+          <button className="cart-toggle" onClick={() => setCartOpen((o) => !o)}>
+            <Icon name={cartOpen ? "minus" : "plus"} size={16} />
+            <span className="stack" style={{ gap: 0, alignItems: "flex-start" }}>
+              <span className="muted">Ваш заказ · {count} поз.{cartOpen ? "" : " · посмотреть"}</span>
+              <span className="total num">{total.toLocaleString("ru")} ₽</span>
+            </span>
+          </button>
           <button className="btn" onClick={submit} disabled={submitting}>
             <Icon name={submitting ? "spark" : "check"} size={18} />
             Отправить

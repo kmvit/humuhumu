@@ -312,6 +312,8 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 /* ============ Корзина ============ */
 .cartbar { position: fixed; left: 50%; transform: translateX(-50%); bottom: 16px; z-index: 30; width: min(680px, calc(100% - 24px)); display: flex; align-items: center; gap: 14px; justify-content: space-between; padding: 12px 14px 12px 20px; border-radius: var(--radius); background: var(--surface-solid); border: 1px solid var(--rule); box-shadow: var(--shadow-lg); animation: slideUp 0.35s var(--ease); }
 .cartbar .total { font-family: "Jost", sans-serif; font-weight: 400; font-size: 22px; }
+.cart-toggle { flex: 1; display: flex; align-items: center; gap: 10px; background: transparent; border: none; padding: 0; cursor: pointer; color: var(--fg); text-align: left; }
+.cart-sheet { position: fixed; left: 50%; transform: translateX(-50%); bottom: 88px; z-index: 30; width: min(680px, calc(100% - 24px)); max-height: 56vh; overflow-y: auto; padding: 18px 20px; border-radius: var(--radius); background: var(--surface-solid); border: 1px solid var(--rule); box-shadow: var(--shadow-lg); animation: slideUp 0.3s var(--ease); }
 
 /* ============ Баланс: карточка-«билет» с чернильным полем ============ */
 .balance-card { position: relative; overflow: hidden; color: #fdfaf3; border: none; background: var(--grad); box-shadow: var(--shadow-lg); }
