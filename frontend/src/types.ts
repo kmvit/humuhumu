@@ -11,7 +11,7 @@ export interface Site {
   about: string;
 }
 
-export type Role = "client" | "waiter" | "cook" | "bar" | "admin";
+export type Role = "client" | "waiter" | "cook" | "bar" | "warehouse" | "admin";
 
 export type Station = "kitchen" | "bar";
 
@@ -107,6 +107,50 @@ export interface TokenTransaction {
   balance_after: string;
   order: number | null;
   comment: string;
+  created_at: string;
+}
+
+export type StockUnit = "g" | "ml" | "pcs";
+
+export interface StockCategory {
+  id: number;
+  name: string;
+  sort_order: number;
+  is_active: boolean;
+}
+
+export interface StockItem {
+  id: number;
+  category: number;
+  category_name: string;
+  name: string;
+  unit: StockUnit;
+  unit_display: string;
+  quantity: string;
+  min_quantity: string | null;
+  is_low: boolean;
+  is_active: boolean;
+}
+
+export interface ReceiptItem {
+  id: number;
+  item: number;
+  item_name: string;
+  unit: StockUnit;
+  unit_display: string;
+  quantity: string;
+  unit_cost: string | null;
+  subtotal: string | null;
+}
+
+export interface Receipt {
+  id: number;
+  received_by: number | null;
+  received_by_name: string;
+  supplier: string;
+  comment: string;
+  total_cost: string;
+  items: ReceiptItem[];
   created_at: string;
 }
 

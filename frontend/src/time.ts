@@ -9,6 +9,15 @@ export function fmtClock(iso: string): string {
   return new Date(iso).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" });
 }
 
+export function fmtDateTime(iso: string): string {
+  return new Date(iso).toLocaleString("ru", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export function fmtDuration(mins: number): string {
   if (mins < 1) return "меньше мин";
   if (mins < 60) return `${mins} мин`;

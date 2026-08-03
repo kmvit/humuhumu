@@ -9,6 +9,7 @@ import Waiter from "./pages/waiter/Waiter";
 import Kitchen from "./pages/kitchen/Kitchen";
 import Bar from "./pages/bar/Bar";
 import Admin from "./pages/admin/Admin";
+import Warehouse from "./pages/warehouse/Warehouse";
 import type { Role } from "./types";
 
 const HOME_BY_ROLE: Record<Role, string> = {
@@ -16,6 +17,7 @@ const HOME_BY_ROLE: Record<Role, string> = {
   waiter: "/waiter",
   cook: "/kitchen",
   bar: "/bar",
+  warehouse: "/warehouse",
   admin: "/admin",
 };
 
@@ -50,6 +52,7 @@ export default function App() {
         {user?.role === "waiter" && <Route path="/waiter" element={<Waiter />} />}
         {user?.role === "cook" && <Route path="/kitchen" element={<Kitchen />} />}
         {user?.role === "bar" && <Route path="/bar" element={<Bar />} />}
+        {user?.role === "warehouse" && <Route path="/warehouse" element={<Warehouse />} />}
         {user?.role === "admin" && <Route path="/admin" element={<Admin />} />}
         <Route path="*" element={<Navigate to={home} replace />} />
       </Route>

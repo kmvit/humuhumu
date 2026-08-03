@@ -318,6 +318,13 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 .cart-toggle { flex: 1; display: flex; align-items: center; gap: 10px; background: transparent; border: none; padding: 0; cursor: pointer; color: var(--fg); text-align: left; }
 .cart-sheet { position: fixed; left: 50%; transform: translateX(-50%); bottom: 88px; z-index: 30; width: min(680px, calc(100% - 24px)); max-height: 56vh; overflow-y: auto; padding: 18px 20px; border-radius: var(--radius); background: var(--surface-solid); border: 1px solid var(--rule); box-shadow: var(--shadow-lg); animation: slideUp 0.3s var(--ease); }
 
+/* ============ Склад ============ */
+.receipt-line { display: grid; grid-template-columns: minmax(0, 1fr) 5rem 5.5rem auto; gap: 8px; align-items: center; }
+.receipt-line .input { width: 100%; min-width: 0; }
+@media (max-width: 520px) { .receipt-line { grid-template-columns: minmax(0, 1fr) 4.3rem 4.3rem auto; gap: 6px; } }
+.chip.low { background: #fdecec; color: var(--danger); }
+[data-theme="dark"] .chip.low { background: rgba(220, 38, 38, 0.16); color: #f0a0a0; }
+
 /* ============ Подсказка установки PWA (iOS) ============ */
 .install-hint-overlay { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: flex-end; justify-content: center; padding: 16px; background: rgba(15, 23, 42, 0.5); animation: fadeIn 0.15s var(--ease); }
 .install-hint { display: flex; flex-direction: column; gap: 12px; width: min(420px, 100%); padding: 20px 22px calc(20px + env(safe-area-inset-bottom)); border-radius: var(--radius); background: var(--surface-solid); border: 1px solid var(--rule); box-shadow: var(--shadow-lg); animation: slideUp 0.28s var(--ease); }

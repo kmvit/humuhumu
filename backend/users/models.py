@@ -10,6 +10,7 @@ class User(AbstractUser):
         WAITER = "waiter", "Официант"
         COOK = "cook", "Повар"
         BAR = "bar", "Бар"
+        WAREHOUSE = "warehouse", "Склад"
         ADMIN = "admin", "Админ"
 
     role = models.CharField(
@@ -29,6 +30,7 @@ class User(AbstractUser):
             self.Role.WAITER,
             self.Role.COOK,
             self.Role.BAR,
+            self.Role.WAREHOUSE,
             self.Role.ADMIN,
         )
 

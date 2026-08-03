@@ -42,6 +42,16 @@ class IsCookOrAdmin(BasePermission):
         )
 
 
+class IsWarehouseOrAdmin(BasePermission):
+    """Доступ кладовщику или админу (склад: приход и остатки)."""
+
+    def has_permission(self, request, view):
+        return bool(
+            request.user.is_authenticated
+            and request.user.role in (User.Role.WAREHOUSE, User.Role.ADMIN)
+        )
+
+
 class ReadOnlyOrAdmin(BasePermission):
     """Чтение — всем, включая гостей без входа (меню публичное), запись — только админу."""
 
