@@ -416,6 +416,20 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 .footer-item a { color: var(--fg); font-weight: 500; }
 .footer-item a:hover { color: var(--brand); }
 .footer-copy { text-align: center; padding: 0 0 22px; margin: 0; }
+.footer-title { font-family: "Jost", sans-serif; font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+.footer-link { color: var(--fg); font-weight: 500; font-size: 14px; }
+.footer-link:hover { color: var(--brand); }
+
+/* ============ Юридические страницы (оферта, политика и т.д.) ============ */
+.legal { max-width: 74ch; }
+.legal h2 { font-family: "Fredoka", sans-serif; font-weight: 600; font-size: 18px; color: var(--brand); margin: 22px 0 8px; }
+.legal h2:first-child { margin-top: 0; }
+.legal p { margin: 8px 0; line-height: 1.65; }
+.legal ul, .legal ol { margin: 8px 0 8px 22px; display: grid; gap: 5px; }
+.legal li { line-height: 1.6; }
+.legal-req { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 7px 0; border-bottom: 1px solid var(--border); }
+.legal-req:last-child { border-bottom: none; }
+.legal-req .muted { min-width: 190px; }
 
 /* ============ Адаптив ============ */
 @media (max-width: 560px) {

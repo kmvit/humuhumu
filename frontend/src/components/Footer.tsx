@@ -1,5 +1,14 @@
+import { Link } from "react-router-dom";
 import { useSite } from "../site";
+import { MERCHANT } from "../legal";
 import Icon, { type IconName } from "./Icon";
+
+const DOCS = [
+  { to: "/offer", label: "Публичная оферта" },
+  { to: "/payment", label: "Оплата и возврат" },
+  { to: "/privacy", label: "Политика конфиденциальности" },
+  { to: "/contacts", label: "Реквизиты и контакты" },
+];
 
 export default function Footer() {
   const site = useSite();
@@ -48,8 +57,20 @@ export default function Footer() {
             )}
           </div>
         </div>
+
+        <div className="stack" style={{ gap: 8 }}>
+          <span className="footer-title">Документы</span>
+          {DOCS.map((d) => (
+            <Link className="footer-link" key={d.to} to={d.to}>
+              {d.label}
+            </Link>
+          ))}
+        </div>
       </div>
-      <p className="muted footer-copy">© {site.name}</p>
+
+      <p className="muted footer-copy">
+        © {site.name} · {MERCHANT.shortName} · ИНН {MERCHANT.inn} · ОГРНИП {MERCHANT.ogrnip}
+      </p>
     </footer>
   );
 }

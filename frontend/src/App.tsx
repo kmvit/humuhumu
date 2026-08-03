@@ -10,6 +10,10 @@ import Kitchen from "./pages/kitchen/Kitchen";
 import Bar from "./pages/bar/Bar";
 import Admin from "./pages/admin/Admin";
 import Warehouse from "./pages/warehouse/Warehouse";
+import Offer from "./pages/legal/Offer";
+import Privacy from "./pages/legal/Privacy";
+import Payment from "./pages/legal/Payment";
+import Contacts from "./pages/legal/Contacts";
 import type { Role } from "./types";
 
 const HOME_BY_ROLE: Record<Role, string> = {
@@ -47,6 +51,11 @@ export default function App() {
       <Route element={<Layout />}>
         {/* коворкинг — информационная страница, открыта всем */}
         <Route path="/coworking" element={<Coworking />} />
+        {/* юридические страницы — открыты всем */}
+        <Route path="/offer" element={<Offer />} />
+        <Route path="/privacy" element={<Privacy />} />
+        <Route path="/payment" element={<Payment />} />
+        <Route path="/contacts" element={<Contacts />} />
         {!user && <Route path="/" element={<Menu />} />}
         {user?.role === "client" && <Route path="/client" element={<Menu />} />}
         {user?.role === "waiter" && <Route path="/waiter" element={<Waiter />} />}
