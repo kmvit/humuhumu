@@ -157,9 +157,6 @@ export default function Menu() {
 
   return (
     <>
-      <p className="script" style={{ fontSize: 22, color: "var(--brand-2)", marginBottom: -4 }}>
-        алоха!
-      </p>
       <h1 className="h1">Меню</h1>
       <p className="muted" style={{ marginTop: 4 }}>
         Соберите заказ и отправьте — потом подойдите к стойке
@@ -219,7 +216,7 @@ export default function Menu() {
                 <span className="menu-price num">{Number(p.price).toLocaleString("ru")}</span>
                 <div className="menu-add">
                   {cart[p.id] ? (
-                    <div className="stepper" style={{ width: 116 }}>
+                    <div className="stepper" style={{ width: 96 }}>
                       <button onClick={() => remove(p.id)} aria-label="Убрать"><Icon name="minus" size={16} /></button>
                       <span className="count num">{cart[p.id]}</span>
                       <button onClick={() => add(p.id)} aria-label="Добавить"><Icon name="plus" size={16} /></button>

@@ -247,8 +247,8 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 .menu-head .unit { font-family: "Jost", sans-serif; font-size: 13px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--muted); }
 
 .menu-row {
-  display: grid; grid-template-columns: 1fr auto auto; align-items: start;
-  column-gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--border);
+  display: grid; grid-template-columns: 1fr auto auto; align-items: center;
+  column-gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--border);
 }
 .menu-row:last-child { border-bottom: none; }
 .menu-row.out { opacity: 0.45; }
@@ -262,15 +262,18 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 .menu-item h3 { font-family: "Jost", sans-serif; font-size: 19px; font-weight: 400; line-height: 1.25; }
 .menu-desc { margin: 4px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); max-width: 46ch; }
-.menu-price { font-family: "Jost", sans-serif; font-size: 20px; font-weight: 400; color: var(--brand); white-space: nowrap; padding-top: 1px; }
-.menu-add { min-width: 116px; display: flex; justify-content: flex-end; }
-.menu-add .btn.sm.icon { width: 36px; padding: 0; }
+.menu-price { font-family: "Jost", sans-serif; font-size: 20px; font-weight: 400; color: var(--brand); white-space: nowrap; display: flex; align-items: center; min-height: 36px; }
+.menu-add { min-width: 0; display: flex; justify-content: flex-end; margin-right: -6px; }
+.menu-add .btn.sm.icon { width: 40px; min-height: 32px; padding: 0; }
+/* компактный степпер в строке меню */
+.menu-add .stepper { gap: 5px; padding: 3px; min-height: 36px; box-sizing: border-box; }
+.menu-add .stepper button { width: 28px; height: 28px; }
+.menu-add .stepper .count { min-width: 14px; }
 
 @media (max-width: 560px) {
-  .menu-row { column-gap: 10px; }
+  .menu-row { column-gap: 8px; }
   .menu-item h3 { font-size: 17px; }
   .menu-price { font-size: 18px; }
-  .menu-add { min-width: 104px; }
 }
 
 /* ============ Коворкинг: тарифы ============ */
