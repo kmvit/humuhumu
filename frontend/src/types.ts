@@ -34,6 +34,13 @@ export interface Category {
   is_active: boolean;
 }
 
+export interface Table {
+  id: number;
+  name: string;
+  sort_order: number;
+  is_active: boolean;
+}
+
 export interface Product {
   id: number;
   category: number;

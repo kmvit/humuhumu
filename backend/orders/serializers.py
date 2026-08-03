@@ -1,6 +1,12 @@
 from rest_framework import serializers
 
-from .models import Order, OrderItem
+from .models import Order, OrderItem, Table
+
+
+class TableSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Table
+        fields = ("id", "name", "sort_order", "is_active")
 
 
 class OrderItemSerializer(serializers.ModelSerializer):

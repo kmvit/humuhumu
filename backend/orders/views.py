@@ -8,9 +8,17 @@ from catalog.models import Category
 from users.models import User
 from users.permissions import IsBarOrAdmin, IsCookOrAdmin, IsWaiterOrAdmin
 
-from .models import Order, OrderItem
-from .serializers import OrderCreateSerializer, OrderSerializer
+from .models import Order, OrderItem, Table
+from .serializers import OrderCreateSerializer, OrderSerializer, TableSerializer
 from .services import OrderError, create_order
+
+
+class TableViewSet(viewsets.ReadOnlyModelViewSet):
+    """Список столов для официанта. Управление — через админку."""
+
+    serializer_class = TableSerializer
+    permission_classes = [IsAuthenticated]
+    queryset = Table.objects.filter(is_active=True)
 
 STATION_TIMES = {
     Category.Station.KITCHEN: ("food_started_at", "food_ready_at"),

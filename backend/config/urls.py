@@ -8,7 +8,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from catalog.views import CategoryViewSet, ProductViewSet
 from core.views import SiteSettingsView
-from orders.views import OrderViewSet
+from orders.views import OrderViewSet, TableViewSet
 from users.views import MeView, RegisterView
 from wallet.views import (
     MyTransactionsView,
@@ -22,6 +22,7 @@ router.register("categories", CategoryViewSet, basename="category")
 router.register("products", ProductViewSet, basename="product")
 router.register("token-packages", TokenPackageViewSet, basename="token-package")
 router.register("orders", OrderViewSet, basename="order")
+router.register("tables", TableViewSet, basename="table")
 
 api_patterns = [
     # авторизация

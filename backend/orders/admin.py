@@ -1,6 +1,13 @@
 from django.contrib import admin
 
-from .models import Order, OrderItem
+from .models import Order, OrderItem, Table
+
+
+@admin.register(Table)
+class TableAdmin(admin.ModelAdmin):
+    list_display = ("name", "sort_order", "is_active")
+    list_editable = ("sort_order", "is_active")
+    ordering = ("sort_order", "name")
 
 
 class OrderItemInline(admin.TabularInline):

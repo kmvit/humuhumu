@@ -4,6 +4,22 @@ from django.db import models
 from catalog.models import Category
 
 
+class Table(models.Model):
+    """Стол зала. Реестр столов; в заказе стол хранится строкой (name)."""
+
+    name = models.CharField("Название / номер", max_length=32, unique=True)
+    sort_order = models.PositiveIntegerField("Порядок", default=0)
+    is_active = models.BooleanField("Активен", default=True)
+
+    class Meta:
+        verbose_name = "Стол"
+        verbose_name_plural = "Столы"
+        ordering = ["sort_order", "name"]
+
+    def __str__(self):
+        return self.name
+
+
 class Order(models.Model):
     """Заказ. Создаёт официант, готовит повар, оплату фиксирует кассир-бармен."""
 

@@ -1,12 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { get, patch, post } from "../../api";
-import type { Order, OrderItem, StationStatus } from "../../types";
+import type { Order, OrderItem, StationStatus, Table } from "../../types";
 import Icon from "../../components/Icon";
 import { useLiveOrders } from "../../useLiveOrders";
 import { fmtClock, fmtDuration, minutesBetween } from "../../time";
 import Compose from "./Compose";
-
-const TABLES = Array.from({ length: 10 }, (_, i) => String(i + 1));
 
 const STATUS_LABEL: Record<StationStatus, string> = {
   new: "новый",
@@ -31,6 +29,11 @@ export default function Waiter() {
   const [splitN, setSplitN] = useState(2);
   const [busyGuest, setBusyGuest] = useState<number | null>(null);
   const [openClosed, setOpenClosed] = useState<Set<number>>(new Set());
+  const [tables, setTables] = useState<string[]>([]);
+
+  useEffect(() => {
+    get<Table[]>("/tables/").then((ts) => setTables(ts.map((t) => t.name))).catch(() => {});
+  }, []);
 
   const toggleClosed = (id: number) =>
     setOpenClosed((s) => {
@@ -193,7 +196,7 @@ export default function Waiter() {
       <p className="muted" style={{ marginTop: 4 }}>Выберите стол, чтобы создать заказ или закрыть счёт</p>
 
       <div className="grid" style={{ marginTop: 16, gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))" }}>
-        {TABLES.map((t) => {
+        {tables.map((t) => {
           const os = byTable[t] ?? [];
           const occupied = os.length > 0;
           const ready = occupied && os.every((o) => o.is_ready);
