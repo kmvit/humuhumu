@@ -19,6 +19,8 @@ const paths: Record<string, string> = {
   plus: "M12 5v14M5 12h14",
   minus: "M5 12h14",
   check: "M20 6L9 17l-5-5",
+  download: "M12 3v12M8 11l4 4 4-4M4 21h16",
+  share: "M12 16V4M8 8l4-4 4 4M4 12v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6",
   arrowUp: "M12 19V5M5 12l7-7 7 7",
   arrowDown: "M12 5v14M19 12l-7 7-7-7",
   gift: "M20 12v10H4V12M2 7h20v5H2zM12 22V7M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7zM12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z",

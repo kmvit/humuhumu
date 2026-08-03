@@ -4,6 +4,7 @@ import { useSite } from "../site";
 import { useTheme } from "../theme";
 import Footer from "./Footer";
 import Icon, { type IconName } from "./Icon";
+import InstallPWA from "./InstallPWA";
 
 const NAV: Record<string, { to: string; label: string; icon: IconName }[]> = {
   client: [
@@ -72,6 +73,8 @@ export default function Layout() {
                 <span className="num">{Number(user.balance).toLocaleString("ru")}</span>
               </span>
             )}
+
+            <InstallPWA />
 
             <button
               className="icon-btn"
