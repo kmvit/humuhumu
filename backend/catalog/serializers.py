@@ -32,6 +32,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "thumbnail",
             "price",
             "weight_grams",
+            "prep_minutes",
             "is_available",
             "sort_order",
         )

@@ -49,6 +49,9 @@ class Product(models.Model):
     )
     price = models.DecimalField("Цена, ₽", max_digits=10, decimal_places=2)
     weight_grams = models.PositiveIntegerField("Вес, г", null=True, blank=True)
+    prep_minutes = models.PositiveIntegerField(
+        "Время приготовления, мин", null=True, blank=True
+    )
     is_available = models.BooleanField("В наличии", default=True)
     sort_order = models.PositiveIntegerField("Порядок сортировки", default=0)
 
