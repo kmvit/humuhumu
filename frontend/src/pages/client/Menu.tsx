@@ -34,6 +34,8 @@ export default function Menu() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [tracked, setTracked] = useState<Order | null>(null);
   const [table] = useState<string | null>(initTable);
+  const [cancelling, setCancelling] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
 
   // убираем ?table из адреса — значение уже сохранено, чтобы не мозолило глаз
   useEffect(() => {
@@ -90,6 +92,12 @@ export default function Menu() {
   );
   const count = Object.values(cart).reduce((a, b) => a + b, 0);
 
+  // при появлении/смене своего заказа показываем его карточку сверху страницы
+  // (после отправки пользователь остаётся внизу, где была корзина)
+  useEffect(() => {
+    if (tracked) window.scrollTo(0, 0);
+  }, [tracked?.id]);
+
   const add = (id: number) => setCart((c) => ({ ...c, [id]: (c[id] || 0) + 1 }));
   const remove = (id: number) =>
     setCart((c) => {
@@ -137,6 +145,22 @@ export default function Menu() {
     setName("");
   }
 
+  // клиент отменяет свою заявку, пока официант её не подтвердил
+  async function cancelRequest() {
+    if (!token) return;
+    setCancelling(true);
+    try {
+      await post("/orders/cancel_request/", { token });
+      newOrder();
+    } catch (err) {
+      setToast(err instanceof ApiError ? err.message : "Не удалось отменить");
+      setTimeout(() => setToast(null), 3500);
+    } finally {
+      setCancelling(false);
+      setConfirmCancel(false);
+    }
+  }
+
   // --- экран статуса своего заказа ---
   if (tracked) {
     const st = tracked.status;
@@ -156,9 +180,11 @@ export default function Menu() {
         <div className="card enter" style={{ marginTop: 16 }}>
           <div className="between">
             <strong style={{ fontFamily: "Fredoka", fontSize: 20 }}>{head}</strong>
-            <span className={"badge " + (st === "requested" ? "pending" : tracked.is_ready ? "ready" : st === "open" ? "preparing" : st === "paid" ? "paid" : "cancelled")}>
-              {tracked.status_display}
-            </span>
+            {st !== "requested" && (
+              <span className={"badge " + (tracked.is_ready ? "ready" : st === "open" ? "preparing" : st === "paid" ? "paid" : "cancelled")}>
+                {tracked.status_display}
+              </span>
+            )}
           </div>
           <p className="muted" style={{ marginTop: 6 }}>{note}</p>
           <ul className="stack" style={{ gap: 4, margin: "14px 0 0", listStyle: "none", padding: 0 }}>
@@ -174,9 +200,31 @@ export default function Menu() {
             <strong className="num">{Number(tracked.total).toLocaleString("ru")} ₽</strong>
           </div>
         </div>
-        <button className="btn ghost block" style={{ marginTop: 16 }} onClick={newOrder}>
-          <Icon name="plus" size={18} /> Новый заказ
-        </button>
+        {st === "requested" ? (
+          confirmCancel ? (
+            <div className="wrap" style={{ marginTop: 16, gap: 8, justifyContent: "center" }}>
+              <span className="muted" style={{ alignSelf: "center" }}>Точно отменить заказ?</span>
+              <button className="btn sm" style={{ background: "var(--danger)", color: "#fff" }} disabled={cancelling} onClick={cancelRequest}>
+                <Icon name="check" size={16} /> Да, отменить
+              </button>
+              <button className="btn sm ghost" onClick={() => setConfirmCancel(false)}>Нет</button>
+            </div>
+          ) : (
+            <button className="btn ghost block" style={{ marginTop: 16 }} onClick={() => setConfirmCancel(true)}>
+              <Icon name="minus" size={18} /> Отменить заказ
+            </button>
+          )
+        ) : (
+          <button className="btn ghost block" style={{ marginTop: 16 }} onClick={newOrder}>
+            <Icon name="plus" size={18} /> Новый заказ
+          </button>
+        )}
+
+        {toast && (
+          <div className="toast bad" role="status">
+            <Icon name="spark" size={18} /> {toast}
+          </div>
+        )}
       </>
     );
   }

@@ -37,7 +37,7 @@ class OrderViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch"]
 
     def get_permissions(self):
-        if self.action in ("place", "track"):
+        if self.action in ("place", "track", "cancel_request"):
             return [AllowAny()]  # клиент без авторизации
         if self.action == "create":
             return [IsWaiterOrAdmin()]
@@ -121,6 +121,25 @@ class OrderViewSet(viewsets.ModelViewSet):
             return Response(
                 {"detail": "Заказ не найден"}, status=status.HTTP_404_NOT_FOUND
             )
+        return Response(OrderSerializer(order).data)
+
+    @action(detail=False, methods=["post"])
+    def cancel_request(self, request):
+        """Клиент отменяет свою заявку по токену, пока официант её не подтвердил."""
+        token = request.data.get("token")
+        order = Order.objects.filter(public_token=token).first() if token else None
+        if not order:
+            return Response(
+                {"detail": "Заказ не найден"}, status=status.HTTP_404_NOT_FOUND
+            )
+        if order.status != Order.Status.REQUESTED:
+            return Response(
+                {"detail": "Заказ уже подтверждён официантом — отмена только через официанта"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        order.status = Order.Status.CANCELLED
+        order.closed_at = timezone.now()
+        order.save(update_fields=["status", "closed_at"])
         return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["patch"])
