@@ -228,7 +228,10 @@ export default function Waiter() {
             {requests.map((o) => (
               <div className={"card" + (reqHighlight.has(o.id) ? " new-order" : "")} key={o.id}>
                 <div className="between">
-                  <strong>{o.customer_name || "Клиент"}</strong>
+                  <strong>
+                    {o.customer_name || "Клиент"}
+                    {o.table && <span className="badge open" style={{ marginLeft: 6 }}>Стол {o.table}</span>}
+                  </strong>
                   <span className="num">{Number(o.total).toLocaleString("ru")} ₽</span>
                 </div>
                 <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
@@ -242,12 +245,24 @@ export default function Waiter() {
                     </li>
                   ))}
                 </ul>
-                <div className="muted" style={{ fontSize: 12 }}>Принять на стол:</div>
-                <div className="scroll-x" style={{ marginTop: 6 }}>
-                  {tables.map((t) => (
-                    <button key={t} className="navlink" disabled={busyReq === o.id} onClick={() => confirmRequest(o, t)}>{t}</button>
-                  ))}
-                </div>
+                {o.table ? (
+                  <button
+                    className="btn sm block"
+                    disabled={busyReq === o.id}
+                    onClick={() => confirmRequest(o, o.table)}
+                  >
+                    <Icon name="check" size={15} /> Принять · стол {o.table}
+                  </button>
+                ) : (
+                  <>
+                    <div className="muted" style={{ fontSize: 12 }}>Принять на стол:</div>
+                    <div className="scroll-x" style={{ marginTop: 6 }}>
+                      {tables.map((t) => (
+                        <button key={t} className="navlink" disabled={busyReq === o.id} onClick={() => confirmRequest(o, t)}>{t}</button>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             ))}
           </div>

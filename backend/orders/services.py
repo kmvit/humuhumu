@@ -47,16 +47,18 @@ def create_order(*, waiter, items: list[dict], table: str = "", comment: str = "
 
 
 @transaction.atomic
-def create_request(*, customer_name: str, items: list[dict]) -> Order:
+def create_request(*, customer_name: str, items: list[dict], table: str = "") -> Order:
     """Заявка от клиента без авторизации (статус «Ждёт официанта»).
 
-    Стол и официант появятся позже, когда официант подтвердит заявку.
+    Стол приходит из QR-кода на столе (если клиент отсканировал). Официант
+    подтверждает заявку — стол уже проставлен, выбирать вручную не нужно.
     """
     if not items:
         raise OrderError("Пустой заказ")
     order = Order.objects.create(
         status=Order.Status.REQUESTED,
         customer_name=customer_name,
+        table=table,
         public_token=uuid.uuid4(),
     )
     _add_items(order, items)

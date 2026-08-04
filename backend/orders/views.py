@@ -100,6 +100,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             order = create_request(
                 customer_name=serializer.validated_data.get("customer_name", ""),
                 items=serializer.validated_data["items"],
+                table=serializer.validated_data.get("table", ""),
             )
         except OrderError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)

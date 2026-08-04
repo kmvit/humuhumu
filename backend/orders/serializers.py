@@ -78,7 +78,8 @@ class OrderCreateSerializer(serializers.Serializer):
 
 
 class ClientOrderSerializer(serializers.Serializer):
-    """Заявка от клиента без авторизации: имя + позиции."""
+    """Заявка от клиента без авторизации: имя + позиции (+ стол из QR-кода)."""
 
     customer_name = serializers.CharField(max_length=120, required=False, allow_blank=True)
+    table = serializers.CharField(max_length=32, required=False, allow_blank=True)
     items = OrderItemCreateSerializer(many=True)

@@ -6,6 +6,18 @@ import { SceneBanner, WaveRule } from "../../components/Ornaments";
 import Lightbox from "../../components/Lightbox";
 
 const TOKEN_KEY = "humu_order_token";
+const TABLE_KEY = "humu_table";
+
+// Стол берём из QR-кода на столе (?table=N) и запоминаем в localStorage,
+// чтобы он подставлялся в заказ без участия официанта.
+function initTable(): string | null {
+  const fromUrl = new URLSearchParams(window.location.search).get("table");
+  if (fromUrl) {
+    localStorage.setItem(TABLE_KEY, fromUrl);
+    return fromUrl;
+  }
+  return localStorage.getItem(TABLE_KEY);
+}
 
 export default function Menu() {
   const [categories, setCategories] = useState<Category[]>([]);
@@ -21,6 +33,16 @@ export default function Menu() {
   const [toast, setToast] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [tracked, setTracked] = useState<Order | null>(null);
+  const [table] = useState<string | null>(initTable);
+
+  // убираем ?table из адреса — значение уже сохранено, чтобы не мозолило глаз
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has("table")) {
+      const u = new URL(window.location.href);
+      u.searchParams.delete("table");
+      window.history.replaceState({}, "", u.pathname + u.search + u.hash);
+    }
+  }, []);
 
   useEffect(() => {
     Promise.all([
@@ -89,7 +111,11 @@ export default function Menu() {
         product: Number(product),
         quantity,
       }));
-      const order = await post<Order>("/orders/place/", { customer_name: name.trim(), items });
+      const order = await post<Order>("/orders/place/", {
+        customer_name: name.trim(),
+        items,
+        table: table ?? "",
+      });
       if (order.public_token) {
         localStorage.setItem(TOKEN_KEY, order.public_token);
         setToken(order.public_token);
@@ -157,9 +183,18 @@ export default function Menu() {
 
   return (
     <>
-      <h1 className="h1">Меню</h1>
+      <div className="between" style={{ alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+        <h1 className="h1">Меню</h1>
+        {table && (
+          <span className="chip" style={{ fontSize: 15 }}>
+            <Icon name="store" size={16} /> Ваш стол №{table}
+          </span>
+        )}
+      </div>
       <p className="muted" style={{ marginTop: 4 }}>
-        Соберите заказ и отправьте — потом подойдите к стойке
+        {table
+          ? "Соберите заказ — он придёт официанту с вашим столом"
+          : "Соберите заказ и отправьте — потом подойдите к стойке"}
       </p>
 
       <SceneBanner />
