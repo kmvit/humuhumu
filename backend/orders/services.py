@@ -47,7 +47,7 @@ def create_order(*, waiter, items: list[dict], table: str = "", comment: str = "
 
 
 @transaction.atomic
-def create_request(*, customer_name: str, items: list[dict], table: str = "") -> Order:
+def create_request(*, customer_name: str, items: list[dict], table: str = "", comment: str = "") -> Order:
     """Заявка от клиента без авторизации (статус «Ждёт официанта»).
 
     Стол приходит из QR-кода на столе (если клиент отсканировал). Официант
@@ -59,6 +59,7 @@ def create_request(*, customer_name: str, items: list[dict], table: str = "") ->
         status=Order.Status.REQUESTED,
         customer_name=customer_name,
         table=table,
+        comment=comment,
         public_token=uuid.uuid4(),
     )
     _add_items(order, items)

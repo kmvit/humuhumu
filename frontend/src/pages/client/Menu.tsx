@@ -28,6 +28,7 @@ export default function Menu() {
 
   const [cart, setCart] = useState<Record<number, number>>({});
   const [name, setName] = useState("");
+  const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -121,6 +122,7 @@ export default function Menu() {
       }));
       const order = await post<Order>("/orders/place/", {
         customer_name: name.trim(),
+        comment: comment.trim(),
         items,
         table: table ?? "",
       });
@@ -143,6 +145,7 @@ export default function Menu() {
     setToken(null);
     setTracked(null);
     setName("");
+    setComment("");
   }
 
   // клиент отменяет свою заявку, пока официант её не подтвердил
@@ -359,6 +362,17 @@ export default function Menu() {
               onChange={(e) => setName(e.target.value)}
               placeholder="Как вас зовут?"
               maxLength={120}
+            />
+          </label>
+          <label className="field" style={{ display: "block", margin: "12px 0 0" }}>
+            <span className="muted" style={{ fontSize: 13 }}>Комментарий к заказу</span>
+            <input
+              className="input"
+              style={{ marginTop: 6 }}
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              placeholder="напр. без лука, аллергия на орехи"
+              maxLength={300}
             />
           </label>
         </div>
