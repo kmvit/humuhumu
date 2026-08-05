@@ -257,6 +257,22 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 @media (min-width: 561px) { .reels-sheet { border-radius: var(--radius); margin-bottom: 16px; } }
 @media (prefers-reduced-motion: reduce) { .reels-cartbar, .reels-sheet, .reels-toast { animation: none; } }
 
+/* одноразовая подсказка по жестам */
+.reels-coach { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(0,0,0,0.72); backdrop-filter: blur(2px); animation: fadeIn 0.2s var(--ease); }
+.reels-coach-card { display: flex; flex-direction: column; align-items: stretch; gap: 22px; width: min(340px, 100%); padding: 26px 22px; border-radius: var(--radius); background: rgba(20,22,28,0.9); border: 1px solid rgba(255,255,255,0.14); color: #fff; text-align: center; }
+.reels-gesture { display: flex; flex-direction: column; align-items: center; gap: 4px; color: #fff; }
+.reels-gesture strong { font-family: "Fredoka", sans-serif; font-size: 18px; color: #fff; }
+.reels-gesture span { font-size: 13px; color: rgba(255,255,255,0.7); }
+.reels-gesture-h, .reels-gesture-v { display: flex; align-items: center; justify-content: center; gap: 14px; color: rgba(255,255,255,0.55); margin-bottom: 6px; }
+.reels-gesture-v { flex-direction: column; height: 74px; }
+.reels-hand { width: 30px; height: 30px; border-radius: 50%; background: var(--brand); box-shadow: 0 0 0 6px rgba(52,120,246,0.25); }
+.reels-hand { animation: coachX 1.5s var(--ease) infinite; }
+.reels-hand.v { animation: coachY 1.5s var(--ease) infinite; }
+@keyframes coachX { 0%,100% { transform: translateX(-16px); } 50% { transform: translateX(16px); } }
+@keyframes coachY { 0%,100% { transform: translateY(-14px); } 50% { transform: translateY(14px); } }
+.reels-coach-card .btn { justify-content: center; }
+@media (prefers-reduced-motion: reduce) { .reels-hand, .reels-hand.v { animation: none; } }
+
 /* плитки столов у официанта */
 .table-tile { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 16px 10px; cursor: pointer; text-align: center; }
 .table-tile.free { opacity: 0.7; }

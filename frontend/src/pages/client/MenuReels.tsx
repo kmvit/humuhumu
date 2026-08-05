@@ -5,6 +5,7 @@ import type { Category, Order, Product } from "../../types";
 import Icon, { categoryIcon } from "../../components/Icon";
 
 const TABLE_KEY = "humu_table";
+const COACH_KEY = "humu_reels_coached";
 
 function initTable(): string | null {
   const fromUrl = new URLSearchParams(window.location.search).get("table");
@@ -28,8 +29,15 @@ export default function MenuReels() {
   const [toast, setToast] = useState<string | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
   const [table] = useState<string | null>(initTable);
+  const [coach, setCoach] = useState<boolean>(() => !localStorage.getItem(COACH_KEY));
 
   const trackRef = useRef<HTMLDivElement>(null);
+
+  function dismissCoach() {
+    if (!coach) return;
+    localStorage.setItem(COACH_KEY, "1");
+    setCoach(false);
+  }
 
   useEffect(() => {
     Promise.all([
@@ -66,6 +74,7 @@ export default function MenuReels() {
   function onTrackScroll() {
     const el = trackRef.current;
     if (!el) return;
+    dismissCoach(); // первый свайп — прячем подсказку
     const i = Math.round(el.scrollLeft / el.clientWidth);
     if (i !== activeIdx) setActiveIdx(i);
   }
@@ -264,6 +273,35 @@ export default function MenuReels() {
                 <Icon name={submitting ? "spark" : "check"} size={18} /> Отправить
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* одноразовая подсказка по жестам — закрывается тапом, кнопкой или первым свайпом */}
+      {coach && !loading && (
+        <div className="reels-coach" onClick={dismissCoach}>
+          <div className="reels-coach-card" onClick={(e) => e.stopPropagation()}>
+            <div className="reels-gesture">
+              <div className="reels-gesture-h">
+                <span style={{ transform: "rotate(90deg)", display: "inline-flex" }}><Icon name="arrowDown" size={22} /></span>
+                <span className="reels-hand" />
+                <span style={{ transform: "rotate(-90deg)", display: "inline-flex" }}><Icon name="arrowDown" size={22} /></span>
+              </div>
+              <strong>Категории</strong>
+              <span>свайп влево-вправо</span>
+            </div>
+            <div className="reels-gesture">
+              <div className="reels-gesture-v">
+                <Icon name="arrowUp" size={22} />
+                <span className="reels-hand v" />
+                <Icon name="arrowDown" size={22} />
+              </div>
+              <strong>Блюда</strong>
+              <span>свайп вверх-вниз</span>
+            </div>
+            <button className="btn block" onClick={dismissCoach}>
+              <Icon name="check" size={18} /> Понятно
+            </button>
           </div>
         </div>
       )}
