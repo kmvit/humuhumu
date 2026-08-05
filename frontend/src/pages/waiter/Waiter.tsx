@@ -290,6 +290,10 @@ export default function Waiter() {
           const occupied = os.length > 0;
           const ready = occupied && os.every((o) => o.is_ready);
           const total = os.reduce((s, o) => s + Number(o.total), 0);
+          // с открытия самого раннего заказа на столе
+          const openedAt = occupied
+            ? os.reduce((min, o) => (o.created_at < min ? o.created_at : min), os[0].created_at)
+            : null;
           return (
             <button
               key={t}
@@ -300,6 +304,11 @@ export default function Waiter() {
               <span className="muted" style={{ fontSize: 12.5 }}>
                 {occupied ? (ready ? "готов" : "готовится") : "свободен"}
               </span>
+              {occupied && (
+                <span className="muted" style={{ fontSize: 11.5, display: "inline-flex", alignItems: "center", gap: 3 }}>
+                  <Icon name="spark" size={11} /> {fmtDuration(minutesBetween(openedAt!))}
+                </span>
+              )}
               {occupied && <span className="num" style={{ fontSize: 13 }}>{total.toLocaleString("ru")} ₽</span>}
             </button>
           );

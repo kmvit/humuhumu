@@ -93,6 +93,15 @@ export default function StationBoard({ station }: { station: Station }) {
                   {cards.map((o) => {
                     const its = o.items.filter((it) => it.station === station);
                     const notAllReady = its.some((it) => it.status !== "ready");
+                    // тайминг именно этой станции: сколько ждёт / готовим / за сколько сделали
+                    const startedAt = isKitchen ? o.food_started_at : o.drinks_started_at;
+                    const readyAt = isKitchen ? o.food_ready_at : o.drinks_ready_at;
+                    const timing =
+                      col.key === "ready" && startedAt && readyAt
+                        ? `готово за ${fmtDuration(minutesBetween(startedAt, readyAt))}`
+                        : col.key === "in_progress" && startedAt
+                        ? `готовим ${fmtDuration(minutesBetween(startedAt))}`
+                        : `ждёт ${fmtDuration(minutesBetween(o.created_at))}`;
                     return (
                       <div className={"card" + (highlight.has(o.id) ? " new-order" : "")} key={o.id}>
                         <div className="between">
@@ -100,7 +109,7 @@ export default function StationBoard({ station }: { station: Station }) {
                           {o.table && <span className="badge open">Стол {o.table}</span>}
                         </div>
                         <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>
-                          <Icon name="spark" size={12} /> {fmtDuration(minutesBetween(o.created_at))}
+                          <Icon name="spark" size={12} /> {timing}
                         </div>
                         {o.comment && (
                           <div className="order-note static" style={{ marginTop: 8 }}>
