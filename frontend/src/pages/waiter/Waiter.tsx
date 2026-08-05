@@ -307,13 +307,21 @@ export default function Waiter() {
       </div>
 
       {selected && (
-        <section className="card enter" style={{ marginTop: 18 }}>
-          <div className="between">
-            <h2 style={{ fontFamily: "Fredoka", fontSize: 20 }}>Стол {selected}</h2>
-            <button className="icon-btn" onClick={() => setSelected(null)} aria-label="Закрыть">
-              <Icon name="plus" size={18} />
+        <div
+          className="table-modal"
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => { if (e.target === e.currentTarget) setSelected(null); }}
+        >
+        <div className="table-modal-panel">
+          <div className="table-modal-head">
+            <button className="btn sm ghost" onClick={() => setSelected(null)}>
+              <span style={{ display: "inline-flex", transform: "rotate(90deg)" }}><Icon name="arrowDown" size={16} /></span>
+              Все столы
             </button>
+            <h2>Стол {selected}</h2>
           </div>
+          <div className="table-modal-body">
 
           {selOrders.length === 0 ? (
             <p className="muted" style={{ margin: "12px 0" }}>Стол свободен — заказов нет.</p>
@@ -494,7 +502,9 @@ export default function Waiter() {
               </button>
             )}
           </div>
-        </section>
+          </div>
+        </div>
+        </div>
       )}
       </>
       )}
