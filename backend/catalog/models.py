@@ -95,3 +95,25 @@ class Product(models.Model):
             self.thumbnail.delete(save=False)
             super().save(update_fields=["thumbnail"])
         self._orig_image = current
+
+
+class ProductLike(models.Model):
+    """Лайк блюда анонимным гостем. device — id устройства из localStorage."""
+
+    product = models.ForeignKey(
+        Product, on_delete=models.CASCADE, related_name="likes", verbose_name="Товар"
+    )
+    device = models.CharField("Устройство", max_length=64)
+    created_at = models.DateTimeField("Когда", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Лайк"
+        verbose_name_plural = "Лайки"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["product", "device"], name="uniq_like_per_device"
+            )
+        ]
+
+    def __str__(self):
+        return f"♥ {self.product_id} · {self.device[:8]}"

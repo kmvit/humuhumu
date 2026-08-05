@@ -2,10 +2,22 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { get, post, ApiError } from "../../api";
 import type { Category, Order, Product } from "../../types";
-import Icon, { categoryIcon } from "../../components/Icon";
+import Icon, { categoryIcon, type IconName } from "../../components/Icon";
 
 const TABLE_KEY = "humu_table";
 const COACH_KEY = "humu_reels_coached";
+const DEVICE_KEY = "humu_device";
+const LIKES_KEY = "humu_liked";
+
+// стабильный id устройства для анонимных лайков
+function initDevice(): string {
+  let d = localStorage.getItem(DEVICE_KEY);
+  if (!d) {
+    d = (crypto.randomUUID?.() ?? String(Date.now()) + Math.random().toString(16).slice(2));
+    localStorage.setItem(DEVICE_KEY, d);
+  }
+  return d;
+}
 
 function initTable(): string | null {
   const fromUrl = new URLSearchParams(window.location.search).get("table");
@@ -30,6 +42,11 @@ export default function MenuReels() {
   const [activeIdx, setActiveIdx] = useState(0);
   const [table] = useState<string | null>(initTable);
   const [coach, setCoach] = useState<boolean>(() => !localStorage.getItem(COACH_KEY));
+  const [likes, setLikes] = useState<Record<number, number>>({}); // pid -> счётчик
+  const [liked, setLiked] = useState<Set<number>>(
+    () => new Set(JSON.parse(localStorage.getItem(LIKES_KEY) || "[]"))
+  );
+  const [device] = useState(initDevice);
 
   const trackRef = useRef<HTMLDivElement>(null);
 
@@ -42,21 +59,57 @@ export default function MenuReels() {
   useEffect(() => {
     Promise.all([
       get<Category[]>("/categories/").then(setCategories),
-      get<Product[]>("/products/").then(setProducts),
+      get<Product[]>("/products/").then((ps) => {
+        setProducts(ps);
+        setLikes(Object.fromEntries(ps.map((p) => [p.id, p.likes ?? 0])));
+      }),
     ])
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
-  // категории с доступными позициями, по порядку сортировки
-  const cats = useMemo(() => {
-    return [...categories]
+  async function toggleLike(pid: number) {
+    const isLiked = liked.has(pid);
+    // оптимистично обновляем UI, потом синхронизируем счётчик с сервером
+    setLiked((s) => {
+      const n = new Set(s);
+      isLiked ? n.delete(pid) : n.add(pid);
+      localStorage.setItem(LIKES_KEY, JSON.stringify([...n]));
+      return n;
+    });
+    setLikes((m) => ({ ...m, [pid]: Math.max(0, (m[pid] || 0) + (isLiked ? -1 : 1)) }));
+    try {
+      const res = await post<{ id: number; likes: number }>(
+        `/products/${pid}/${isLiked ? "unlike" : "like"}/`,
+        { device }
+      );
+      setLikes((m) => ({ ...m, [pid]: res.likes }));
+    } catch {
+      /* оставляем оптимистичное значение */
+    }
+  }
+
+  // страницы пейджера: «Хиты» (топ по лайкам) + категории с позициями.
+  // Состав «Хитов» берём из серверных лайков и держим стабильным на сессию,
+  // чтобы страница не перетасовывалась под пальцем при каждом лайке.
+  const pages = useMemo(() => {
+    const catPages = [...categories]
       .sort((a, b) => a.sort_order - b.sort_order)
       .map((c) => ({
-        cat: c,
+        key: `c${c.id}`,
+        label: c.name,
+        icon: categoryIcon(c.name),
         items: products.filter((p) => p.category === c.id && p.is_available),
       }))
       .filter((s) => s.items.length > 0);
+    const top = products
+      .filter((p) => p.is_available && (p.likes ?? 0) > 0)
+      .sort((a, b) => (b.likes ?? 0) - (a.likes ?? 0))
+      .slice(0, 12);
+    const topPage = top.length
+      ? [{ key: "top", label: "Хиты", icon: "heart" as IconName, items: top }]
+      : [];
+    return [...topPage, ...catPages];
   }, [categories, products]);
 
   const priceOf = (pid: number) => Number(products.find((x) => x.id === pid)?.price ?? 0);
@@ -126,7 +179,7 @@ export default function MenuReels() {
     );
   }
 
-  if (cats.length === 0) {
+  if (pages.length === 0) {
     return (
       <div className="reels">
         <div className="reels-loading">
@@ -147,34 +200,44 @@ export default function MenuReels() {
           </span>
         </Link>
         <div className="reels-cats">
-          {cats.map((s, i) => (
+          {pages.map((s, i) => (
             <button
-              key={s.cat.id}
-              className={"reels-chip" + (i === activeIdx ? " on" : "")}
+              key={s.key}
+              className={"reels-chip" + (i === activeIdx ? " on" : "") + (s.key === "top" ? " top" : "")}
               onClick={() => goCat(i)}
             >
-              <Icon name={categoryIcon(s.cat.name)} size={15} /> {s.cat.name}
+              <Icon name={s.icon} size={15} filled={s.key === "top"} /> {s.label}
             </button>
           ))}
         </div>
       </div>
 
-      {/* горизонтальный пейджер категорий */}
+      {/* горизонтальный пейджер: хиты + категории */}
       <div className="reels-track" ref={trackRef} onScroll={onTrackScroll}>
-        {cats.map((s) => (
-          <div className="reels-page" key={s.cat.id}>
+        {pages.map((s) => (
+          <div className="reels-page" key={s.key}>
             {s.items.map((p) => {
               const q = cart[p.id] || 0;
+              const likeN = likes[p.id] ?? p.likes ?? 0;
+              const isLiked = liked.has(p.id);
               return (
                 <article className="reel" key={p.id}>
                   {p.image ? (
                     <img className="reel-img" src={p.image} alt={p.name} loading="lazy" />
                   ) : (
                     <div className="reel-ph">
-                      <Icon name={categoryIcon(s.cat.name)} size={64} />
+                      <Icon name={categoryIcon(p.category_name)} size={64} />
                     </div>
                   )}
                   <div className="reel-shade" />
+                  <button
+                    className={"reel-like" + (isLiked ? " on" : "")}
+                    onClick={() => toggleLike(p.id)}
+                    aria-label={isLiked ? "Убрать лайк" : "Нравится"}
+                  >
+                    <Icon name="heart" size={26} filled={isLiked} />
+                    {likeN > 0 && <span className="reel-like-n">{likeN}</span>}
+                  </button>
                   <div className="reel-body">
                     <div className="reel-info">
                       <h2>{p.name}</h2>

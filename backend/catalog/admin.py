@@ -1,6 +1,7 @@
 from django.contrib import admin
+from django.db.models import Count
 
-from .models import Category, Product
+from .models import Category, Product, ProductLike
 
 
 @admin.register(Category)
@@ -12,7 +13,21 @@ class CategoryAdmin(admin.ModelAdmin):
 
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
-    list_display = ("name", "category", "price", "prep_minutes", "weight_grams", "is_available")
+    list_display = ("name", "category", "price", "likes_total", "prep_minutes", "weight_grams", "is_available")
     list_filter = ("category", "is_available")
     list_editable = ("price", "prep_minutes", "is_available")
     search_fields = ("name", "description")
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).annotate(_likes=Count("likes"))
+
+    @admin.display(description="Лайки", ordering="_likes")
+    def likes_total(self, obj):
+        return obj._likes
+
+
+@admin.register(ProductLike)
+class ProductLikeAdmin(admin.ModelAdmin):
+    list_display = ("product", "device", "created_at")
+    search_fields = ("product__name", "device")
+    list_filter = ("created_at",)

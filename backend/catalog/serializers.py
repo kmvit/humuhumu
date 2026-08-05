@@ -19,6 +19,7 @@ class ProductSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     image = serializers.SerializerMethodField()
     thumbnail = serializers.SerializerMethodField()
+    likes = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -35,7 +36,13 @@ class ProductSerializer(serializers.ModelSerializer):
             "prep_minutes",
             "is_available",
             "sort_order",
+            "likes",
         )
+
+    def get_likes(self, obj):
+        # берём аннотированное значение из queryset, иначе считаем на месте
+        n = getattr(obj, "likes_count", None)
+        return n if n is not None else obj.likes.count()
 
     def get_image(self, obj):
         return obj.image.url if obj.image else None

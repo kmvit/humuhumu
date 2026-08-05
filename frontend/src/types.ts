@@ -53,6 +53,7 @@ export interface Product {
   weight_grams: number | null;
   prep_minutes: number | null;
   is_available: boolean;
+  likes?: number;
 }
 
 export interface OrderItem {

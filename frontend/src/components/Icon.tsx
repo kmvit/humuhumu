@@ -1,5 +1,5 @@
 // Набор SVG-иконок (контурные, единый stroke 2px). Без эмодзи.
-type Props = { name: IconName; size?: number };
+type Props = { name: IconName; size?: number; filled?: boolean };
 
 const paths: Record<string, string> = {
   coffee:
@@ -36,17 +36,18 @@ const paths: Record<string, string> = {
   leaf: "M11 20A7 7 0 0 1 4 13c0-5 4-9 16-9 0 12-7 16-11 16zM4 21c3-8 7-11 14-13",
   wave: "M2 8c2 0 2 2 4 2s2-2 4-2 2 2 4 2 2-2 4-2 2 2 4 2M2 14c2 0 2 2 4 2s2-2 4-2 2 2 4 2 2-2 4-2 2 2 4 2",
   flower: "M12 8a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM12 8c0-3-1-5-3-5s-2 3 0 5M12 8c0-3 1-5 3-5s2 3 0 5M14.5 11c3-1 5-1 5.5 1s-2 3-4 1M9.5 11c-3-1-5-1-5.5 1s2 3 4 1M11 13.5c-1 3-1 5 1 5.5s3-2 1-4M13 13.5c1 3 1 5-1 5.5",
+  heart: "M12 21C12 21 3.5 14 3.5 8.5A4.5 4.5 0 0 1 12 6.3 4.5 4.5 0 0 1 20.5 8.5C20.5 14 12 21 12 21Z",
 };
 
 export type IconName = keyof typeof paths;
 
-export default function Icon({ name, size = 20 }: Props) {
+export default function Icon({ name, size = 20, filled = false }: Props) {
   return (
     <svg
       width={size}
       height={size}
       viewBox="0 0 24 24"
-      fill="none"
+      fill={filled ? "currentColor" : "none"}
       stroke="currentColor"
       strokeWidth={2}
       strokeLinecap="round"

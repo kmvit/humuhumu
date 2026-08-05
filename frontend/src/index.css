@@ -237,6 +237,12 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 .reel-weight { font-size: 13px; color: rgba(255,255,255,0.7); }
 .reel-add-wrap { flex-shrink: 0; }
 .reel-add { width: 60px; height: 60px; border-radius: 50%; display: grid; place-items: center; background: var(--brand); color: #fff; border: none; box-shadow: 0 6px 20px rgba(0,0,0,0.4); cursor: pointer; }
+/* лайк блюда — плавающая кнопка в правом верхнем углу карточки */
+.reel-like { position: absolute; top: calc(66px + env(safe-area-inset-top)); right: 14px; z-index: 2; display: inline-flex; flex-direction: column; align-items: center; gap: 3px; width: 52px; padding: 8px 0; border-radius: 16px; background: rgba(0,0,0,0.35); backdrop-filter: blur(6px); border: none; color: #fff; cursor: pointer; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.4)); transition: transform 0.15s var(--ease); }
+.reel-like:active { transform: scale(0.88); }
+.reel-like.on { color: #ff4d6d; }
+.reel-like-n { font-size: 13px; font-weight: 700; line-height: 1; }
+.reels-chip.top.on { background: #ff4d6d; border-color: #ff4d6d; }
 .reel-stepper { display: inline-flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 999px; background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.25); backdrop-filter: blur(6px); }
 .reel-stepper button { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: rgba(255,255,255,0.16); color: #fff; border: none; cursor: pointer; }
 .reel-stepper .num { min-width: 18px; text-align: center; font-size: 18px; font-weight: 600; }
