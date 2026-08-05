@@ -8,18 +8,23 @@ import Lightbox from "../../components/Lightbox";
 // для раздельного счёта — либо оставить всё общим.
 export default function Compose({
   table,
+  orderId,
+  initialGuests = 0,
   onCreated,
   onCancel,
 }: {
   table: string;
+  orderId?: number; // если задан — дописываем позиции в этот заказ, а не создаём новый
+  initialGuests?: number; // сколько именованных гостей уже есть в заказе
   onCreated: () => void;
   onCancel: () => void;
 }) {
+  const adding = orderId != null;
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [activeCat, setActiveCat] = useState<number | null>(null);
   const [cart, setCart] = useState<Record<string, number>>({}); // "guest:productId" -> qty
-  const [guests, setGuests] = useState(0); // сколько именованных гостей (0 = только общий)
+  const [guests, setGuests] = useState(initialGuests); // сколько именованных гостей (0 = только общий)
   const [activeGuest, setActiveGuest] = useState(0); // 0 = общий
   const [comment, setComment] = useState("");
   const [toast, setToast] = useState<string | null>(null);
@@ -76,7 +81,11 @@ export default function Compose({
         const [g, pid] = k.split(":").map(Number);
         return { product: pid, quantity, guest: g === 0 ? null : g };
       });
-      await post<Order>("/orders/", { items, table, comment: comment.trim() });
+      if (adding) {
+        await post<Order>(`/orders/${orderId}/add_items/`, { items });
+      } else {
+        await post<Order>("/orders/", { items, table, comment: comment.trim() });
+      }
       onCreated();
     } catch (err) {
       setToast(err instanceof ApiError ? err.message : "Ошибка");
@@ -88,11 +97,13 @@ export default function Compose({
   return (
     <>
       <div className="between">
-        <h1 className="h1">Стол {table}</h1>
+        <h1 className="h1">{adding ? `Заказ №${orderId}` : `Стол ${table}`}</h1>
         <button className="btn sm ghost" onClick={onCancel}>Назад</button>
       </div>
       <p className="muted" style={{ marginTop: 4 }}>
-        Выберите гостя и добавляйте позиции · можно оставить общим
+        {adding
+          ? `Добавляем позиции в заказ · стол ${table}`
+          : "Выберите гостя и добавляйте позиции · можно оставить общим"}
       </p>
 
       {/* выбор гостя, на которого пишутся позиции */}
@@ -119,16 +130,18 @@ export default function Compose({
         </button>
       </div>
 
-      <label className="field" style={{ display: "block", marginTop: 12 }}>
-        <span className="label">Комментарий к заказу</span>
-        <input
-          className="input"
-          value={comment}
-          onChange={(e) => setComment(e.target.value)}
-          placeholder="напр. без лука, аллергия на орехи, стол у окна"
-          maxLength={300}
-        />
-      </label>
+      {!adding && (
+        <label className="field" style={{ display: "block", marginTop: 12 }}>
+          <span className="label">Комментарий к заказу</span>
+          <input
+            className="input"
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            placeholder="напр. без лука, аллергия на орехи, стол у окна"
+            maxLength={300}
+          />
+        </label>
+      )}
 
       <div className="scroll-x" style={{ margin: "10px 0 4px" }}>
         <button className={"navlink" + (activeCat === null ? " active" : "")} onClick={() => setActiveCat(null)}>
@@ -242,7 +255,7 @@ export default function Compose({
           </div>
           <button className="btn" onClick={submit} disabled={busy}>
             <Icon name={busy ? "spark" : "check"} size={18} />
-            Отправить
+            {adding ? "Добавить" : "Отправить"}
           </button>
         </div>
       )}

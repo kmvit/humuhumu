@@ -24,6 +24,7 @@ export default function Waiter() {
     useLiveOrders("/orders/?status=requested", { sound: true });
   const [selected, setSelected] = useState<string | null>(null);
   const [composeFor, setComposeFor] = useState<string | null>(null);
+  const [addFor, setAddFor] = useState<Order | null>(null);
   const [closing, setClosing] = useState(false);
   const [busyItem, setBusyItem] = useState<number | null>(null);
   const [confirmId, setConfirmId] = useState<number | null>(null);
@@ -104,6 +105,22 @@ export default function Waiter() {
           reload();
         }}
         onCancel={() => setComposeFor(null)}
+      />
+    );
+  }
+
+  if (addFor) {
+    const maxG = Math.max(0, ...addFor.items.map((i) => i.guest ?? 0));
+    return (
+      <Compose
+        table={addFor.table}
+        orderId={addFor.id}
+        initialGuests={maxG}
+        onCreated={() => {
+          setAddFor(null);
+          reload();
+        }}
+        onCancel={() => setAddFor(null)}
       />
     );
   }
@@ -415,6 +432,13 @@ export default function Waiter() {
                       </li>
                     ))}
                   </ul>
+                  <button
+                    className="btn sm ghost block"
+                    style={{ marginTop: 8 }}
+                    onClick={() => setAddFor(o)}
+                  >
+                    <Icon name="plus" size={15} /> Добавить позицию
+                  </button>
                   <div className="wrap" style={{ marginTop: 8 }}>
                     {o.has_food && (
                       <span className={"badge " + STATUS_CLASS[o.food_status]}>Кухня: {STATUS_LABEL[o.food_status]}</span>

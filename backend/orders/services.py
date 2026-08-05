@@ -47,6 +47,17 @@ def create_order(*, waiter, items: list[dict], table: str = "", comment: str = "
 
 
 @transaction.atomic
+@transaction.atomic
+def append_items(*, order: Order, items: list[dict]) -> Order:
+    """Дописать позиции в уже открытый заказ (официант досчитывает по ходу)."""
+    if not items:
+        raise OrderError("Пустой список позиций")
+    _add_items(order, items)
+    order.recalc_total()
+    order.save(update_fields=["total"])
+    return order
+
+
 def create_request(*, customer_name: str, items: list[dict], table: str = "", comment: str = "") -> Order:
     """Заявка от клиента без авторизации (статус «Ждёт официанта»).
 

@@ -12,10 +12,11 @@ from .models import Order, OrderItem, Table
 from .serializers import (
     ClientOrderSerializer,
     OrderCreateSerializer,
+    OrderItemCreateSerializer,
     OrderSerializer,
     TableSerializer,
 )
-from .services import OrderError, create_order, create_request
+from .services import OrderError, append_items, create_order, create_request
 
 
 class TableViewSet(viewsets.ReadOnlyModelViewSet):
@@ -45,7 +46,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             return [IsCookOrAdmin()]
         if self.action == "drinks_status":
             return [IsBarOrAdmin()]
-        if self.action in ("close_table", "close", "cancel", "remove_item", "item_guest", "confirm", "set_comment", "move"):
+        if self.action in ("close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "confirm", "set_comment", "move"):
             return [IsWaiterOrAdmin()]
         # item_status — право проверяем внутри по станции позиции
         return [IsAuthenticated()]
@@ -278,6 +279,27 @@ class OrderViewSet(viewsets.ModelViewSet):
         order.closed_by = request.user
         order.closed_at = timezone.now()
         order.save(update_fields=["status", "closed_by", "closed_at"])
+        return Response(OrderSerializer(order).data)
+
+    @action(detail=True, methods=["post"], url_path="add_items")
+    def add_items(self, request, pk=None):
+        """Официант дописывает позиции в открытый заказ (гость дозаказал)."""
+        order = self.get_object()
+        if order.status != Order.Status.OPEN:
+            return Response(
+                {"detail": "Добавлять можно только в открытый заказ"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        items_ser = OrderItemCreateSerializer(data=request.data.get("items", []), many=True)
+        items_ser.is_valid(raise_exception=True)
+        try:
+            append_items(order=order, items=items_ser.validated_data)
+        except OrderError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        # новые позиции идут со статусом «новый» — освежаем агрегаты/таймстемпы станций
+        order = Order.objects.prefetch_related("items__product__category").get(pk=order.pk)
+        self._sync_times(order, Category.Station.KITCHEN)
+        self._sync_times(order, Category.Station.BAR)
         return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["post"])
