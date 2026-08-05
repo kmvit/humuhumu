@@ -38,6 +38,7 @@ export default function Waiter() {
   const [busyReq, setBusyReq] = useState<number | null>(null);
   const [moveFor, setMoveFor] = useState<number | null>(null);
   const [busyMove, setBusyMove] = useState<number | null>(null);
+  const [busyClose, setBusyClose] = useState<number | null>(null);
 
   useEffect(() => {
     get<Table[]>("/tables/").then((ts) => setTables(ts.map((t) => t.name))).catch(() => {});
@@ -127,6 +128,17 @@ export default function Waiter() {
     await patch(`/orders/${order.id}/comment/`, { comment: commentText.trim() });
     setCommentEdit(null);
     await reload();
+  }
+
+  // закрыть один заказ (не весь стол)
+  async function closeOrder(order: Order) {
+    setBusyClose(order.id);
+    try {
+      await post(`/orders/${order.id}/close/`, {});
+      await reload();
+    } finally {
+      setBusyClose(null);
+    }
   }
 
   async function closeTable(table: string) {
@@ -466,6 +478,16 @@ export default function Waiter() {
                       <Icon name="store" size={15} /> Перенести на другой стол
                     </button>
                   )}
+
+                  <div style={{ marginTop: 10 }}>
+                    <button
+                      className="btn sm block"
+                      disabled={busyClose === o.id}
+                      onClick={() => closeOrder(o)}
+                    >
+                      <Icon name="check" size={16} /> Закрыть заказ · {Number(o.total).toLocaleString("ru")} ₽
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -501,13 +523,13 @@ export default function Waiter() {
             <button className="btn sm" onClick={() => setComposeFor(selected)}>
               <Icon name="plus" size={16} /> Новый заказ
             </button>
-            {selOrders.length > 0 && (
+            {selOrders.length > 1 && (
               <button
                 className="btn sm ghost"
                 onClick={() => closeTable(selected)}
                 disabled={closing}
               >
-                <Icon name="check" size={16} /> Закрыть счёт{selTotal ? ` · ${selTotal.toLocaleString("ru")} ₽` : ""}
+                <Icon name="check" size={16} /> Закрыть весь стол{selTotal ? ` · ${selTotal.toLocaleString("ru")} ₽` : ""}
               </button>
             )}
           </div>

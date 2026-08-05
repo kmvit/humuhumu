@@ -45,7 +45,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             return [IsCookOrAdmin()]
         if self.action == "drinks_status":
             return [IsBarOrAdmin()]
-        if self.action in ("close_table", "cancel", "remove_item", "item_guest", "confirm", "set_comment", "move"):
+        if self.action in ("close_table", "close", "cancel", "remove_item", "item_guest", "confirm", "set_comment", "move"):
             return [IsWaiterOrAdmin()]
         # item_status — право проверяем внутри по станции позиции
         return [IsAuthenticated()]
@@ -328,6 +328,21 @@ class OrderViewSet(viewsets.ModelViewSet):
         item.guest = int(guest) if guest else None
         item.save(update_fields=["guest"])
         order = Order.objects.prefetch_related("items__product__category").get(pk=order.pk)
+        return Response(OrderSerializer(order).data)
+
+    @action(detail=True, methods=["post"])
+    def close(self, request, pk=None):
+        """Официант закрывает один заказ (не весь стол)."""
+        order = self.get_object()
+        if order.status != Order.Status.OPEN:
+            return Response(
+                {"detail": "Закрыть можно только открытый заказ"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        order.status = Order.Status.PAID
+        order.closed_by = request.user
+        order.closed_at = timezone.now()
+        order.save(update_fields=["status", "closed_by", "closed_at"])
         return Response(OrderSerializer(order).data)
 
     @action(detail=False, methods=["post"])
