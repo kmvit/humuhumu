@@ -36,6 +36,8 @@ export default function Waiter() {
   const [openClosed, setOpenClosed] = useState<Set<number>>(new Set());
   const [tables, setTables] = useState<string[]>([]);
   const [busyReq, setBusyReq] = useState<number | null>(null);
+  const [moveFor, setMoveFor] = useState<number | null>(null);
+  const [busyMove, setBusyMove] = useState<number | null>(null);
 
   useEffect(() => {
     get<Table[]>("/tables/").then((ts) => setTables(ts.map((t) => t.name))).catch(() => {});
@@ -135,6 +137,19 @@ export default function Waiter() {
       await reload();
     } finally {
       setClosing(false);
+    }
+  }
+
+  // официант переносит заказ на другой стол (гость пересел)
+  async function moveOrder(order: Order, table: string) {
+    setBusyMove(order.id);
+    try {
+      await patch(`/orders/${order.id}/move/`, { table });
+      setMoveFor(null);
+      setSelected(table);
+      await reload();
+    } finally {
+      setBusyMove(null);
     }
   }
 
@@ -307,7 +322,11 @@ export default function Waiter() {
               {selOrders.map((o) => (
                 <div key={o.id} style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
                   <div className="between">
-                    <strong>№{o.id} · <span className="num">{o.total}</span> ₽</strong>
+                    <strong>
+                      №{o.id}
+                      {o.customer_name && <span className="muted" style={{ fontWeight: 400 }}> · {o.customer_name}</span>}
+                      {" · "}<span className="num">{o.total}</span> ₽
+                    </strong>
                     <span className={"badge " + (o.is_ready ? "ready" : "preparing")}>
                       {o.is_ready ? "готов" : "готовится"}
                     </span>
@@ -405,6 +424,29 @@ export default function Waiter() {
                       onClick={() => { setCommentEdit(o.id); setCommentText(""); }}
                     >
                       <Icon name="plus" size={15} /> Комментарий
+                    </button>
+                  )}
+
+                  {moveFor === o.id ? (
+                    <div style={{ marginTop: 10 }}>
+                      <div className="between">
+                        <span className="muted" style={{ fontSize: 12 }}>Перенести на стол:</span>
+                        <button className="icon-btn sm" onClick={() => setMoveFor(null)} aria-label="Отмена"><Icon name="minus" size={14} /></button>
+                      </div>
+                      <div className="scroll-x" style={{ marginTop: 6 }}>
+                        {tables.filter((t) => t !== o.table).map((t) => (
+                          <button key={t} className="navlink" disabled={busyMove === o.id} onClick={() => moveOrder(o, t)}>{t}</button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      className="btn sm ghost"
+                      style={{ marginTop: 10, marginLeft: 8 }}
+                      disabled={busyMove === o.id}
+                      onClick={() => setMoveFor(o.id)}
+                    >
+                      <Icon name="store" size={15} /> Перенести на другой стол
                     </button>
                   )}
                 </div>

@@ -45,7 +45,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             return [IsCookOrAdmin()]
         if self.action == "drinks_status":
             return [IsBarOrAdmin()]
-        if self.action in ("close_table", "cancel", "remove_item", "item_guest", "confirm", "set_comment"):
+        if self.action in ("close_table", "cancel", "remove_item", "item_guest", "confirm", "set_comment", "move"):
             return [IsWaiterOrAdmin()]
         # item_status — право проверяем внутри по станции позиции
         return [IsAuthenticated()]
@@ -160,6 +160,29 @@ class OrderViewSet(viewsets.ModelViewSet):
         order.status = Order.Status.OPEN
         order.waiter = request.user
         order.save(update_fields=["table", "status", "waiter"])
+        return Response(OrderSerializer(order).data)
+
+    @action(detail=True, methods=["patch"])
+    def move(self, request, pk=None):
+        """Официант переносит заказ на другой стол (гость пересел за другой стол)."""
+        order = self.get_object()
+        if order.status != Order.Status.OPEN:
+            return Response(
+                {"detail": "Переносить можно только открытый заказ"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        table = str(request.data.get("table", "")).strip()
+        if not table:
+            return Response(
+                {"detail": "Не указан стол"}, status=status.HTTP_400_BAD_REQUEST
+            )
+        if table == order.table:
+            return Response(
+                {"detail": "Заказ уже на этом столе"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        order.table = table
+        order.save(update_fields=["table"])
         return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["patch"], url_path="comment")
