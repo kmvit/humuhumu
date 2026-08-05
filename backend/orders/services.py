@@ -53,6 +53,9 @@ def append_items(*, order: Order, items: list[dict]) -> Order:
     if not items:
         raise OrderError("Пустой список позиций")
     _add_items(order, items)
+    # order пришёл из get_object() с prefetch — сбрасываем кэш items,
+    # иначе recalc_total() просуммирует старый список без новых позиций
+    order._prefetched_objects_cache = {}
     order.recalc_total()
     order.save(update_fields=["total"])
     return order
