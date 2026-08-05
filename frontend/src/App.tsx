@@ -5,6 +5,7 @@ import { PaperBackdrop } from "./components/Ornaments";
 import Login from "./pages/Login";
 import Coworking from "./pages/Coworking";
 import Menu from "./pages/client/Menu";
+import MenuReels from "./pages/client/MenuReels";
 import Waiter from "./pages/waiter/Waiter";
 import Kitchen from "./pages/kitchen/Kitchen";
 import Bar from "./pages/bar/Bar";
@@ -48,6 +49,8 @@ export default function App() {
         path="/login"
         element={user ? <Navigate to={home} replace /> : <Login />}
       />
+      {/* экспериментальное меню Reels — полноэкранное, без общего Layout */}
+      <Route path="/reels" element={<MenuReels />} />
       <Route element={<Layout />}>
         {/* коворкинг — информационная страница, открыта всем */}
         <Route path="/coworking" element={<Coworking />} />

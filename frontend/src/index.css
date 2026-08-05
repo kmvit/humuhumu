@@ -205,6 +205,58 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 .chip.sm { padding: 2px 9px; font-size: 12.5px; }
 @media (max-width: 720px) { .kanban { grid-template-columns: 1fr; } }
 
+/* ============ Экспериментальное меню Reels (страница /reels) ============ */
+.reels { position: fixed; inset: 0; z-index: 40; display: flex; flex-direction: column; background: #0b0b0d; color: #fff; overflow: hidden; }
+.reels-loading { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: rgba(255,255,255,0.75); }
+
+/* верхняя лента категорий */
+.reels-top { position: absolute; top: 0; left: 0; right: 0; z-index: 3; display: flex; align-items: center; gap: 8px; padding: calc(10px + env(safe-area-inset-top)) 12px 12px; background: linear-gradient(to bottom, rgba(0,0,0,0.6), rgba(0,0,0,0)); }
+.reels-back { flex-shrink: 0; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; background: rgba(0,0,0,0.4); color: #fff; border: 1px solid rgba(255,255,255,0.25); }
+.reels-cats { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.reels-cats::-webkit-scrollbar { display: none; }
+.reels-chip { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 999px; font-size: 14px; font-weight: 600; white-space: nowrap; color: #fff; background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.2); backdrop-filter: blur(6px); cursor: pointer; transition: background 0.15s var(--ease); }
+.reels-chip.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+
+/* горизонтальный пейджер + вертикальные ленты */
+.reels-track { flex: 1; display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none; }
+.reels-track::-webkit-scrollbar { display: none; }
+.reels-page { flex: 0 0 100%; width: 100vw; height: 100%; overflow-y: auto; scroll-snap-align: start; scroll-snap-stop: always; scroll-snap-type: y mandatory; scrollbar-width: none; }
+.reels-page::-webkit-scrollbar { display: none; }
+.reel { position: relative; width: 100%; height: 100%; scroll-snap-align: start; scroll-snap-stop: always; overflow: hidden; }
+.reel-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.reel-ph { position: absolute; inset: 0; display: grid; place-items: center; color: rgba(255,255,255,0.35); background: linear-gradient(135deg, #1b2a3d, #0b0b0d); }
+.reel-shade { position: absolute; inset: 0; background: linear-gradient(to top, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.5) 28%, rgba(0,0,0,0) 55%); }
+.reel-body { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; padding: 20px 18px calc(26px + env(safe-area-inset-bottom)); z-index: 1; transition: padding-bottom 0.2s var(--ease); }
+/* когда снизу висит корзина — приподнимаем контент, чтобы «+» и цена не перекрывались */
+.reels.has-cart .reel-body { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+.reel-info { min-width: 0; }
+.reel-info h2 { font-family: "Fredoka", sans-serif; font-size: 26px; font-weight: 500; line-height: 1.15; color: #fff; text-shadow: 0 2px 12px rgba(0,0,0,0.6); }
+.reel-desc { margin: 6px 0 0; font-size: 13.5px; line-height: 1.4; color: rgba(255,255,255,0.85); max-width: 42ch; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.reel-meta { display: flex; align-items: baseline; gap: 12px; margin-top: 10px; }
+.reel-price { font-family: "Jost", sans-serif; font-size: 24px; font-weight: 600; }
+.reel-weight { font-size: 13px; color: rgba(255,255,255,0.7); }
+.reel-add-wrap { flex-shrink: 0; }
+.reel-add { width: 60px; height: 60px; border-radius: 50%; display: grid; place-items: center; background: var(--brand); color: #fff; border: none; box-shadow: 0 6px 20px rgba(0,0,0,0.4); cursor: pointer; }
+.reel-stepper { display: inline-flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 999px; background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.25); backdrop-filter: blur(6px); }
+.reel-stepper button { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: rgba(255,255,255,0.16); color: #fff; border: none; cursor: pointer; }
+.reel-stepper .num { min-width: 18px; text-align: center; font-size: 18px; font-weight: 600; }
+.reel-stepper.sm { padding: 3px; gap: 4px; background: var(--brand-soft); border-color: var(--border); }
+.reel-stepper.sm button { width: 28px; height: 28px; background: transparent; color: var(--brand); }
+.reel-stepper.sm .num { color: var(--fg); font-size: 15px; }
+
+/* корзина */
+.reels-toast { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 999px; background: rgba(0,0,0,0.85); color: #fff; font-weight: 600; font-size: 14px; border: 1px solid rgba(255,255,255,0.2); animation: fadeIn 0.15s var(--ease); }
+.reels-cartbar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 45; display: flex; align-items: center; justify-content: space-between; gap: 18px; width: min(560px, calc(100% - 24px)); padding: 14px 20px; border-radius: 999px; background: var(--brand); color: #fff; border: none; box-shadow: 0 8px 28px rgba(0,0,0,0.45); font-size: 16px; font-weight: 600; cursor: pointer; animation: slideUp 0.3s var(--ease); }
+.reels-cartbar-l { display: inline-flex; align-items: center; gap: 8px; }
+.reels-cartbar .num { font-family: "Jost", sans-serif; font-size: 20px; }
+.reels-sheet-overlay { position: fixed; inset: 0; z-index: 55; display: flex; align-items: flex-end; justify-content: center; background: rgba(0,0,0,0.5); animation: fadeIn 0.15s var(--ease); }
+.reels-sheet { width: min(560px, 100%); max-height: 82dvh; overflow-y: auto; padding: 20px 20px calc(20px + env(safe-area-inset-bottom)); background: var(--surface-solid); color: var(--fg); border-radius: var(--radius) var(--radius) 0 0; box-shadow: var(--shadow-lg); animation: sheetUp 0.28s var(--ease); }
+@keyframes sheetUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+.reels-sheet-items { display: flex; flex-direction: column; gap: 10px; margin: 14px 0; }
+.reels-sheet-row { gap: 12px; }
+@media (min-width: 561px) { .reels-sheet { border-radius: var(--radius); margin-bottom: 16px; } }
+@media (prefers-reduced-motion: reduce) { .reels-cartbar, .reels-sheet, .reels-toast { animation: none; } }
+
 /* плитки столов у официанта */
 .table-tile { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 16px 10px; cursor: pointer; text-align: center; }
 .table-tile.free { opacity: 0.7; }
