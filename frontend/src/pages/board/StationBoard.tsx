@@ -82,7 +82,10 @@ export default function StationBoard({ station }: { station: Station }) {
       ) : (
         <div className="kanban">
           {COLUMNS.map((col) => {
-            const cards = orders.filter((o) => o[statusField] === col.key);
+            // FIFO: старые заказы сверху, новые приходят снизу — чтобы не терялись
+            const cards = orders
+              .filter((o) => o[statusField] === col.key)
+              .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
             return (
               <div className="kanban-col" key={col.key}>
                 <div className="kanban-head">
