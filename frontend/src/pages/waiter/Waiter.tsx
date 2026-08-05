@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { get, patch, post } from "../../api";
-import type { Order, OrderItem, StationStatus, Table } from "../../types";
+import type { Order, OrderItem, Station, StationStatus, Table } from "../../types";
 import Icon from "../../components/Icon";
 import { useLiveOrders } from "../../useLiveOrders";
+import { playChime } from "../../sound";
 import { fmtClock, fmtDuration, minutesBetween } from "../../time";
 import Compose from "./Compose";
 
@@ -40,6 +41,8 @@ export default function Waiter() {
   const [moveFor, setMoveFor] = useState<number | null>(null);
   const [busyMove, setBusyMove] = useState<number | null>(null);
   const [busyClose, setBusyClose] = useState<number | null>(null);
+  const [busyServe, setBusyServe] = useState<string | null>(null);
+  const seenServe = useRef<Set<string> | null>(null);
 
   useEffect(() => {
     get<Table[]>("/tables/").then((ts) => setTables(ts.map((t) => t.name))).catch(() => {});
@@ -95,6 +98,41 @@ export default function Waiter() {
     for (const o of orders) (m[o.table] ||= []).push(o);
     return m;
   }, [orders]);
+
+  // «К подаче»: готовые, но ещё не отнесённые станции (кухня/бар отдельно)
+  const serveList = useMemo(() => {
+    const rows: { order: Order; station: Station }[] = [];
+    for (const o of orders) {
+      if (o.has_food && o.food_status === "ready" && !o.food_served)
+        rows.push({ order: o, station: "kitchen" });
+      if (o.has_drinks && o.drinks_status === "ready" && !o.drinks_served)
+        rows.push({ order: o, station: "bar" });
+    }
+    return rows;
+  }, [orders]);
+
+  // звук + без повторов: пикаем, когда появляется новая готовая станция
+  useEffect(() => {
+    const keys = new Set(serveList.map((r) => `${r.order.id}:${r.station}`));
+    if (seenServe.current === null) {
+      seenServe.current = keys; // первая загрузка — не сигналим
+      return;
+    }
+    const hasNew = [...keys].some((k) => !seenServe.current!.has(k));
+    if (hasNew) playChime();
+    seenServe.current = keys;
+  }, [serveList]);
+
+  async function serveStation(order: Order, station: Station) {
+    const key = `${order.id}:${station}`;
+    setBusyServe(key);
+    try {
+      await patch(`/orders/${order.id}/serve/`, { station });
+      await reload();
+    } finally {
+      setBusyServe(null);
+    }
+  }
 
   if (composeFor) {
     return (
@@ -261,6 +299,52 @@ export default function Waiter() {
       ) : (
       <>
       <p className="muted" style={{ marginTop: 4 }}>Выберите стол, чтобы создать заказ или закрыть счёт</p>
+
+      {serveList.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div className="between">
+            <strong style={{ fontFamily: "Fredoka", fontSize: 17 }}>К подаче</strong>
+            <span className="chip"><Icon name="check" size={15} /> {serveList.length}</span>
+          </div>
+          <div className="grid" style={{ marginTop: 10, gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
+            {serveList.map(({ order: o, station }) => {
+              const its = o.items.filter((it) => it.station === station);
+              const key = `${o.id}:${station}`;
+              return (
+                <div className="card new-order" key={key} style={{ borderColor: "#4a9c6d" }}>
+                  <div className="between">
+                    <strong>
+                      Стол {o.table || "—"}
+                      <span className="muted" style={{ fontWeight: 400 }}> · №{o.id}</span>
+                    </strong>
+                    <span className={"badge " + (station === "kitchen" ? "" : "open")}>
+                      {station === "kitchen" ? "Кухня" : "Бар"}
+                    </span>
+                  </div>
+                  {o.customer_name && (
+                    <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{o.customer_name}</div>
+                  )}
+                  <ul className="stack" style={{ gap: 3, margin: "8px 0", listStyle: "none", padding: 0 }}>
+                    {its.map((it) => (
+                      <li key={it.id} className="between">
+                        <span>{it.product_name}</span>
+                        <span className="num muted">× {it.quantity}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <button
+                    className="btn sm block"
+                    disabled={busyServe === key}
+                    onClick={() => serveStation(o, station)}
+                  >
+                    <Icon name="check" size={15} /> Подал · стол {o.table || "—"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {requests.length > 0 && (
         <div style={{ marginTop: 16 }}>

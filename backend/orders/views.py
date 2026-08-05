@@ -30,6 +30,10 @@ STATION_TIMES = {
     Category.Station.KITCHEN: ("food_started_at", "food_ready_at"),
     Category.Station.BAR: ("drinks_started_at", "drinks_ready_at"),
 }
+STATION_SERVED = {
+    Category.Station.KITCHEN: "food_served_at",
+    Category.Station.BAR: "drinks_served_at",
+}
 
 
 class OrderViewSet(viewsets.ModelViewSet):
@@ -46,7 +50,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             return [IsCookOrAdmin()]
         if self.action == "drinks_status":
             return [IsBarOrAdmin()]
-        if self.action in ("close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "confirm", "set_comment", "move"):
+        if self.action in ("close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "confirm", "set_comment", "move", "serve"):
             return [IsWaiterOrAdmin()]
         # item_status — право проверяем внутри по станции позиции
         return [IsAuthenticated()]
@@ -186,6 +190,20 @@ class OrderViewSet(viewsets.ModelViewSet):
         order.save(update_fields=["table"])
         return Response(OrderSerializer(order).data)
 
+    @action(detail=True, methods=["patch"])
+    def serve(self, request, pk=None):
+        """Официант отметил, что отнёс готовое станции гостю (kitchen/bar)."""
+        order = self.get_object()
+        field = STATION_SERVED.get(request.data.get("station"))
+        if not field:
+            return Response(
+                {"detail": "Неверная станция"}, status=status.HTTP_400_BAD_REQUEST
+            )
+        if getattr(order, field) is None:
+            setattr(order, field, timezone.now())
+            order.save(update_fields=[field])
+        return Response(OrderSerializer(order).data)
+
     @action(detail=True, methods=["patch"], url_path="comment")
     def set_comment(self, request, pk=None):
         """Официант добавляет/меняет комментарий к заказу."""
@@ -207,11 +225,16 @@ class OrderViewSet(viewsets.ModelViewSet):
         if agg in (Order.StationStatus.IN_PROGRESS, Order.StationStatus.READY):
             if getattr(order, started) is None:
                 setattr(order, started, now); changed.append(started)
+        served = STATION_SERVED[station]
         if agg == Order.StationStatus.READY:
             if getattr(order, ready) is None:
                 setattr(order, ready, now); changed.append(ready)
         elif getattr(order, ready) is not None:
             setattr(order, ready, None); changed.append(ready)
+            # станция вышла из готовности (напр. дозаказ) — снимаем «подано»,
+            # чтобы после повторной готовности заказ снова попал в ленту «К подаче»
+            if getattr(order, served) is not None:
+                setattr(order, served, None); changed.append(served)
         if changed:
             order.save(update_fields=changed)
 

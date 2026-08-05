@@ -33,6 +33,8 @@ class OrderSerializer(serializers.ModelSerializer):
     is_ready = serializers.BooleanField(read_only=True)
     food_status = serializers.ReadOnlyField()
     drinks_status = serializers.ReadOnlyField()
+    food_served = serializers.SerializerMethodField()
+    drinks_served = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
@@ -49,6 +51,8 @@ class OrderSerializer(serializers.ModelSerializer):
             "status_display",
             "food_status",
             "drinks_status",
+            "food_served",
+            "drinks_served",
             "has_food",
             "has_drinks",
             "is_ready",
@@ -59,8 +63,16 @@ class OrderSerializer(serializers.ModelSerializer):
             "food_ready_at",
             "drinks_started_at",
             "drinks_ready_at",
+            "food_served_at",
+            "drinks_served_at",
             "closed_at",
         )
+
+    def get_food_served(self, obj):
+        return obj.food_served_at is not None
+
+    def get_drinks_served(self, obj):
+        return obj.drinks_served_at is not None
 
 
 class OrderItemCreateSerializer(serializers.Serializer):

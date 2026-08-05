@@ -83,6 +83,8 @@ export interface Order {
   status_display: string;
   food_status: StationStatus;
   drinks_status: StationStatus;
+  food_served: boolean;
+  drinks_served: boolean;
   has_food: boolean;
   has_drinks: boolean;
   is_ready: boolean;
@@ -93,6 +95,8 @@ export interface Order {
   food_ready_at: string | null;
   drinks_started_at: string | null;
   drinks_ready_at: string | null;
+  food_served_at: string | null;
+  drinks_served_at: string | null;
   closed_at: string | null;
 }
 

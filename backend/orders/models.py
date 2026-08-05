@@ -86,6 +86,9 @@ class Order(models.Model):
     food_ready_at = models.DateTimeField("Кухня готова", null=True, blank=True)
     drinks_started_at = models.DateTimeField("Бар взял", null=True, blank=True)
     drinks_ready_at = models.DateTimeField("Бар готов", null=True, blank=True)
+    # официант отнёс готовое гостю (отдельно по кухне и бару)
+    food_served_at = models.DateTimeField("Еда подана", null=True, blank=True)
+    drinks_served_at = models.DateTimeField("Напитки поданы", null=True, blank=True)
     closed_at = models.DateTimeField("Закрыт", null=True, blank=True)
 
     class Meta:
