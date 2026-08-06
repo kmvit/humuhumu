@@ -9,6 +9,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from catalog.views import CategoryViewSet, ProductViewSet
 from core.views import SiteSettingsView
 from inventory.views import (
+    ReceiptScanViewSet,
     ReceiptViewSet,
     StockCategoryViewSet,
     StockItemViewSet,
@@ -31,6 +32,7 @@ router.register("tables", TableViewSet, basename="table")
 router.register("inventory/categories", StockCategoryViewSet, basename="stock-category")
 router.register("inventory/items", StockItemViewSet, basename="stock-item")
 router.register("inventory/receipts", ReceiptViewSet, basename="receipt")
+router.register("inventory/receipt-scans", ReceiptScanViewSet, basename="receipt-scan")
 
 api_patterns = [
     # авторизация

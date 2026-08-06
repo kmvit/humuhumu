@@ -27,6 +27,36 @@ services:
     ports:
       - "8000:8000"
 
+  worker:
+    build: ./backend
+    # Celery-воркер: распознавание фото чеков в фоне (см. inventory/tasks.py).
+    command: celery -A config worker -l info
+    volumes:
+      - ./backend:/app
+    env_file: .env
+    depends_on:
+      - db
+      - redis
+
+  tunnel:
+    build: ./deploy/tunnel
+    # SSH-туннель до зарубежного сервера → SOCKS5 на tunnel:1080 (OpenRouter из РФ).
+    # Опционален: поднимается только с профилем — `docker compose --profile tunnel up`.
+    # Адрес/пользователь/ключ берутся из .env (TUNNEL_SSH_*).
+    profiles: ["tunnel"]
+    command: >
+      autossh -M 0 -N -D 0.0.0.0:1080
+      -o ServerAliveInterval=30 -o ServerAliveCountMax=3
+      -o ExitOnForwardFailure=yes
+      -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/known_hosts
+      -i /keys/tunnel_key -p ${TUNNEL_SSH_PORT:-22}
+      ${TUNNEL_SSH_USER}@${TUNNEL_SSH_HOST}
+    environment:
+      AUTOSSH_GATETIME: "0"
+    volumes:
+      - ./deploy/tunnel/tunnel_key:/keys/tunnel_key:ro
+    restart: unless-stopped
+
   frontend:
     build: ./frontend
     # ставим/досоставляем зависимости при старте (быстро, если уже установлены)

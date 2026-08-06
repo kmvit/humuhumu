@@ -160,6 +160,56 @@ class ReceiptItem(models.Model):
         return f"{self.item} × {self.quantity}"
 
 
+class ReceiptScan(models.Model):
+    """Фото чека и результат его распознавания — черновик будущего прихода.
+
+    Живёт отдельно от Receipt: распознавание и сопоставление номенклатуры
+    ошибаются, поэтому остатки НЕ меняются, пока кладовщик не подтвердит черновик.
+    На подтверждении собирается payload и создаётся Receipt штатным путём.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Распознаётся"
+        PARSED = "parsed", "Распознан"
+        FAILED = "failed", "Ошибка"
+        CONFIRMED = "confirmed", "Оприходован"
+
+    image = models.ImageField("Фото чека", upload_to="receipt_scans/%Y/%m/")
+    status = models.CharField(
+        "Статус", max_length=12, choices=Status.choices, default=Status.PENDING
+    )
+    # Результат распознавания: {supplier, date, total, lines: [...]}.
+    # Каждая строка — сырые данные из чека + предложенное сопоставление к StockItem.
+    parsed = models.JSONField("Распознанное", null=True, blank=True)
+    error = models.CharField("Ошибка", max_length=500, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="receipt_scans",
+        verbose_name="Загрузил",
+    )
+    receipt = models.OneToOneField(
+        Receipt,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="scan",
+        verbose_name="Приход",
+    )
+    created_at = models.DateTimeField("Создан", auto_now_add=True)
+    updated_at = models.DateTimeField("Обновлён", auto_now=True)
+
+    class Meta:
+        verbose_name = "Скан чека"
+        verbose_name_plural = "Сканы чеков"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Скан чека №{self.pk} ({self.get_status_display()})"
+
+
 class StockMovement(models.Model):
     """Журнал движений остатка: приход и корректировка/инвентаризация."""
 

@@ -1,18 +1,21 @@
-from rest_framework import viewsets
+from django.conf import settings
+from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from users.permissions import IsWarehouseOrAdmin
 
-from .models import Receipt, StockCategory, StockItem, StockMovement
+from .models import Receipt, ReceiptScan, StockCategory, StockItem, StockMovement
 from .serializers import (
     AdjustSerializer,
     ReceiptCreateSerializer,
+    ReceiptScanSerializer,
     ReceiptSerializer,
     StockCategorySerializer,
     StockItemSerializer,
     StockMovementSerializer,
 )
+from .tasks import process_receipt_scan
 
 
 class StockCategoryViewSet(viewsets.ModelViewSet):
@@ -67,3 +70,49 @@ class ReceiptViewSet(viewsets.ModelViewSet):
         if self.action == "create":
             return ReceiptCreateSerializer
         return ReceiptSerializer
+
+
+class ReceiptScanViewSet(viewsets.ModelViewSet):
+    """Оприходование по фото чека: загрузка → распознавание → черновик → подтверждение.
+
+    Остатки не меняются, пока кладовщик не подтвердит распознанный черновик через
+    action `confirm` — там уже переиспользуется штатный ReceiptCreateSerializer.
+    """
+
+    queryset = ReceiptScan.objects.select_related("received_by", "receipt")
+    serializer_class = ReceiptScanSerializer
+    permission_classes = [IsWarehouseOrAdmin]
+    http_method_names = ["get", "post", "delete", "head", "options"]
+
+    def perform_create(self, serializer):
+        # Сохраняем фото и распознаём. По умолчанию синхронно в запросе — в
+        # compose нет celery-воркера; при RECEIPT_SCAN_ASYNC=1 уходит в очередь.
+        scan = serializer.save(created_by=self.request.user)
+        if settings.RECEIPT_SCAN_ASYNC:
+            process_receipt_scan.delay(scan.id)
+        else:
+            process_receipt_scan(scan.id)
+            scan.refresh_from_db()
+
+    @action(detail=True, methods=["post"])
+    def confirm(self, request, pk=None):
+        """Подтвердить черновик: создать приход и оприходовать позиции.
+
+        Тело запроса — как у обычного прихода: {supplier, comment, items:[{item,
+        quantity, unit_cost}]} (кладовщик уже поправил распознанное на фронте).
+        """
+        scan = self.get_object()
+        if scan.status == ReceiptScan.Status.CONFIRMED:
+            return Response(
+                {"detail": "Чек уже оприходован."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        ser = ReceiptCreateSerializer(data=request.data, context={"request": request})
+        ser.is_valid(raise_exception=True)
+        receipt = ser.save()
+
+        scan.receipt = receipt
+        scan.status = ReceiptScan.Status.CONFIRMED
+        scan.save(update_fields=["receipt", "status", "updated_at"])
+        return Response(ReceiptSerializer(receipt).data, status=status.HTTP_201_CREATED)

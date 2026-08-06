@@ -1,6 +1,13 @@
 from django.contrib import admin
 
-from .models import Receipt, ReceiptItem, StockCategory, StockItem, StockMovement
+from .models import (
+    Receipt,
+    ReceiptItem,
+    ReceiptScan,
+    StockCategory,
+    StockItem,
+    StockMovement,
+)
 
 
 @admin.register(StockCategory)
@@ -33,3 +40,10 @@ class StockMovementAdmin(admin.ModelAdmin):
     list_display = ("item", "delta", "kind", "receipt", "created_by", "created_at")
     list_filter = ("kind",)
     search_fields = ("item__name",)
+
+
+@admin.register(ReceiptScan)
+class ReceiptScanAdmin(admin.ModelAdmin):
+    list_display = ("id", "status", "created_by", "receipt", "created_at")
+    list_filter = ("status",)
+    readonly_fields = ("parsed", "error", "created_at", "updated_at")

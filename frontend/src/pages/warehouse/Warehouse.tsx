@@ -1,6 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
-import { get, post, ApiError } from "../../api";
-import type { StockCategory, StockItem, Receipt, StockUnit } from "../../types";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent } from "react";
+import { get, post, postForm, ApiError } from "../../api";
+import type {
+  StockCategory,
+  StockItem,
+  Receipt,
+  ReceiptScan,
+  StockUnit,
+} from "../../types";
 import Icon from "../../components/Icon";
 import { fmtDateTime } from "../../time";
 
@@ -16,7 +23,14 @@ function fmtQty(q: string | number | null): string {
   return Number(q).toLocaleString("ru", { maximumFractionDigits: 3 });
 }
 
-type Line = { item: number | ""; quantity: string; unit_cost: string };
+type Line = {
+  item: number | "";
+  quantity: string;
+  unit_cost: string;
+  // подсказки от распознавания чека (только для черновика по фото)
+  hint?: string; // как позиция называется в чеке
+  warn?: boolean; // не удалось уверенно сопоставить/сконвертировать
+};
 
 export default function Warehouse() {
   const [cats, setCats] = useState<StockCategory[]>([]);
@@ -32,6 +46,11 @@ export default function Warehouse() {
   const [comment, setComment] = useState("");
   const [lines, setLines] = useState<Line[]>([]);
   const [submitting, setSubmitting] = useState(false);
+
+  // приход по фото чека
+  const [scanId, setScanId] = useState<number | null>(null); // если задан — форма = черновик по фото
+  const [scanning, setScanning] = useState(false); // идёт загрузка/распознавание
+  const fileRef = useRef<HTMLInputElement>(null);
 
   // новая позиция
   const [niOpen, setNiOpen] = useState(false);
@@ -88,10 +107,72 @@ export default function Warehouse() {
   }
 
   function openReceipt() {
+    setScanId(null);
     setSupplier("");
     setComment("");
     setLines(items.length ? [{ item: items[0].id, quantity: "", unit_cost: "" }] : []);
     setReceiptOpen(true);
+  }
+
+  // ——— приход по фото чека ———
+  // Превращаем распознанный черновик в строки формы: подставляем найденную
+  // позицию и количество в базовой единице, помечаем неуверенные строки.
+  function draftFromScan(scan: ReceiptScan) {
+    const p = scan.parsed;
+    if (!p) return;
+    setScanId(scan.id);
+    setSupplier(p.supplier || "");
+    setComment("");
+    setLines(
+      p.lines.map((l) => {
+        const matched = l.matched_item_id != null && !!itemById[l.matched_item_id];
+        const qty = l.unit_ok && l.base_quantity != null ? l.base_quantity : l.raw_quantity;
+        return {
+          item: matched ? (l.matched_item_id as number) : "",
+          quantity: qty != null ? String(qty) : "",
+          unit_cost: l.unit_cost != null ? String(l.unit_cost) : "",
+          hint: `${l.raw_name}${l.raw_quantity != null ? ` · ${l.raw_quantity} ${l.raw_unit}` : ""}`,
+          warn: !matched || !l.unit_ok,
+        };
+      })
+    );
+    setReceiptOpen(true);
+  }
+
+  async function pollScan(id: number) {
+    // Задача распознавания фоновая — опрашиваем статус до готовности.
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 1500));
+      const scan = await get<ReceiptScan>(`/inventory/receipt-scans/${id}/`);
+      if (scan.status === "parsed") return scan;
+      if (scan.status === "failed") throw new ApiError(0, scan.error || "Не удалось распознать чек");
+    }
+    throw new ApiError(0, "Распознавание заняло слишком долго");
+  }
+
+  async function onPickPhoto(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // чтобы повторный выбор того же файла срабатывал
+    if (!file) return;
+    if (!items.length) {
+      notify("Сначала заведите позиции склада");
+      return;
+    }
+    setScanning(true);
+    try {
+      const form = new FormData();
+      form.append("image", file);
+      const created = await postForm<ReceiptScan>("/inventory/receipt-scans/", form);
+      // Синхронный режим: ответ уже распознан. Асинхронный: опрашиваем статус.
+      if (created.status === "failed") throw new ApiError(0, created.error || "Не удалось распознать чек");
+      const parsed = created.status === "parsed" ? created : await pollScan(created.id);
+      draftFromScan(parsed);
+      notify("Чек распознан — проверьте позиции");
+    } catch (err) {
+      notify(err instanceof ApiError ? err.message : "Ошибка распознавания");
+    } finally {
+      setScanning(false);
+    }
   }
 
   async function submitReceipt() {
@@ -108,13 +189,20 @@ export default function Warehouse() {
     }
     setSubmitting(true);
     try {
-      await post("/inventory/receipts/", {
+      const body = {
         supplier: supplier.trim(),
         comment: comment.trim(),
         items: payloadItems,
-      });
+      };
+      // Черновик по фото подтверждаем через confirm (свяжет скан с приходом),
+      // ручной приход — обычным способом.
+      await post(
+        scanId ? `/inventory/receipt-scans/${scanId}/confirm/` : "/inventory/receipts/",
+        body
+      );
       await load();
       setReceiptOpen(false);
+      setScanId(null);
       notify("Приход оприходован");
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "Ошибка");
@@ -208,9 +296,28 @@ export default function Warehouse() {
             )}
           </p>
         </div>
-        <button className="btn" onClick={openReceipt} disabled={!items.length}>
-          <Icon name="truck" size={18} /> Оприходовать
-        </button>
+        <div className="wrap" style={{ gap: 8 }}>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={onPickPhoto}
+            style={{ display: "none" }}
+          />
+          <button
+            className="btn ghost"
+            onClick={() => fileRef.current?.click()}
+            disabled={!items.length || scanning}
+            title="Распознать позиции с фото чека"
+          >
+            <Icon name={scanning ? "spark" : "receipt"} size={18} />{" "}
+            {scanning ? "Распознаю…" : "Фото чека"}
+          </button>
+          <button className="btn" onClick={openReceipt} disabled={!items.length}>
+            <Icon name="truck" size={18} /> Оприходовать
+          </button>
+        </div>
       </div>
 
       {/* вкладки */}
@@ -233,11 +340,21 @@ export default function Warehouse() {
       {receiptOpen && (
         <div className="card enter" style={{ marginTop: 12 }}>
           <div className="between">
-            <strong style={{ fontFamily: "Fredoka", fontSize: 18 }}>Новый приход</strong>
+            <strong style={{ fontFamily: "Fredoka", fontSize: 18 }}>
+              {scanId ? "Приход по фото" : "Новый приход"}
+            </strong>
             <button className="btn sm ghost" onClick={() => setReceiptOpen(false)}>
               Отмена
             </button>
           </div>
+          {scanId != null && (
+            <p className="muted" style={{ margin: "6px 0 0", fontSize: 13 }}>
+              <Icon name="spark" size={14} /> Распознано с фото. Проверьте позиции и
+              количества — строки с
+              <span style={{ color: "var(--danger)" }}> оранжевой меткой</span> нужно
+              сопоставить или проверить единицы вручную.
+            </p>
+          )}
           <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
             <label className="field">
               <span className="label">Поставщик</span>
@@ -253,7 +370,26 @@ export default function Warehouse() {
             {lines.map((l, idx) => {
               const it = l.item !== "" ? itemById[l.item] : null;
               return (
-                <div key={idx} className="receipt-line">
+                <div
+                  key={idx}
+                  className="stack"
+                  style={{
+                    gap: 4,
+                    ...(l.warn
+                      ? {
+                          borderLeft: "3px solid var(--danger)",
+                          paddingLeft: 8,
+                          marginLeft: -11,
+                        }
+                      : {}),
+                  }}
+                >
+                  {l.hint && (
+                    <span className="muted" style={{ fontSize: 12 }}>
+                      <Icon name="receipt" size={12} /> в чеке: {l.hint}
+                    </span>
+                  )}
+                  <div className="receipt-line">
                   <select
                     className="input"
                     value={l.item}
@@ -282,6 +418,7 @@ export default function Warehouse() {
                   <button className="icon-btn danger" onClick={() => removeLine(idx)} aria-label="Убрать строку">
                     <Icon name="minus" size={16} />
                   </button>
+                  </div>
                 </div>
               );
             })}

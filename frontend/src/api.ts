@@ -59,10 +59,12 @@ function refreshAccess(): Promise<string | null> {
 
 async function request<T>(path: string, options: RequestInit, retry: boolean): Promise<T> {
   const token = getToken();
+  // Для FormData не выставляем Content-Type — браузер сам добавит boundary.
+  const isForm = options.body instanceof FormData;
   const res = await fetch(`/api${path}`, {
     ...options,
     headers: {
-      "Content-Type": "application/json",
+      ...(isForm ? {} : { "Content-Type": "application/json" }),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     },
@@ -98,3 +100,6 @@ export const post = <T>(path: string, body: unknown) =>
   api<T>(path, { method: "POST", body: JSON.stringify(body) });
 export const patch = <T>(path: string, body: unknown) =>
   api<T>(path, { method: "PATCH", body: JSON.stringify(body) });
+// Загрузка файла (multipart): body — FormData, Content-Type ставит браузер.
+export const postForm = <T>(path: string, form: FormData) =>
+  api<T>(path, { method: "POST", body: form });

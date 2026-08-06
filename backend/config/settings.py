@@ -127,3 +127,19 @@ USE_X_FORWARDED_HOST = True
 
 CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("REDIS_URL", "redis://redis:6379/0")
+
+# ─────────── LLM (OpenRouter) для распознавания чеков ───────────
+# Подключение как в проекте tourplanner: openai SDK, направленный на OpenRouter.
+# OPENAI_PROXY_URL — туннель на зарубежный сервер (OpenRouter недоступен из РФ),
+# применяется ТОЛЬКО к LLM-трафику. Формат: http://user:pass@host:port или socks5://...
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
+OPENAI_PROXY_URL = os.getenv("OPENAI_PROXY_URL", "")
+OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL", "")
+OPENROUTER_APP_NAME = os.getenv("OPENROUTER_APP_NAME", "humu")
+# Vision-модель для распознавания чеков (меняется без деплоя).
+OPENAI_RECEIPT_MODEL = os.getenv("OPENAI_RECEIPT_MODEL", "google/gemini-2.5-flash")
+OPENAI_RECEIPT_TIMEOUT = float(os.getenv("OPENAI_RECEIPT_TIMEOUT", "60"))
+# Распознавание чека через celery-воркер (сервис `worker` в compose). Если воркера
+# нет — поставь "0", тогда распознавание пойдёт синхронно прямо в запросе.
+RECEIPT_SCAN_ASYNC = os.getenv("RECEIPT_SCAN_ASYNC", "1") == "1"

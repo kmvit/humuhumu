@@ -8,3 +8,5 @@ python-dotenv==1.0.1
 gunicorn==22.0.0
 celery==5.4.0
 redis==5.0.7
+openai==2.14.0
+httpx[socks]==0.28.1

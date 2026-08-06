@@ -3,7 +3,14 @@ from decimal import Decimal
 from django.db import transaction
 from rest_framework import serializers
 
-from .models import Receipt, ReceiptItem, StockCategory, StockItem, StockMovement
+from .models import (
+    Receipt,
+    ReceiptItem,
+    ReceiptScan,
+    StockCategory,
+    StockItem,
+    StockMovement,
+)
 
 
 class StockCategorySerializer(serializers.ModelSerializer):
@@ -115,6 +122,23 @@ class AdjustSerializer(serializers.Serializer):
         max_digits=12, decimal_places=3, min_value=Decimal("0")
     )
     comment = serializers.CharField(max_length=300, required=False, allow_blank=True)
+
+
+class ReceiptScanSerializer(serializers.ModelSerializer):
+    """Скан чека: загрузка фото (image) + чтение статуса и черновика (parsed)."""
+
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = ReceiptScan
+        fields = (
+            "id", "image", "status", "status_display", "parsed", "error",
+            "receipt", "created_at", "updated_at",
+        )
+        read_only_fields = (
+            "status", "status_display", "parsed", "error", "receipt",
+            "created_at", "updated_at",
+        )
 
 
 class StockMovementSerializer(serializers.ModelSerializer):

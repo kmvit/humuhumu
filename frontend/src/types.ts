@@ -160,6 +160,41 @@ export interface Receipt {
   created_at: string;
 }
 
+// Оприходование по фото чека
+export type ReceiptScanStatus = "pending" | "parsed" | "failed" | "confirmed";
+
+export interface ReceiptScanLine {
+  raw_name: string;
+  raw_quantity: number | null;
+  raw_unit: string;
+  unit_cost: number | null;
+  matched_item_id: number | null;
+  matched_item_name: string | null;
+  matched_item_unit: StockUnit | null;
+  base_quantity: number | null;
+  unit_ok: boolean;
+  confidence: number;
+}
+
+export interface ReceiptScanParsed {
+  supplier: string;
+  date: string | null;
+  total: number | null;
+  lines: ReceiptScanLine[];
+}
+
+export interface ReceiptScan {
+  id: number;
+  image: string;
+  status: ReceiptScanStatus;
+  status_display: string;
+  parsed: ReceiptScanParsed | null;
+  error: string;
+  receipt: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface TokenPackage {
   id: number;
   pay_amount: string;

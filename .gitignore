@@ -18,6 +18,9 @@ venv/
 # Env
 .env
 
+# SSH-ключ туннеля (deploy/tunnel) — секрет, не версионируем
+/deploy/tunnel/tunnel_key
+
 # Node
 node_modules/
 dist/
