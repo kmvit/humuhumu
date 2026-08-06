@@ -283,7 +283,12 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 .table-tile { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 16px 10px; cursor: pointer; text-align: center; }
 .table-tile.free { opacity: 0.7; }
 .table-tile.busy { border-color: var(--brand); }
-.table-tile.ready { border-color: #4a9c6d; box-shadow: 0 0 0 1px rgba(74, 156, 109, 0.4) inset; }
+/* «готов» — заметная зелёная заливка, чтобы официант сразу видел стол к подаче */
+.table-tile.ready { background: #2e9e5b; border-color: #2e9e5b; color: #fff; box-shadow: 0 4px 16px rgba(46, 158, 91, 0.4); }
+.table-tile.ready strong { color: #fff; }
+.table-tile.ready .muted { color: rgba(255, 255, 255, 0.88); }
+.table-tile.ready .num { color: #fff; }
+[data-theme="dark"] .table-tile.ready { background: #35b56a; border-color: #35b56a; }
 .table-tile.sel { outline: 2px solid var(--brand); outline-offset: 1px; }
 
 /* карточка стола официанта — модальное окно поверх сетки */
