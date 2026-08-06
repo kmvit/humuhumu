@@ -79,7 +79,7 @@ class ReceiptScanViewSet(viewsets.ModelViewSet):
     action `confirm` — там уже переиспользуется штатный ReceiptCreateSerializer.
     """
 
-    queryset = ReceiptScan.objects.select_related("received_by", "receipt")
+    queryset = ReceiptScan.objects.select_related("created_by", "receipt")
     serializer_class = ReceiptScanSerializer
     permission_classes = [IsWarehouseOrAdmin]
     http_method_names = ["get", "post", "delete", "head", "options"]
