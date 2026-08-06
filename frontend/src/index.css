@@ -197,6 +197,10 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
   100% { box-shadow: 0 0 0 0 rgba(31, 88, 166, 0); }
 }
 .card.new-order { border-color: var(--brand); animation: newOrderPulse 1.3s var(--ease) 4; }
+/* цветные блоки у официанта: «Заявки клиентов» — брендовый, «К подаче» — зелёный */
+.card.request-card { background: var(--brand-soft); border-color: var(--brand); }
+.card.serve-card { background: #e9f4ee; border-color: #5aab80; }
+[data-theme="dark"] .card.serve-card { background: rgba(94, 176, 131, 0.15); border-color: rgba(94, 176, 131, 0.5); }
 
 /* канбан-доски кухни/бара */
 .kanban { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 16px; align-items: start; }

@@ -311,7 +311,7 @@ export default function Waiter() {
               const its = o.items.filter((it) => it.station === station);
               const key = `${o.id}:${station}`;
               return (
-                <div className="card new-order" key={key} style={{ borderColor: "#4a9c6d" }}>
+                <div className="card serve-card" key={key}>
                   <div className="between">
                     <strong>
                       Стол {o.table || "—"}
@@ -354,7 +354,7 @@ export default function Waiter() {
           </div>
           <div className="grid" style={{ marginTop: 10, gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
             {requests.map((o) => (
-              <div className={"card" + (reqHighlight.has(o.id) ? " new-order" : "")} key={o.id}>
+              <div className={"card request-card" + (reqHighlight.has(o.id) ? " new-order" : "")} key={o.id}>
                 <div className="between">
                   <strong>
                     {o.customer_name || "Клиент"}
