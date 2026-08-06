@@ -56,7 +56,7 @@ export default function Waiter() {
     });
 
   useEffect(() => {
-    if (view === "closed") get<Order[]>("/orders/?status=paid").then(setClosed).catch(() => {});
+    if (view === "closed") get<Order[]>("/orders/?status=paid&closed=today").then(setClosed).catch(() => {});
   }, [view]);
 
   // при открытии стола подставляем N = число уже отмеченных гостей (минимум 2)
@@ -243,10 +243,10 @@ export default function Waiter() {
 
       {view === "closed" ? (
         <>
-          <p className="muted" style={{ marginTop: 4 }}>Закрытые счета</p>
+          <p className="muted" style={{ marginTop: 4 }}>Закрытые счета за сегодня</p>
           <div className="stack" style={{ gap: 10, marginTop: 16 }}>
             {closed.length === 0 ? (
-              <p className="muted" style={{ textAlign: "center", marginTop: 24 }}>Закрытых счетов нет</p>
+              <p className="muted" style={{ textAlign: "center", marginTop: 24 }}>Сегодня закрытых счетов нет</p>
             ) : (
               closed.map((o) => {
                 const open = openClosed.has(o.id);
@@ -414,7 +414,7 @@ export default function Waiter() {
               onClick={() => setSelected(t)}
             >
               <strong style={{ fontFamily: "Fredoka", fontSize: 22 }}>{t}</strong>
-              <span className="muted" style={{ fontSize: 12.5 }}>
+              <span style={{ fontSize: 14.5, fontWeight: 700 }}>
                 {occupied ? (ready ? "готов" : "готовится") : "свободен"}
               </span>
               {occupied && (
@@ -422,7 +422,7 @@ export default function Waiter() {
                   <Icon name="spark" size={11} /> {fmtDuration(minutesBetween(openedAt!))}
                 </span>
               )}
-              {occupied && <span className="num" style={{ fontSize: 13 }}>{total.toLocaleString("ru")} ₽</span>}
+              {occupied && <span className="num" style={{ fontSize: 18, fontWeight: 700 }}>{total.toLocaleString("ru")} ₽</span>}
             </button>
           );
         })}

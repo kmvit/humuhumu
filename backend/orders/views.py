@@ -73,6 +73,9 @@ class OrderViewSet(viewsets.ModelViewSet):
             qs = qs.filter(status=params["status"])
         if params.get("table"):
             qs = qs.filter(table=params["table"])
+        # закрытые счета — по умолчанию только за сегодня (список у официанта)
+        if params.get("closed") == "today":
+            qs = qs.filter(closed_at__date=timezone.localdate())
         return qs
 
     def get_serializer_class(self):
