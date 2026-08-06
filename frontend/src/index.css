@@ -281,9 +281,15 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 
 /* плитки столов у официанта */
 .table-tile { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 16px 10px; cursor: pointer; text-align: center; }
-.table-tile.free { opacity: 0.7; }
-.table-tile.busy { border-color: var(--brand); }
-/* «готов» — заметная зелёная заливка, чтобы официант сразу видел стол к подаче */
+/* светофор столов: свободен — нейтральный, готовится — оранжевый, готов — зелёный */
+.table-tile.free { background: #edece7; border-color: #dedbd3; }
+.table-tile.free strong { color: var(--muted); }
+[data-theme="dark"] .table-tile.free { background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.12); }
+.table-tile.busy { background: #d97706; border-color: #d97706; color: #fff; box-shadow: 0 4px 16px rgba(217, 119, 6, 0.35); }
+.table-tile.busy strong { color: #fff; }
+.table-tile.busy .muted { color: rgba(255, 255, 255, 0.88); }
+.table-tile.busy .num { color: #fff; }
+[data-theme="dark"] .table-tile.busy { background: #ef8f2b; border-color: #ef8f2b; }
 .table-tile.ready { background: #2e9e5b; border-color: #2e9e5b; color: #fff; box-shadow: 0 4px 16px rgba(46, 158, 91, 0.4); }
 .table-tile.ready strong { color: #fff; }
 .table-tile.ready .muted { color: rgba(255, 255, 255, 0.88); }
