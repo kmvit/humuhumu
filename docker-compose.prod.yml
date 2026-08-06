@@ -21,7 +21,10 @@ services:
     restart: unless-stopped
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
     command: >
       sh -c "python manage.py migrate --noinput &&
              python manage.py collectstatic --noinput &&
@@ -38,7 +41,10 @@ services:
     restart: unless-stopped
 
   worker:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
     # Celery-воркер: распознавание фото чеков в фоне (см. inventory/tasks.py).
     # media смонтирован, чтобы воркер читал загруженные фото чеков.
     command: celery -A config worker -l info --concurrency 2
