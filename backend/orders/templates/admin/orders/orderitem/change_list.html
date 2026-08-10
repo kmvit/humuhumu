@@ -1,0 +1,38 @@
+{% extends "admin/change_list.html" %}
+
+{% block result_list %}
+  {% if sold_qty is not None %}
+    <div class="module" style="margin: 0 0 10px; padding: 10px 14px; font-size: 13px;">
+      <strong>Итого по выборке:</strong>
+      продано — <strong>{{ sold_qty }}</strong> шт,
+      выручка — <strong>{{ sold_revenue|floatformat:2 }} ₽</strong>
+    </div>
+    {% if sold_breakdown %}
+      <div class="module" style="margin: 0 0 10px; padding: 10px 14px; font-size: 13px;">
+        <strong>Продано по блюдам:</strong>
+        <table style="margin-top: 8px; width: auto; min-width: 320px;">
+          <thead>
+            <tr>
+              <th style="text-align: left;">Блюдо</th>
+              <th style="text-align: right;">Кол-во</th>
+              <th style="text-align: right;">Выручка</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in sold_breakdown %}
+              <tr>
+                <td>{{ row.product__name }}</td>
+                <td style="text-align: right;"><strong>{{ row.qty }}</strong></td>
+                <td style="text-align: right;">{{ row.revenue|floatformat:2 }} ₽</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <p class="help" style="margin-top: 6px;">
+          Совет: отфильтруйте «Статус заказа = Закрыт» и период — чтобы видеть именно проданное.
+        </p>
+      </div>
+    {% endif %}
+  {% endif %}
+  {{ block.super }}
+{% endblock %}
