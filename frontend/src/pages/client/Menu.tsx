@@ -4,20 +4,9 @@ import type { Category, Order, Product } from "../../types";
 import Icon, { categoryIcon } from "../../components/Icon";
 import { SceneBanner, WaveRule } from "../../components/Ornaments";
 import Lightbox from "../../components/Lightbox";
+import { initTable } from "../../table";
 
 const TOKEN_KEY = "humu_order_token";
-const TABLE_KEY = "humu_table";
-
-// Стол берём из QR-кода на столе (?table=N) и запоминаем в localStorage,
-// чтобы он подставлялся в заказ без участия официанта.
-function initTable(): string | null {
-  const fromUrl = new URLSearchParams(window.location.search).get("table");
-  if (fromUrl) {
-    localStorage.setItem(TABLE_KEY, fromUrl);
-    return fromUrl;
-  }
-  return localStorage.getItem(TABLE_KEY);
-}
 
 export default function Menu() {
   const [categories, setCategories] = useState<Category[]>([]);

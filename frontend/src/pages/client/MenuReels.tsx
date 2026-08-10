@@ -3,8 +3,8 @@ import { Link } from "react-router-dom";
 import { get, post, ApiError } from "../../api";
 import type { Category, Order, Product } from "../../types";
 import Icon, { categoryIcon, type IconName } from "../../components/Icon";
+import { initTable } from "../../table";
 
-const TABLE_KEY = "humu_table";
 const COACH_KEY = "humu_reels_coached";
 const DEVICE_KEY = "humu_device";
 const LIKES_KEY = "humu_liked";
@@ -17,15 +17,6 @@ function initDevice(): string {
     localStorage.setItem(DEVICE_KEY, d);
   }
   return d;
-}
-
-function initTable(): string | null {
-  const fromUrl = new URLSearchParams(window.location.search).get("table");
-  if (fromUrl) {
-    localStorage.setItem(TABLE_KEY, fromUrl);
-    return fromUrl;
-  }
-  return localStorage.getItem(TABLE_KEY);
 }
 
 // Экспериментальное меню в стиле Reels: категории листаем влево-вправо,
