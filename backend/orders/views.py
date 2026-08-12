@@ -64,16 +64,22 @@ class OrderViewSet(viewsets.ModelViewSet):
         active = Q(status=Order.Status.OPEN) | Q(
             status=Order.Status.PAID, closed_at__date=timezone.localdate()
         )
-        # доски кухни/бара: заказ висит, пока станцию не отнесли (served)
+        # доски кухни/бара: карточка уходит только когда станция ГОТОВА и заказ
+        # ЗАКРЫТ. Пока готовится — висит, даже если официант уже закрыл счёт.
+        # Открытый заказ показываем всегда (готовый лежит в «Готов» до закрытия).
         if params.get("station") in ("kitchen", "bar"):
             st = params["station"]
-            served = "food_served_at" if st == "kitchen" else "drinks_served_at"
+            ready = "food_ready_at" if st == "kitchen" else "drinks_ready_at"
+            board = Q(status=Order.Status.OPEN) | Q(
+                status=Order.Status.PAID,
+                closed_at__date=timezone.localdate(),
+                **{f"{ready}__isnull": True},  # закрыт, но ещё не готов → показываем
+            )
             return qs.filter(
-                active,
-                items__product__category__station=st,
-                **{f"{served}__isnull": True},
+                board, items__product__category__station=st
             ).distinct()
-        # лента «К подаче» у официанта: станция готова, но ещё не отнесена
+        # лента «К подаче» у официанта: станция готова, но ещё не отнесена (served).
+        # Отдельный механизм — кнопка «Подал» не зависит от досок.
         if params.get("serve") == "1":
             return qs.filter(active).filter(
                 Q(food_ready_at__isnull=False, food_served_at__isnull=True)
