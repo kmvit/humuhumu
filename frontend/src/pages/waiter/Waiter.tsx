@@ -20,6 +20,9 @@ const STATUS_CLASS: Record<StationStatus, string> = {
 
 export default function Waiter() {
   const { orders, reload } = useLiveOrders("/orders/?status=open", { sound: false });
+  // «К подаче»: готовые, но не отнесённые станции — открытые + оплаченные (оплата вперёд)
+  const { orders: serveOrders, reload: reloadServe } =
+    useLiveOrders("/orders/?serve=1", { sound: false });
   // заявки от клиентов (без стола) — со звуком, чтобы официант заметил
   const { orders: requests, highlight: reqHighlight, reload: reloadRequests } =
     useLiveOrders("/orders/?status=requested", { sound: true });
@@ -102,14 +105,14 @@ export default function Waiter() {
   // «К подаче»: готовые, но ещё не отнесённые станции (кухня/бар отдельно)
   const serveList = useMemo(() => {
     const rows: { order: Order; station: Station }[] = [];
-    for (const o of orders) {
+    for (const o of serveOrders) {
       if (o.has_food && o.food_status === "ready" && !o.food_served)
         rows.push({ order: o, station: "kitchen" });
       if (o.has_drinks && o.drinks_status === "ready" && !o.drinks_served)
         rows.push({ order: o, station: "bar" });
     }
     return rows;
-  }, [orders]);
+  }, [serveOrders]);
 
   // звук + без повторов: пикаем, когда появляется новая готовая станция
   useEffect(() => {
@@ -128,7 +131,7 @@ export default function Waiter() {
     setBusyServe(key);
     try {
       await patch(`/orders/${order.id}/serve/`, { station });
-      await reload();
+      await Promise.all([reloadServe(), reload()]);
     } finally {
       setBusyServe(null);
     }

@@ -1,3 +1,4 @@
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -58,16 +59,25 @@ class OrderViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = Order.objects.prefetch_related("items__product__category")
         params = self.request.query_params
-        # доски кухни/бара: все открытые заказы с позициями этой станции
-        if params.get("station") == "kitchen":
+        # активные заказы: открытые + оплаченные сегодня (оплата вперёд — кухня
+        # ещё готовит). Историю оплаченных не тянем, чтобы не залить доску.
+        active = Q(status=Order.Status.OPEN) | Q(
+            status=Order.Status.PAID, closed_at__date=timezone.localdate()
+        )
+        # доски кухни/бара: заказ висит, пока станцию не отнесли (served)
+        if params.get("station") in ("kitchen", "bar"):
+            st = params["station"]
+            served = "food_served_at" if st == "kitchen" else "drinks_served_at"
             return qs.filter(
-                status=Order.Status.OPEN,
-                items__product__category__station="kitchen",
+                active,
+                items__product__category__station=st,
+                **{f"{served}__isnull": True},
             ).distinct()
-        if params.get("station") == "bar":
-            return qs.filter(
-                status=Order.Status.OPEN,
-                items__product__category__station="bar",
+        # лента «К подаче» у официанта: станция готова, но ещё не отнесена
+        if params.get("serve") == "1":
+            return qs.filter(active).filter(
+                Q(food_ready_at__isnull=False, food_served_at__isnull=True)
+                | Q(drinks_ready_at__isnull=False, drinks_served_at__isnull=True)
             ).distinct()
         if params.get("status"):
             qs = qs.filter(status=params["status"])
