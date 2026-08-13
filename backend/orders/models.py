@@ -161,6 +161,11 @@ class OrderItem(models.Model):
     )
     # номер гостя для раздельного счёта; пусто = общий заказ
     guest = models.PositiveSmallIntegerField("Гость", null=True, blank=True)
+    # Когда по тех карте блюда списали ингредиенты со склада. Проставляется
+    # один раз — при первом переводе позиции в «готово» (см. inventory.services).
+    stock_written_off_at = models.DateTimeField(
+        "Склад списан", null=True, blank=True, editable=False
+    )
 
     class Meta:
         verbose_name = "Позиция заказа"

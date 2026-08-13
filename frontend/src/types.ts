@@ -126,6 +126,13 @@ export interface StockCategory {
   is_active: boolean;
 }
 
+/** Вариант товара: как его называют при закупке и пишут в чеках. */
+export interface StockAlias {
+  id: number;
+  name: string;
+}
+
+/** Товар склада — «Креветки», «Кола»: один остаток независимо от марки. */
 export interface StockItem {
   id: number;
   category: number;
@@ -135,8 +142,57 @@ export interface StockItem {
   unit_display: string;
   quantity: string;
   min_quantity: string | null;
+  /** До какого остатка закупаем; пусто — два порога. */
+  target_quantity: string | null;
+  /** Сколько не хватает до цели — столько уйдёт в закуп. */
+  shortage: string;
   is_low: boolean;
   is_active: boolean;
+  aliases: StockAlias[];
+}
+
+/** Строка тех карты: расход товара на одну порцию блюда. */
+export interface RecipeLine {
+  id: number;
+  item: number;
+  item_name: string;
+  unit_display: string;
+  quantity: string;
+  comment: string;
+}
+
+/** Тех карта блюда: состав и себестоимость по последним закупкам. */
+export interface Recipe {
+  product: number;
+  product_name: string;
+  category_name: string;
+  price: string;
+  lines: RecipeLine[];
+  cost: string;
+  /** Цена известна не по всем ингредиентам — себестоимость неполная. */
+  cost_partial: boolean;
+}
+
+export interface PurchaseLine {
+  id: number;
+  purchase: number;
+  item: number;
+  item_name: string;
+  unit_display: string;
+  category_name: string;
+  in_stock: string;
+  quantity: string;
+  /** Строку предложила программа (не кладовщик). */
+  is_auto: boolean;
+  is_done: boolean;
+  comment: string;
+}
+
+export interface PurchaseList {
+  id: number;
+  date: string;
+  lines: PurchaseLine[];
+  created_at: string;
 }
 
 export interface ReceiptItem {

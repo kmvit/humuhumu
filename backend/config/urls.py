@@ -9,9 +9,13 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from catalog.views import CategoryViewSet, ProductViewSet
 from core.views import SiteSettingsView
 from inventory.views import (
+    PurchaseLineViewSet,
+    PurchaseViewSet,
     ReceiptScanViewSet,
     ReceiptViewSet,
+    RecipeViewSet,
     StockCategoryViewSet,
+    StockItemAliasViewSet,
     StockItemViewSet,
 )
 from orders.views import OrderViewSet, TableViewSet
@@ -31,8 +35,14 @@ router.register("orders", OrderViewSet, basename="order")
 router.register("tables", TableViewSet, basename="table")
 router.register("inventory/categories", StockCategoryViewSet, basename="stock-category")
 router.register("inventory/items", StockItemViewSet, basename="stock-item")
+router.register("inventory/aliases", StockItemAliasViewSet, basename="stock-alias")
 router.register("inventory/receipts", ReceiptViewSet, basename="receipt")
 router.register("inventory/receipt-scans", ReceiptScanViewSet, basename="receipt-scan")
+router.register("inventory/recipes", RecipeViewSet, basename="recipe")
+router.register("inventory/purchases", PurchaseViewSet, basename="purchase")
+router.register(
+    "inventory/purchase-lines", PurchaseLineViewSet, basename="purchase-line"
+)
 
 api_patterns = [
     # авторизация

@@ -1,8 +1,10 @@
 """Распознавание фото чека vision-моделью и подготовка черновика прихода.
 
 Поток: фото → LLM (structured output: список позиций) → нормализация единиц к
-базовым (г/мл/шт) → fuzzy-сопоставление с номенклатурой StockItem. Результат —
-черновик, который кладовщик правит и подтверждает вручную (остатки не трогаются).
+базовым (г/мл/шт) → сопоставление с вариантами товаров (StockItem): сначала точно
+по запомненным названиям из чеков (StockItemAlias), потом fuzzy по названию товара
+и варианта. Результат — черновик, который кладовщик правит и подтверждает вручную
+(остатки не трогаются).
 """
 from __future__ import annotations
 
@@ -15,7 +17,7 @@ from django.conf import settings
 
 from core.llm import LLMError, create_client
 
-from .models import StockItem
+from .models import StockItem, normalize_name
 
 logger = logging.getLogger(__name__)
 
@@ -70,8 +72,7 @@ _SCHEMA = {
 }
 
 
-def _normalize(text: str) -> str:
-    return " ".join((text or "").lower().replace("ё", "е").split())
+_normalize = normalize_name
 
 
 def _parse_json(content: str) -> dict:
@@ -141,30 +142,47 @@ def _convert_to_base(quantity, unit: str, item_unit: str):
     return qty * factor, True
 
 
-def _best_match(name: str, items):
-    """Найти ближайшую позицию номенклатуры по названию. -> (item|None, score)."""
+def _item_names(item) -> list[str]:
+    """Названия, под которыми товар может встретиться в чеке: своё и варианты."""
+    return [item.name, *(a.name for a in item.aliases.all())]
+
+
+def _best_match(name: str, items, aliases: dict):
+    """Найти ближайший товар склада по названию из чека. -> (item|None, score).
+
+    Запомненное название из прошлых чеков (вариант) бьёт любое fuzzy-сравнение.
+    """
     target = _normalize(name)
+    exact = aliases.get(target)
+    if exact is not None:
+        return exact, 1.0
+
     best, best_score = None, 0.0
     for it in items:
-        score = SequenceMatcher(None, target, _normalize(it.name)).ratio()
-        # бонус за вхождение подстроки (сокращения поставщика)
-        cand = _normalize(it.name)
-        if target and (target in cand or cand in target):
-            score = max(score, 0.85)
-        if score > best_score:
-            best, best_score = it, score
+        for cand in (_normalize(n) for n in _item_names(it)):
+            score = SequenceMatcher(None, target, cand).ratio()
+            # бонус за вхождение подстроки (сокращения поставщика)
+            if target and (target in cand or cand in target):
+                score = max(score, 0.85)
+            if score > best_score:
+                best, best_score = it, score
     return best, best_score
 
 
 def build_draft(raw: dict) -> dict:
     """Из сырого ответа модели собрать черновик с сопоставлением и единицами."""
-    items = list(StockItem.objects.filter(is_active=True).select_related("category"))
+    items = list(
+        StockItem.objects.filter(is_active=True)
+        .select_related("category")
+        .prefetch_related("aliases")
+    )
+    aliases = {a.norm: it for it in items for a in it.aliases.all()}
     lines = []
     for row in raw.get("lines") or []:
         name = (row.get("name") or "").strip()
         if not name:
             continue
-        match, score = _best_match(name, items)
+        match, score = _best_match(name, items, aliases)
         matched = match if score >= MATCH_THRESHOLD else None
 
         base_qty, unit_ok = (None, False)

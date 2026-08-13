@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
-import { get, post, postForm, ApiError } from "../../api";
+import { get, post, del, postForm, ApiError } from "../../api";
 import type {
   StockCategory,
   StockItem,
@@ -10,6 +10,8 @@ import type {
 } from "../../types";
 import Icon from "../../components/Icon";
 import { fmtDateTime } from "../../time";
+import Purchase from "./Purchase";
+import Recipes from "./Recipes";
 
 const UNITS: { value: StockUnit; label: string }[] = [
   { value: "g", label: "г" },
@@ -29,6 +31,7 @@ type Line = {
   unit_cost: string;
   // подсказки от распознавания чека (только для черновика по фото)
   hint?: string; // как позиция называется в чеке
+  rawName?: string; // название из чека — запомнится вариантом товара
   warn?: boolean; // не удалось уверенно сопоставить/сконвертировать
 };
 
@@ -37,7 +40,7 @@ export default function Warehouse() {
   const [items, setItems] = useState<StockItem[]>([]);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"stock" | "receipts">("stock");
+  const [tab, setTab] = useState<"stock" | "purchase" | "receipts" | "recipes">("stock");
   const [toast, setToast] = useState<string | null>(null);
 
   // приход
@@ -52,12 +55,17 @@ export default function Warehouse() {
   const [scanning, setScanning] = useState(false); // идёт загрузка/распознавание
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // новая позиция
+  // новый товар
   const [niOpen, setNiOpen] = useState(false);
   const [niName, setNiName] = useState("");
   const [niCat, setNiCat] = useState<number | "">("");
   const [niUnit, setNiUnit] = useState<StockUnit>("pcs");
   const [niMin, setNiMin] = useState("");
+  const [niTarget, setNiTarget] = useState("");
+
+  // новый вариант товара (название закупки)
+  const [varItem, setVarItem] = useState<number | null>(null);
+  const [varName, setVarName] = useState("");
 
   // новая категория
   const [catOpen, setCatOpen] = useState(false);
@@ -79,7 +87,7 @@ export default function Warehouse() {
       get<Receipt[]>("/inventory/receipts/"),
     ]);
     setCats(c);
-    setItems(i);
+    setItems(i.filter((x) => x.is_active));
     setReceipts(r);
   }
   useEffect(() => {
@@ -89,7 +97,7 @@ export default function Warehouse() {
   }, []);
 
   const activeCats = useMemo(() => cats.filter((c) => c.is_active), [cats]);
-  const lowCount = useMemo(() => items.filter((i) => i.is_low && i.is_active).length, [items]);
+  const lowCount = useMemo(() => items.filter((i) => i.is_low).length, [items]);
   const itemById = useMemo(
     () => Object.fromEntries(items.map((i) => [i.id, i])),
     [items]
@@ -114,6 +122,17 @@ export default function Warehouse() {
     setReceiptOpen(true);
   }
 
+  /** Приход из закупа: купленные строки сразу подставлены в форму. */
+  function openReceiptWith(preset: { item: number; quantity: number }[]) {
+    setScanId(null);
+    setSupplier("");
+    setComment("");
+    setLines(
+      preset.map((p) => ({ item: p.item, quantity: String(p.quantity), unit_cost: "" }))
+    );
+    setReceiptOpen(true);
+  }
+
   // ——— приход по фото чека ———
   // Превращаем распознанный черновик в строки формы: подставляем найденную
   // позицию и количество в базовой единице, помечаем неуверенные строки.
@@ -132,6 +151,7 @@ export default function Warehouse() {
           quantity: qty != null ? String(qty) : "",
           unit_cost: l.unit_cost != null ? String(l.unit_cost) : "",
           hint: `${l.raw_name}${l.raw_quantity != null ? ` · ${l.raw_quantity} ${l.raw_unit}` : ""}`,
+          rawName: l.raw_name,
           warn: !matched || !l.unit_ok,
         };
       })
@@ -182,6 +202,8 @@ export default function Warehouse() {
         item: l.item,
         quantity: Number(l.quantity),
         ...(l.unit_cost.trim() ? { unit_cost: Number(l.unit_cost) } : {}),
+        // Название из чека — чтобы в следующий раз строка сопоставилась сама.
+        ...(l.rawName ? { raw_name: l.rawName } : {}),
       }));
     if (!payloadItems.length) {
       notify("Добавьте хотя бы одну позицию с количеством");
@@ -211,7 +233,7 @@ export default function Warehouse() {
     }
   }
 
-  // ——— новая позиция / категория ———
+  // ——— новый товар / вариант / категория ———
   async function createItem() {
     if (!niName.trim() || niCat === "") {
       notify("Укажите название и категорию");
@@ -223,12 +245,40 @@ export default function Warehouse() {
         category: niCat,
         unit: niUnit,
         min_quantity: niMin.trim() ? Number(niMin) : null,
+        target_quantity: niTarget.trim() ? Number(niTarget) : null,
       });
       await load();
       setNiName("");
       setNiMin("");
+      setNiTarget("");
       setNiOpen(false);
-      notify("Позиция добавлена");
+      notify("Товар добавлен");
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Ошибка");
+    }
+  }
+
+  /** Вариант = ещё одно название того же товара (для чеков и закупки). */
+  async function createVariant(itemId: number) {
+    if (!varName.trim()) {
+      notify("Укажите, как товар называют при закупке");
+      return;
+    }
+    try {
+      await post("/inventory/aliases/", { item: itemId, name: varName.trim() });
+      await load();
+      setVarName("");
+      setVarItem(null);
+      notify("Вариант добавлен");
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Ошибка");
+    }
+  }
+
+  async function removeVariant(aliasId: number) {
+    try {
+      await del(`/inventory/aliases/${aliasId}/`);
+      await load();
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "Ошибка");
     }
@@ -269,6 +319,24 @@ export default function Warehouse() {
     }
   }
 
+  // Поле ввода нового остатка — одинаково для товара и для варианта.
+  function adjustBox(id: number) {
+    return (
+      <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+        <input
+          className="input"
+          inputMode="decimal"
+          value={adjustQty}
+          onChange={(e) => setAdjustQty(e.target.value)}
+          style={{ width: 92 }}
+          autoFocus
+        />
+        <button className="icon-btn" onClick={() => saveAdjust(id)} aria-label="Сохранить"><Icon name="check" size={16} /></button>
+        <button className="icon-btn" onClick={() => setAdjustId(null)} aria-label="Отмена"><Icon name="minus" size={16} /></button>
+      </span>
+    );
+  }
+
   if (loading)
     return (
       <>
@@ -287,7 +355,7 @@ export default function Warehouse() {
         <div>
           <h1 className="h1">Склад</h1>
           <p className="muted" style={{ marginTop: 4 }}>
-            {items.filter((i) => i.is_active).length} позиций
+            {items.length} товаров
             {lowCount > 0 && (
               <>
                 {" · "}
@@ -329,10 +397,22 @@ export default function Warehouse() {
           <Icon name="box" size={16} /> Остатки
         </button>
         <button
+          className={"navlink" + (tab === "purchase" ? " active" : "")}
+          onClick={() => setTab("purchase")}
+        >
+          <Icon name="store" size={16} /> Закуп
+        </button>
+        <button
           className={"navlink" + (tab === "receipts" ? " active" : "")}
           onClick={() => setTab("receipts")}
         >
           <Icon name="receipt" size={16} /> Приходы
+        </button>
+        <button
+          className={"navlink" + (tab === "recipes" ? " active" : "")}
+          onClick={() => setTab("recipes")}
+        >
+          <Icon name="bowl" size={16} /> Тех карты
         </button>
       </div>
 
@@ -395,6 +475,7 @@ export default function Warehouse() {
                     value={l.item}
                     onChange={(e) => setLine(idx, { item: Number(e.target.value) })}
                   >
+                    {l.item === "" && <option value="">— выберите товар —</option>}
                     {items.map((i) => (
                       <option key={i.id} value={i.id}>
                         {i.name} ({i.unit_display})
@@ -413,7 +494,9 @@ export default function Warehouse() {
                     inputMode="decimal"
                     value={l.unit_cost}
                     onChange={(e) => setLine(idx, { unit_cost: e.target.value })}
-                    placeholder="цена/ед, ₽"
+                    // Цена именно за базовую единицу: из неё считается
+                    // себестоимость блюда по тех карте.
+                    placeholder={it ? `₽ за 1 ${it.unit_display}` : "цена/ед, ₽"}
                   />
                   <button className="icon-btn danger" onClick={() => removeLine(idx)} aria-label="Убрать строку">
                     <Icon name="minus" size={16} />
@@ -438,7 +521,7 @@ export default function Warehouse() {
         <>
           <div className="wrap" style={{ gap: 8, margin: "14px 0" }}>
             <button className="btn sm ghost" onClick={() => { setNiOpen((v) => !v); setNiCat(activeCats[0]?.id ?? ""); }}>
-              <Icon name="plus" size={15} /> Позиция
+              <Icon name="plus" size={15} /> Товар
             </button>
             <button className="btn sm ghost" onClick={() => setCatOpen((v) => !v)}>
               <Icon name="plus" size={15} /> Категория
@@ -456,11 +539,15 @@ export default function Warehouse() {
 
           {niOpen && (
             <div className="card enter" style={{ marginBottom: 12 }}>
-              <strong style={{ fontFamily: "Fredoka", fontSize: 16 }}>Новая позиция</strong>
+              <strong style={{ fontFamily: "Fredoka", fontSize: 16 }}>Новый товар</strong>
+              <p className="muted" style={{ margin: "4px 0 0", fontSize: 13 }}>
+                Общее название: «Креветки», «Кола», «Молоко». Марка и фасовка на
+                остаток не влияют — это варианты одного товара.
+              </p>
               <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
                 <label className="field">
                   <span className="label">Название</span>
-                  <input className="input" value={niName} onChange={(e) => setNiName(e.target.value)} placeholder="напр. Молоко" />
+                  <input className="input" value={niName} onChange={(e) => setNiName(e.target.value)} placeholder="напр. Креветки" />
                 </label>
                 <label className="field">
                   <span className="label">Категория</span>
@@ -492,14 +579,24 @@ export default function Warehouse() {
                   <input className="input" inputMode="decimal" value={niMin} onChange={(e) => setNiMin(e.target.value)} placeholder="необязательно" />
                 </label>
               </div>
+              <label className="field" style={{ marginTop: 10 }}>
+                <span className="label">Сколько держать</span>
+                <input
+                  className="input"
+                  inputMode="decimal"
+                  value={niTarget}
+                  onChange={(e) => setNiTarget(e.target.value)}
+                  placeholder="до этого остатка закупаем; пусто — два порога"
+                />
+              </label>
               <button className="btn block" onClick={createItem} style={{ marginTop: 12 }}>
-                <Icon name="check" size={17} /> Добавить позицию
+                <Icon name="check" size={17} /> Добавить товар
               </button>
             </div>
           )}
 
           {activeCats.map((cat) => {
-            const catItems = items.filter((i) => i.category === cat.id && i.is_active);
+            const catItems = items.filter((i) => i.category === cat.id);
             if (!catItems.length) return null;
             return (
               <section className="menu-section" key={cat.id}>
@@ -507,36 +604,74 @@ export default function Warehouse() {
                   <h2><Icon name="box" size={18} /> {cat.name}</h2>
                 </div>
                 {catItems.map((it) => (
-                  <div className="row" key={it.id}>
-                    <div className="stack" style={{ gap: 2, flex: 1, minWidth: 0 }}>
-                      <strong>{it.name}</strong>
-                      <span className="muted" style={{ fontSize: 12 }}>
-                        {it.min_quantity ? `порог ${fmtQty(it.min_quantity)} ${it.unit_display}` : "без порога"}
-                      </span>
+                  <div key={it.id}>
+                    <div className="row">
+                      <div className="stack" style={{ gap: 2, flex: 1, minWidth: 0 }}>
+                        <strong>{it.name}</strong>
+                        <span className="muted" style={{ fontSize: 12 }}>
+                          {it.min_quantity
+                            ? `порог ${fmtQty(it.min_quantity)} ${it.unit_display}`
+                            : "без порога"}
+                          {it.min_quantity && (
+                            <> · держать {fmtQty(it.target_quantity ?? Number(it.min_quantity) * 2)} {it.unit_display}</>
+                          )}
+                        </span>
+                        {/* варианты: как товар называют при закупке и в чеках */}
+                        {it.aliases.length > 0 && (
+                          <span className="wrap" style={{ gap: 4, marginTop: 2 }}>
+                            {it.aliases.map((a) => (
+                              <button
+                                key={a.id}
+                                className="chip"
+                                style={{ fontSize: 11 }}
+                                onClick={() => removeVariant(a.id)}
+                                title="Убрать вариант"
+                              >
+                                {a.name} <Icon name="minus" size={11} />
+                              </button>
+                            ))}
+                          </span>
+                        )}
+                      </div>
+
+                      {adjustId === it.id ? (
+                        adjustBox(it.id)
+                      ) : (
+                        <span style={{ display: "inline-flex", gap: 10, alignItems: "center" }}>
+                          <span
+                            className={"chip" + (it.is_low ? " low" : "")}
+                            style={{ minWidth: 74, justifyContent: "center" }}
+                          >
+                            {fmtQty(it.quantity)} {it.unit_display}
+                          </span>
+                          <button className="icon-btn" onClick={() => startAdjust(it)} aria-label="Корректировка" title="Корректировка / инвентаризация">
+                            <Icon name="edit" size={16} />
+                          </button>
+                          <button
+                            className="icon-btn"
+                            onClick={() => { setVarItem(it.id); setVarName(""); }}
+                            aria-label="Добавить вариант"
+                            title="Добавить вариант — как товар пишут в чеке"
+                          >
+                            <Icon name="plus" size={16} />
+                          </button>
+                        </span>
+                      )}
                     </div>
 
-                    {adjustId === it.id ? (
-                      <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                    {varItem === it.id && (
+                      <div className="row" style={{ paddingLeft: 22, gap: 8 }}>
                         <input
                           className="input"
-                          inputMode="decimal"
-                          value={adjustQty}
-                          onChange={(e) => setAdjustQty(e.target.value)}
-                          style={{ width: 92 }}
+                          style={{ flex: 1, minWidth: 120 }}
+                          value={varName}
+                          onChange={(e) => setVarName(e.target.value)}
+                          placeholder="как называют при закупке: «Pepsi 1 л»"
                           autoFocus
                         />
-                        <button className="icon-btn" onClick={() => saveAdjust(it.id)} aria-label="Сохранить"><Icon name="check" size={16} /></button>
-                        <button className="icon-btn" onClick={() => setAdjustId(null)} aria-label="Отмена"><Icon name="minus" size={16} /></button>
-                      </span>
-                    ) : (
-                      <span style={{ display: "inline-flex", gap: 10, alignItems: "center" }}>
-                        <span className={"chip" + (it.is_low ? " low" : "")} style={{ minWidth: 74, justifyContent: "center" }}>
-                          {fmtQty(it.quantity)} {it.unit_display}
-                        </span>
-                        <button className="icon-btn" onClick={() => startAdjust(it)} aria-label="Корректировка" title="Корректировка / инвентаризация">
-                          <Icon name="edit" size={16} />
-                        </button>
-                      </span>
+                        <button className="icon-btn" onClick={() => createVariant(it.id)} aria-label="Сохранить"><Icon name="check" size={16} /></button>
+                        <button className="icon-btn" onClick={() => setVarItem(null)} aria-label="Отмена"><Icon name="minus" size={16} /></button>
+                      </div>
                     )}
                   </div>
                 ))}
@@ -544,15 +679,23 @@ export default function Warehouse() {
             );
           })}
 
-          {items.filter((i) => i.is_active).length === 0 && (
+          {items.length === 0 && (
             <div className="card" style={{ marginTop: 12, textAlign: "center" }}>
               <p className="muted" style={{ margin: 0 }}>
-                Пока нет позиций. Добавьте категорию и позицию, затем оприходуйте товар.
+                Пока нет товаров. Добавьте категорию и товар, затем оприходуйте закупку.
               </p>
             </div>
           )}
         </>
       )}
+
+      {/* ——— ЗАКУП ——— */}
+      {tab === "purchase" && (
+        <Purchase items={items} notify={notify} onReceive={openReceiptWith} />
+      )}
+
+      {/* ——— ТЕХ КАРТЫ ——— */}
+      {tab === "recipes" && <Recipes items={items} notify={notify} />}
 
       {/* ——— ПРИХОДЫ ——— */}
       {tab === "receipts" && (

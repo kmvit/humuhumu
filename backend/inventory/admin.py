@@ -1,11 +1,15 @@
 from django.contrib import admin
 
 from .models import (
+    PurchaseLine,
+    PurchaseList,
     Receipt,
     ReceiptItem,
     ReceiptScan,
+    RecipeItem,
     StockCategory,
     StockItem,
+    StockItemAlias,
     StockMovement,
 )
 
@@ -16,11 +20,45 @@ class StockCategoryAdmin(admin.ModelAdmin):
     list_editable = ("sort_order", "is_active")
 
 
+class StockItemAliasInline(admin.TabularInline):
+    model = StockItemAlias
+    extra = 0
+    fields = ("name",)
+
+
 @admin.register(StockItem)
 class StockItemAdmin(admin.ModelAdmin):
-    list_display = ("name", "category", "unit", "quantity", "min_quantity", "is_active")
+    list_display = (
+        "name", "category", "unit", "quantity",
+        "min_quantity", "target_quantity", "is_active",
+    )
     list_filter = ("category", "unit", "is_active")
-    search_fields = ("name",)
+    search_fields = ("name", "aliases__name")
+    inlines = [StockItemAliasInline]
+
+
+class RecipeItemInline(admin.TabularInline):
+    model = RecipeItem
+    extra = 0
+    fields = ("item", "quantity", "comment")
+
+
+@admin.register(RecipeItem)
+class RecipeItemAdmin(admin.ModelAdmin):
+    list_display = ("product", "item", "quantity", "comment")
+    list_filter = ("product__category",)
+    search_fields = ("product__name", "item__name")
+
+
+class PurchaseLineInline(admin.TabularInline):
+    model = PurchaseLine
+    extra = 0
+
+
+@admin.register(PurchaseList)
+class PurchaseListAdmin(admin.ModelAdmin):
+    list_display = ("date", "created_at")
+    inlines = [PurchaseLineInline]
 
 
 class ReceiptItemInline(admin.TabularInline):

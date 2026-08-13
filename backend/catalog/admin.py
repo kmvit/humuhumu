@@ -1,6 +1,8 @@
 from django.contrib import admin
 from django.db.models import Count
 
+from inventory.admin import RecipeItemInline
+
 from .models import Category, Product, ProductLike
 
 
@@ -17,6 +19,8 @@ class ProductAdmin(admin.ModelAdmin):
     list_filter = ("category", "is_available", "is_stopped")
     list_editable = ("price", "prep_minutes", "is_available", "is_stopped")
     search_fields = ("name", "description")
+    # Тех карта блюда — состав, по которому списывается склад.
+    inlines = [RecipeItemInline]
 
     def get_queryset(self, request):
         return super().get_queryset(request).annotate(_likes=Count("likes"))

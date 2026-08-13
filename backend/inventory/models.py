@@ -4,6 +4,11 @@ from django.conf import settings
 from django.db import models, transaction
 
 
+def normalize_name(text: str) -> str:
+    """Свести название к виду, по которому сравниваем товары (чеки, алиасы)."""
+    return " ".join((text or "").lower().replace("ё", "е").split())
+
+
 class StockCategory(models.Model):
     """Назначение складской позиции: для блюд, для напитков, для уборки, для сервиса и т.д."""
 
@@ -21,7 +26,12 @@ class StockCategory(models.Model):
 
 
 class StockItem(models.Model):
-    """Складская номенклатура: сырьё/расходник с единицей измерения и текущим остатком."""
+    """Товар склада: «Креветки», «Кола», «Молоко» — с единицей и одним остатком.
+
+    Марки и фасовки («мелкие 70/90», «Pepsi 1 л») в остатках не разделяются:
+    500 г мелких + 500 г крупных = 1000 г креветок. Названия, под которыми товар
+    покупают и пишут в чеках, живут отдельно — в StockItemAlias.
+    """
 
     class Unit(models.TextChoices):
         GRAM = "g", "г"
@@ -49,13 +59,21 @@ class StockItem(models.Model):
         decimal_places=3,
         null=True,
         blank=True,
-        help_text="Если остаток опустится до этого значения — позиция подсветится",
+        help_text="Если остаток опустится до этого значения — товар попадёт в закуп",
     )
-    is_active = models.BooleanField("Активна", default=True)
+    target_quantity = models.DecimalField(
+        "Сколько держать",
+        max_digits=12,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        help_text="До какого остатка закупаем. Пусто — берём два порога",
+    )
+    is_active = models.BooleanField("Активен", default=True)
 
     class Meta:
-        verbose_name = "Складская позиция"
-        verbose_name_plural = "Складские позиции"
+        verbose_name = "Товар склада"
+        verbose_name_plural = "Товары склада"
         ordering = ["category__sort_order", "name"]
         constraints = [
             models.UniqueConstraint(
@@ -69,6 +87,23 @@ class StockItem(models.Model):
     @property
     def is_low(self) -> bool:
         return self.min_quantity is not None and self.quantity <= self.min_quantity
+
+    @property
+    def purchase_target(self):
+        """До какого остатка пополняем. Без явной цели — два порога."""
+        if self.target_quantity is not None:
+            return self.target_quantity
+        if self.min_quantity is not None:
+            return self.min_quantity * 2
+        return None
+
+    @property
+    def shortage(self) -> Decimal:
+        """Сколько не хватает до целевого остатка (0 — хватает)."""
+        target = self.purchase_target
+        if target is None:
+            return Decimal("0")
+        return max(Decimal("0"), Decimal(target) - self.quantity)
 
     @transaction.atomic
     def apply_movement(self, delta, kind, *, user=None, receipt=None, comment=""):
@@ -91,6 +126,38 @@ class StockItem(models.Model):
             comment=comment,
         )
         return locked.quantity
+
+
+class StockItemAlias(models.Model):
+    """Вариант товара — как его покупают и пишут в чеках.
+
+    «Креветки» покупают как «КРЕВЕТКА В/М 16/20 VICI» и «креветка мелкая», «Колу» —
+    как «Добрый Кола 0,5» и «Pepsi 1 л». Остаток у товара один, а эти названия
+    нужны, чтобы сопоставлять строки чеков. Заполняется и само: подтвердили приход
+    по фото — название из чека запомнилось за товаром.
+    """
+
+    item = models.ForeignKey(
+        StockItem,
+        on_delete=models.CASCADE,
+        related_name="aliases",
+        verbose_name="Товар",
+    )
+    name = models.CharField("Название в чеке", max_length=200)
+    norm = models.CharField("Нормализованное", max_length=200, unique=True)
+    created_at = models.DateTimeField("Когда", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Вариант / название в чеке"
+        verbose_name_plural = "Варианты и названия в чеках"
+        ordering = ["name"]
+
+    def save(self, *args, **kwargs):
+        self.norm = normalize_name(self.name)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.name} → {self.item}"
 
 
 class Receipt(models.Model):
@@ -211,11 +278,13 @@ class ReceiptScan(models.Model):
 
 
 class StockMovement(models.Model):
-    """Журнал движений остатка: приход и корректировка/инвентаризация."""
+    """Журнал движений остатка: приход, корректировка, продажа блюда."""
 
     class Kind(models.TextChoices):
         RECEIPT = "receipt", "Приход"
         ADJUST = "adjust", "Корректировка"
+        SALE = "sale", "Списание по тех карте"
+        RETURN = "return", "Возврат отменённого"
 
     item = models.ForeignKey(
         StockItem,
@@ -250,3 +319,99 @@ class StockMovement(models.Model):
 
     def __str__(self):
         return f"{self.item} {self.delta:+}"
+
+
+class RecipeItem(models.Model):
+    """Строка тех карты: сколько товара склада уходит на одну порцию блюда.
+
+    Тех карта блюда — это все его строки. Количество в базовой единице товара
+    (г/мл/шт): «Боул с креветкой» → «Креветки 80 г», «Рис 150 г».
+    """
+
+    product = models.ForeignKey(
+        "catalog.Product",
+        on_delete=models.CASCADE,
+        related_name="recipe",
+        verbose_name="Блюдо",
+    )
+    item = models.ForeignKey(
+        StockItem,
+        on_delete=models.PROTECT,
+        related_name="recipe_items",
+        verbose_name="Товар склада",
+    )
+    quantity = models.DecimalField(
+        "Расход на порцию", max_digits=12, decimal_places=3
+    )
+    comment = models.CharField("Примечание", max_length=200, blank=True)
+
+    class Meta:
+        verbose_name = "Строка тех карты"
+        verbose_name_plural = "Тех карты блюд"
+        ordering = ["product__name", "item__name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["product", "item"], name="uniq_recipeitem_per_product"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.product}: {self.item} × {self.quantity}"
+
+
+class PurchaseList(models.Model):
+    """Закуп на конкретный день: что и сколько нужно купить.
+
+    Строки появляются сами (товары, которых мало) и правятся руками. Список на
+    день создаётся при первом открытии и потом дополняется новыми нехватками —
+    уже купленные и вручную поправленные строки при этом не трогаются.
+    """
+
+    date = models.DateField("Дата", unique=True)
+    created_at = models.DateTimeField("Создан", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Закуп"
+        verbose_name_plural = "Закуп"
+        ordering = ["-date"]
+
+    def __str__(self):
+        return f"Закуп на {self.date:%d.%m.%Y}"
+
+
+class PurchaseLine(models.Model):
+    """Строка закупа: товар и сколько его взять."""
+
+    purchase = models.ForeignKey(
+        PurchaseList,
+        on_delete=models.CASCADE,
+        related_name="lines",
+        verbose_name="Закуп",
+    )
+    item = models.ForeignKey(
+        StockItem,
+        on_delete=models.PROTECT,
+        related_name="purchase_lines",
+        verbose_name="Товар",
+    )
+    quantity = models.DecimalField("Количество", max_digits=12, decimal_places=3)
+    is_auto = models.BooleanField(
+        "Добавлено автоматически",
+        default=True,
+        help_text="Строку предложила программа; ручные строки не пересчитываются",
+    )
+    is_done = models.BooleanField("Куплено", default=False)
+    comment = models.CharField("Комментарий", max_length=200, blank=True)
+
+    class Meta:
+        verbose_name = "Строка закупа"
+        verbose_name_plural = "Строки закупа"
+        ordering = ["item__category__sort_order", "item__name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["purchase", "item"], name="uniq_purchaseline_per_list"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.item} × {self.quantity}"

@@ -6,6 +6,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from catalog.models import Category
+from inventory.services import return_order_item, write_off_order_item
 from users.models import User
 from users.permissions import IsBarOrAdmin, IsCookOrAdmin, IsWaiterOrAdmin
 
@@ -277,6 +278,9 @@ class OrderViewSet(viewsets.ModelViewSet):
             it.status = value
         if items:
             OrderItem.objects.bulk_update(items, ["status"])
+        if value == Order.StationStatus.READY:
+            for it in items:
+                write_off_order_item(it, user=request.user)
         return self._reload_and_respond(order.pk, station)
 
     @action(detail=True, methods=["patch"])
@@ -311,6 +315,9 @@ class OrderViewSet(viewsets.ModelViewSet):
             )
         item.status = value
         item.save(update_fields=["status"])
+        if value == Order.StationStatus.READY:
+            # Блюдо приготовлено — продукты по тех карте фактически израсходованы.
+            write_off_order_item(item, user=request.user)
         return self._reload_and_respond(order.pk, st)
 
     @action(detail=True, methods=["patch"])
@@ -358,6 +365,8 @@ class OrderViewSet(viewsets.ModelViewSet):
             return Response(
                 {"detail": "Позиция не найдена"}, status=status.HTTP_404_NOT_FOUND
             )
+        # Если по позиции уже списали склад — возвращаем продукты обратно.
+        return_order_item(item, user=request.user)
         item.delete()
         order = Order.objects.prefetch_related("items__product__category").get(pk=order.pk)
         if order.items.exists():
