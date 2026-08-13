@@ -53,6 +53,8 @@ class Product(models.Model):
         "Время приготовления, мин", null=True, blank=True
     )
     is_available = models.BooleanField("В наличии", default=True)
+    # на стопе: блюдо видно в меню, но временно нельзя заказать (кончилось)
+    is_stopped = models.BooleanField("На стопе (временно)", default=False)
     sort_order = models.PositiveIntegerField("Порядок сортировки", default=0)
 
     class Meta:

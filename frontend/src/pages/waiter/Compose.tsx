@@ -175,7 +175,7 @@ export default function Compose({
             </div>
 
             {items.map((p) => (
-              <div className={"menu-row" + (p.is_available ? "" : " out")} key={p.id}>
+              <div className={"menu-row" + (p.is_available && !p.is_stopped ? "" : " out")} key={p.id}>
                 <div className="menu-lead">
                   {p.thumbnail && (
                     <img
@@ -189,11 +189,14 @@ export default function Compose({
                   <div className="menu-item">
                     <h3>{p.name} <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>#{p.id}</span></h3>
                     {p.description && <p className="menu-desc">{p.description}</p>}
+                    {p.is_stopped && <span className="stop-badge">Временно недоступно</span>}
                   </div>
                 </div>
                 <span className="menu-price num">{Number(p.price).toLocaleString("ru")}</span>
                 <div className="menu-add">
-                  {qtyOf(p.id) ? (
+                  {p.is_stopped ? (
+                    <span className="muted" style={{ fontSize: 12 }}>стоп</span>
+                  ) : qtyOf(p.id) ? (
                     <div className="stepper" style={{ width: 116 }}>
                       <button onClick={() => remove(p.id)} aria-label="Убрать"><Icon name="minus" size={16} /></button>
                       <span className="count num">{qtyOf(p.id)}</span>

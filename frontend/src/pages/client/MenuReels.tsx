@@ -237,9 +237,10 @@ export default function MenuReels() {
                         <span className="reel-price">{Number(p.price).toLocaleString("ru")} ₽</span>
                         {p.weight_grams ? <span className="reel-weight">{p.weight_grams} г</span> : null}
                       </div>
+                      {p.is_stopped && <span className="stop-badge reel-stop">Временно недоступно</span>}
                     </div>
                     <div className="reel-add-wrap">
-                      {q > 0 ? (
+                      {p.is_stopped ? null : q > 0 ? (
                         <div className="reel-stepper">
                           <button onClick={() => remove(p.id)} aria-label="Убрать"><Icon name="minus" size={20} /></button>
                           <span className="num">{q}</span>

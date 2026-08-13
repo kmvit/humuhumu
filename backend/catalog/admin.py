@@ -13,9 +13,9 @@ class CategoryAdmin(admin.ModelAdmin):
 
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
-    list_display = ("name", "category", "price", "likes_total", "prep_minutes", "weight_grams", "is_available")
-    list_filter = ("category", "is_available")
-    list_editable = ("price", "prep_minutes", "is_available")
+    list_display = ("name", "category", "price", "likes_total", "prep_minutes", "weight_grams", "is_available", "is_stopped")
+    list_filter = ("category", "is_available", "is_stopped")
+    list_editable = ("price", "prep_minutes", "is_available", "is_stopped")
     search_fields = ("name", "description")
 
     def get_queryset(self, request):

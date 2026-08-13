@@ -35,6 +35,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "weight_grams",
             "prep_minutes",
             "is_available",
+            "is_stopped",
             "sort_order",
             "likes",
         )

@@ -53,6 +53,7 @@ export interface Product {
   weight_grams: number | null;
   prep_minutes: number | null;
   is_available: boolean;
+  is_stopped: boolean;
   likes?: number;
 }
 

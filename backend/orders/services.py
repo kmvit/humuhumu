@@ -19,6 +19,8 @@ def _add_items(order: Order, items: list[dict]) -> None:
             product = Product.objects.get(pk=line["product"], is_available=True)
         except Product.DoesNotExist:
             raise OrderError("Товар недоступен или не найден")
+        if product.is_stopped:
+            raise OrderError(f"«{product.name}» временно недоступно (на стопе)")
         quantity = int(line.get("quantity", 1))
         if quantity < 1:
             raise OrderError("Количество должно быть положительным")
