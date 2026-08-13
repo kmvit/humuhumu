@@ -520,20 +520,21 @@ export default function Waiter() {
                         ) : (
                           <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                             <button
+                              className={"icon-btn sm" + (it.quantity === 1 ? " danger" : "")}
+                              title={it.quantity === 1 ? "Убрать позицию" : "На одну меньше"}
+                              disabled={busyItem === it.id}
+                              onClick={() => (it.quantity > 1 ? changeQty(o, it, -1) : setConfirmId(it.id))}
+                            >
+                              <Icon name="minus" size={14} />
+                            </button>
+                            <span className="num" style={{ minWidth: 26, textAlign: "center" }}>× {it.quantity}</span>
+                            <button
                               className="icon-btn sm"
                               title="Ещё одну"
                               disabled={busyItem === it.id}
                               onClick={() => changeQty(o, it, +1)}
                             >
                               <Icon name="plus" size={14} />
-                            </button>
-                            <span className="num" style={{ minWidth: 26, textAlign: "center" }}>× {it.quantity}</span>
-                            <button
-                              className="icon-btn sm danger"
-                              title="Убрать позицию"
-                              onClick={() => setConfirmId(it.id)}
-                            >
-                              <Icon name="minus" size={14} />
                             </button>
                           </span>
                         )}
