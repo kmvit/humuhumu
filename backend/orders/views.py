@@ -52,7 +52,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             return [IsCookOrAdmin()]
         if self.action == "drinks_status":
             return [IsBarOrAdmin()]
-        if self.action in ("close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "confirm", "set_comment", "move", "serve"):
+        if self.action in ("close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "item_qty", "confirm", "set_comment", "move", "serve"):
             return [IsWaiterOrAdmin()]
         # item_status — право проверяем внутри по станции позиции
         return [IsAuthenticated()]
@@ -401,6 +401,43 @@ class OrderViewSet(viewsets.ModelViewSet):
         item.guest = int(guest) if guest else None
         item.save(update_fields=["guest"])
         order = Order.objects.prefetch_related("items__product__category").get(pk=order.pk)
+        return Response(OrderSerializer(order).data)
+
+    @action(detail=True, methods=["patch"], url_path="item_qty")
+    def item_qty(self, request, pk=None):
+        """Официант меняет количество позиции в открытом заказе (кнопка «+»)."""
+        order = self.get_object()
+        if order.status != Order.Status.OPEN:
+            return Response(
+                {"detail": "Менять можно только открытый заказ"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        item = order.items.filter(id=request.data.get("item_id")).first()
+        if not item:
+            return Response(
+                {"detail": "Позиция не найдена"}, status=status.HTTP_404_NOT_FOUND
+            )
+        try:
+            qty = int(request.data.get("quantity"))
+        except (TypeError, ValueError):
+            return Response({"detail": "Неверное количество"}, status=status.HTTP_400_BAD_REQUEST)
+        if qty < 1:
+            return Response(
+                {"detail": "Количество должно быть положительным"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if item.stock_written_off_at:
+            # позиция уже списана со склада — пересписываем на новое количество
+            return_order_item(item, user=request.user)
+            item.quantity = qty
+            item.save(update_fields=["quantity"])
+            write_off_order_item(item, user=request.user)
+        else:
+            item.quantity = qty
+            item.save(update_fields=["quantity"])
+        order = Order.objects.prefetch_related("items__product__category").get(pk=order.pk)
+        order.recalc_total()
+        order.save(update_fields=["total"])
         return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["post"])

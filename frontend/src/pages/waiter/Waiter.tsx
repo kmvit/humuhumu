@@ -83,6 +83,19 @@ export default function Waiter() {
     }
   }
 
+  // «+» у позиции: увеличить её количество на 1
+  async function changeQty(order: Order, item: OrderItem, delta: number) {
+    const next = item.quantity + delta;
+    if (next < 1) return; // меньше 1 — только через удаление
+    setBusyItem(item.id);
+    try {
+      await patch(`/orders/${order.id}/item_qty/`, { item_id: item.id, quantity: next });
+      await reload();
+    } finally {
+      setBusyItem(null);
+    }
+  }
+
   // разбиение счёта: тап по позиции меняет её гостя (0 = общий, дальше 1..splitN)
   async function cycleGuest(order: Order, item: OrderItem) {
     const cur = item.guest ?? 0;
@@ -505,8 +518,16 @@ export default function Waiter() {
                             </button>
                           </span>
                         ) : (
-                          <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
-                            <span className="num muted">× {it.quantity}</span>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                            <button
+                              className="icon-btn sm"
+                              title="Ещё одну"
+                              disabled={busyItem === it.id}
+                              onClick={() => changeQty(o, it, +1)}
+                            >
+                              <Icon name="plus" size={14} />
+                            </button>
+                            <span className="num" style={{ minWidth: 26, textAlign: "center" }}>× {it.quantity}</span>
                             <button
                               className="icon-btn sm danger"
                               title="Убрать позицию"
