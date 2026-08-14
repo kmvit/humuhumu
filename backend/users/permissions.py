@@ -12,6 +12,13 @@ class IsAdminRole(BasePermission):
         )
 
 
+class IsStaffRole(BasePermission):
+    """Доступ любому сотруднику: официант, повар, бар, склад, админ (не клиент)."""
+
+    def has_permission(self, request, view):
+        return bool(request.user.is_authenticated and request.user.is_staff_role)
+
+
 class IsBarOrAdmin(BasePermission):
     """Доступ бару или админу (перевод напитков в «готово»)."""
 

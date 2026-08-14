@@ -13,22 +13,27 @@ const NAV: Record<string, { to: string; label: string; icon: IconName }[]> = {
   ],
   waiter: [
     { to: "/waiter", label: "Столы", icon: "store" },
+    { to: "/shifts", label: "Смены", icon: "user" },
     { to: "/coworking", label: "Коворкинг", icon: "laptop" },
   ],
   cook: [
     { to: "/kitchen", label: "Кухня", icon: "sandwich" },
+    { to: "/shifts", label: "Смены", icon: "user" },
     { to: "/coworking", label: "Коворкинг", icon: "laptop" },
   ],
   bar: [
     { to: "/bar", label: "Бар", icon: "coffee" },
+    { to: "/shifts", label: "Смены", icon: "user" },
     { to: "/coworking", label: "Коворкинг", icon: "laptop" },
   ],
   warehouse: [
     { to: "/warehouse", label: "Склад", icon: "box" },
+    { to: "/shifts", label: "Смены", icon: "user" },
     { to: "/coworking", label: "Коворкинг", icon: "laptop" },
   ],
   admin: [
     { to: "/admin", label: "Админ", icon: "chart" },
+    { to: "/shifts", label: "Смены", icon: "user" },
     { to: "/coworking", label: "Коворкинг", icon: "laptop" },
   ],
   guest: [

@@ -11,6 +11,7 @@ import Kitchen from "./pages/kitchen/Kitchen";
 import Bar from "./pages/bar/Bar";
 import Admin from "./pages/admin/Admin";
 import Warehouse from "./pages/warehouse/Warehouse";
+import Shifts from "./pages/shifts/Shifts";
 import Offer from "./pages/legal/Offer";
 import Privacy from "./pages/legal/Privacy";
 import Payment from "./pages/legal/Payment";
@@ -66,6 +67,10 @@ export default function App() {
         {user?.role === "bar" && <Route path="/bar" element={<Bar />} />}
         {user?.role === "warehouse" && <Route path="/warehouse" element={<Warehouse />} />}
         {user?.role === "admin" && <Route path="/admin" element={<Admin />} />}
+        {/* смены — всем сотрудникам, клиентам не нужно */}
+        {user && user.role !== "client" && (
+          <Route path="/shifts" element={<Shifts />} />
+        )}
         <Route path="*" element={<Navigate to={home} replace />} />
       </Route>
       </Routes>

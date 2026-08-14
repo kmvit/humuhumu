@@ -544,6 +544,35 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 .legal-req:last-child { border-bottom: none; }
 .legal-req .muted { min-width: 190px; }
 
+/* ============ Календарь смен ============ */
+.cal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; max-width: 480px; margin: 0 auto 12px; }
+.cal-month { font-family: "Jost", sans-serif; font-size: 17px; font-weight: 500; }
+.cal-month::first-letter { text-transform: uppercase; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; max-width: 480px; margin: 0 auto; }
+.cal-dow { text-align: center; font-size: 12px; letter-spacing: 0.06em; color: var(--muted); padding-bottom: 2px; }
+.cal-day {
+  position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 3px; aspect-ratio: 1 / 1; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: transparent; color: var(--fg); font: inherit; font-weight: 500; cursor: pointer;
+  transition: background 0.18s var(--ease), border-color 0.18s var(--ease), transform 0.18s var(--ease);
+}
+.cal-day:hover { border-color: var(--brand); transform: translateY(-2px); }
+.cal-day.blank { border: none; cursor: default; }
+.cal-day.blank:hover { transform: none; }
+/* день с поставленной сменой; .mine — работник сам был в этой смене */
+.cal-day.filled { background: var(--brand-soft); }
+.cal-day.mine { border-color: var(--brand); }
+.cal-day.today { box-shadow: inset 0 0 0 1px var(--rule); }
+.cal-day.selected { background: var(--brand); border-color: var(--brand); color: var(--surface); }
+.cal-num { font-variant-numeric: tabular-nums; font-size: 15px; }
+.cal-tag { font-size: 11px; font-weight: 700; color: var(--brand); }
+.cal-day.selected .cal-tag { color: var(--surface); }
+@media (max-width: 560px) {
+  .cal-grid { gap: 4px; }
+  .cal-num { font-size: 13px; }
+  .cal-tag { font-size: 10px; }
+}
+
 /* ============ Адаптив ============ */
 @media (max-width: 560px) {
   .hide-sm { display: none; }

@@ -19,6 +19,7 @@ from inventory.views import (
     StockItemViewSet,
 )
 from orders.views import OrderViewSet, TableViewSet
+from shifts.views import ShiftViewSet
 from users.views import MeView, RegisterView
 from wallet.views import (
     MyTransactionsView,
@@ -33,6 +34,7 @@ router.register("products", ProductViewSet, basename="product")
 router.register("token-packages", TokenPackageViewSet, basename="token-package")
 router.register("orders", OrderViewSet, basename="order")
 router.register("tables", TableViewSet, basename="table")
+router.register("shifts", ShiftViewSet, basename="shift")
 router.register("inventory/categories", StockCategoryViewSet, basename="stock-category")
 router.register("inventory/items", StockItemViewSet, basename="stock-item")
 router.register("inventory/aliases", StockItemAliasViewSet, basename="stock-alias")

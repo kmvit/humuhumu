@@ -252,6 +252,70 @@ export interface ReceiptScan {
   updated_at: string;
 }
 
+/** Работник в смене. */
+export interface ShiftMember {
+  id: number;
+  user: number;
+  name: string;
+  role: Role;
+  role_display: string;
+  added_at: string;
+  /** К выплате этому человеку за смену. */
+  payout: string;
+}
+
+/** Сотрудник, которого менеджер может поставить в смену. */
+export interface StaffUser {
+  id: number;
+  name: string;
+  role: Role;
+  role_display: string;
+}
+
+/** Смена (рабочий день): состав, выручка и расчёт оплаты. */
+export interface Shift {
+  id: number | null;
+  date: string;
+  daily_rate: string;
+  bonus_percent: string;
+  /** Стол списаний — заказы с него вычитаются из оплаты. */
+  penalty_table: string;
+  revenue: string;
+  penalty: string;
+  bonus_pool: string;
+  members_count: number;
+  /** Доли на одного человека в смене. */
+  bonus_share: string;
+  penalty_share: string;
+  payout: string;
+  members: ShiftMember[];
+  /** Только в /shifts/day/: я в этой смене. */
+  in_shift?: boolean;
+  /** Только в /shifts/day/: можно менять состав (менеджер или админ). */
+  can_edit?: boolean;
+  /** Только в /shifts/month/: я был в этой смене. */
+  mine?: boolean;
+}
+
+/** Строка сводки «к выплате» за период. */
+export interface PayrollRow {
+  user: number;
+  name: string;
+  role: Role;
+  role_display: string;
+  days: number;
+  base: string;
+  bonus: string;
+  penalty: string;
+  total: string;
+}
+
+export interface Payroll {
+  from: string;
+  to: string;
+  rows: PayrollRow[];
+}
+
 export interface TokenPackage {
   id: number;
   pay_amount: string;
