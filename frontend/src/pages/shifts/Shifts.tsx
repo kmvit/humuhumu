@@ -37,7 +37,8 @@ function fmtDays(n: number): string {
 
 export default function Shifts() {
   const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
+  // менеджер («Склад») и админ считают зарплату — видят смены и выплаты всей команды
+  const isManager = user?.role === "admin" || user?.role === "warehouse";
 
   const today = useMemo(() => isoDay(new Date()), []);
   const [tab, setTab] = useState<"day" | "history" | "payroll">("day");
@@ -178,7 +179,7 @@ export default function Shifts() {
           className={"navlink" + (tab === "history" ? " active" : "")}
           onClick={() => setTab("history")}
         >
-          <Icon name="receipt" size={16} /> {isAdmin ? "Все смены" : "Мои смены"}
+          <Icon name="receipt" size={16} /> {isManager ? "Все смены" : "Мои смены"}
         </button>
         <button
           className={"navlink" + (tab === "payroll" ? " active" : "")}

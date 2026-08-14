@@ -148,7 +148,7 @@ class ShiftTests(APITestCase):
 
     # ——— видимость ———
 
-    def test_worker_sees_only_own_shifts_admin_sees_all(self):
+    def test_worker_sees_only_own_shifts_manager_sees_all(self):
         yesterday = timezone.localdate() - timedelta(days=1)
         old = Shift.objects.create(date=yesterday, daily_rate=2000, bonus_percent=9)
         ShiftMember.objects.create(shift=old, user=self.cook2, role=User.Role.COOK)
@@ -158,11 +158,12 @@ class ShiftTests(APITestCase):
         mine = self.client.get("/api/shifts/").data
         self.assertEqual([s["date"] for s in mine], [timezone.localdate().isoformat()])
 
-        admin = User.objects.create_user(
+        # менеджер и админ считают зарплату — видят все смены
+        for boss in (self.manager, User.objects.create_user(
             username="boss", password="demo12345", role=User.Role.ADMIN
-        )
-        self.auth(admin)
-        self.assertEqual(len(self.client.get("/api/shifts/").data), 2)
+        )):
+            self.auth(boss)
+            self.assertEqual(len(self.client.get("/api/shifts/").data), 2)
 
     def test_payroll_sums_period(self):
         self.put_in_shift(self.staff["cook"])
@@ -174,6 +175,43 @@ class ShiftTests(APITestCase):
         # один в смене: весь бонус его
         self.assertEqual(Decimal(rows[0]["bonus"]), Decimal("900.00"))
         self.assertEqual(Decimal(rows[0]["total"]), Decimal("2900.00"))
+
+    def test_payroll_scope_by_role(self):
+        """Работник видит в сводке только себя, менеджер — всю команду."""
+        self.put_in_shift(*self.staff.values())
+        self.sale("10000")
+
+        self.auth(self.staff["bar"])
+        own = self.client.get("/api/shifts/payroll/").data["rows"]
+        self.assertEqual([r["user"] for r in own], [self.staff["bar"].id])
+
+        self.auth(self.manager)
+        rows = self.client.get("/api/shifts/payroll/").data["rows"]
+        self.assertEqual(len(rows), 3)
+        # бонус 900 делится на троих, ставка у каждого своя
+        self.assertEqual(
+            sum(Decimal(r["total"]) for r in rows), Decimal("6900.00")
+        )
+
+    def test_payroll_period_bounds(self):
+        """В сводку попадают только смены из периода from..to."""
+        today = timezone.localdate()
+        self.put_in_shift(self.staff["cook"])
+        old = Shift.objects.create(
+            date=today - timedelta(days=60), daily_rate=2000, bonus_percent=9
+        )
+        ShiftMember.objects.create(shift=old, user=self.staff["cook"])
+
+        self.auth(self.manager)
+        rows = self.client.get("/api/shifts/payroll/").data["rows"]
+        self.assertEqual(rows[0]["days"], 1)  # период по умолчанию — 30 дней
+
+        wide = self.client.get(
+            f"/api/shifts/payroll/?from={(today - timedelta(days=90)).isoformat()}"
+            f"&to={today.isoformat()}"
+        ).data
+        self.assertEqual(wide["rows"][0]["days"], 2)
+        self.assertEqual(Decimal(wide["rows"][0]["base"]), Decimal("4000.00"))
 
     def test_month_calendar_marks_days(self):
         today = timezone.localdate()

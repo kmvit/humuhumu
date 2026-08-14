@@ -61,9 +61,10 @@ class ShiftViewSet(viewsets.ViewSet):
         qs = Shift.objects.filter(
             date__range=self._range(request)
         ).prefetch_related("members__user")
-        if request.user.role != User.Role.ADMIN:
+        if not self.is_manager:
             # работник видит только те смены, где был сам
             return qs.filter(members__user=request.user).distinct()
+        # менеджер и админ считают зарплату — им видны все смены
         if request.query_params.get("user"):
             qs = qs.filter(members__user=request.query_params["user"]).distinct()
         return qs
@@ -150,8 +151,8 @@ class ShiftViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["get"])
     def payroll(self, request):
-        """К выплате за период. Работнику — только его строка, админу — все."""
-        me = None if request.user.role == User.Role.ADMIN else request.user
+        """К выплате за период. Работнику — только его строка, менеджеру — все."""
+        me = None if self.is_manager else request.user
         start, end = self._range(request)
         rows = payroll(self._shifts(request), user=me)
         return Response(
