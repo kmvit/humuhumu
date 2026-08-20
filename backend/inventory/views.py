@@ -57,6 +57,34 @@ class StockItemViewSet(viewsets.ModelViewSet):
     serializer_class = StockItemSerializer
     permission_classes = [IsWarehouseOrAdmin]
 
+    def destroy(self, request, *args, **kwargs):
+        """Удалить товар.
+
+        На товар ссылаются приходы, тех карты и закуп (on_delete=PROTECT) —
+        физически удалить его вместе с историей нельзя. Поэтому: чистый товар
+        (без движений, приходов, тех карт и строк закупа) удаляем совсем; товар
+        с историей — прячем со склада (is_active=False), данные сохраняются.
+        """
+        item = self.get_object()
+        has_history = (
+            item.movements.exists()
+            or item.receipt_items.exists()
+            or item.recipe_items.exists()
+            or item.purchase_lines.exists()
+        )
+        if has_history:
+            item.is_active = False
+            item.save(update_fields=["is_active"])
+            return Response(
+                {
+                    "deactivated": True,
+                    "detail": "У товара есть история или тех карты — он скрыт со "
+                    "склада, данные сохранены.",
+                }
+            )
+        item.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     @action(detail=True, methods=["post"])
     def adjust(self, request, pk=None):
         """Корректировка/инвентаризация: выставить остаток в новое значение."""

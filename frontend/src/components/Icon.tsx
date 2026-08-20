@@ -25,6 +25,7 @@ const paths: Record<string, string> = {
   truck: "M3 6a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v9H3V6zM15 9h3l3 3v3h-6V9zM7 18a2 2 0 1 0 0 .1M18 18a2 2 0 1 0 0 .1",
   edit: "M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z",
   arrowUp: "M12 19V5M5 12l7-7 7 7",
+  trash: "M4 7h16M10 11v6M14 11v6M5 7l1 13a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1l1-13M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3",
   chevronLeft: "M15 5l-7 7 7 7",
   chevronRight: "M9 5l7 7-7 7",
   arrowDown: "M12 5v14M19 12l-7 7-7-7",

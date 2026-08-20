@@ -75,6 +75,9 @@ export default function Warehouse() {
   const [adjustId, setAdjustId] = useState<number | null>(null);
   const [adjustQty, setAdjustQty] = useState("");
 
+  // удаление товара (подтверждаем прямо в строке — нативные диалоги в киоске подавлены)
+  const [delId, setDelId] = useState<number | null>(null);
+
   function notify(m: string) {
     setToast(m);
     setTimeout(() => setToast(null), 2600);
@@ -270,6 +273,20 @@ export default function Warehouse() {
       setVarName("");
       setVarItem(null);
       notify("Вариант добавлен");
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Ошибка");
+    }
+  }
+
+  async function deleteItem(id: number) {
+    try {
+      // 204 → удалён совсем; 200 {deactivated} → скрыт (есть история/тех карты)
+      const res = await del<{ deactivated?: boolean } | undefined>(
+        `/inventory/items/${id}/`
+      );
+      await load();
+      setDelId(null);
+      notify(res?.deactivated ? "Товар скрыт со склада" : "Товар удалён");
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "Ошибка");
     }
@@ -655,9 +672,35 @@ export default function Warehouse() {
                           >
                             <Icon name="plus" size={16} />
                           </button>
+                          <button
+                            className="icon-btn danger"
+                            onClick={() => { setDelId(it.id); setVarItem(null); setAdjustId(null); }}
+                            aria-label="Удалить товар"
+                            title="Удалить товар"
+                          >
+                            <Icon name="trash" size={16} />
+                          </button>
                         </span>
                       )}
                     </div>
+
+                    {delId === it.id && (
+                      <div className="row" style={{ paddingLeft: 22, gap: 8 }}>
+                        <span className="muted" style={{ flex: 1, minWidth: 0 }}>
+                          Удалить «{it.name}» со склада?
+                        </span>
+                        <button className="btn sm ghost" onClick={() => setDelId(null)}>
+                          Отмена
+                        </button>
+                        <button
+                          className="btn sm"
+                          style={{ background: "var(--danger)" }}
+                          onClick={() => deleteItem(it.id)}
+                        >
+                          <Icon name="trash" size={15} /> Удалить
+                        </button>
+                      </div>
+                    )}
 
                     {varItem === it.id && (
                       <div className="row" style={{ paddingLeft: 22, gap: 8 }}>
