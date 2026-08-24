@@ -55,6 +55,10 @@ export default function Warehouse() {
   const [scanning, setScanning] = useState(false); // идёт загрузка/распознавание
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // правка/удаление уже созданного прихода
+  const [editReceiptId, setEditReceiptId] = useState<number | null>(null); // правим существующий → пересоздаём
+  const [delReceiptId, setDelReceiptId] = useState<number | null>(null); // подтверждение удаления в строке
+
   // новый товар
   const [niOpen, setNiOpen] = useState(false);
   const [niName, setNiName] = useState("");
@@ -119,6 +123,7 @@ export default function Warehouse() {
 
   function openReceipt() {
     setScanId(null);
+    setEditReceiptId(null);
     setSupplier("");
     setComment("");
     setLines(items.length ? [{ item: items[0].id, quantity: "", unit_cost: "" }] : []);
@@ -128,6 +133,7 @@ export default function Warehouse() {
   /** Приход из закупа: купленные строки сразу подставлены в форму. */
   function openReceiptWith(preset: { item: number; quantity: number }[]) {
     setScanId(null);
+    setEditReceiptId(null);
     setSupplier("");
     setComment("");
     setLines(
@@ -143,6 +149,7 @@ export default function Warehouse() {
     const p = scan.parsed;
     if (!p) return;
     setScanId(scan.id);
+    setEditReceiptId(null);
     setSupplier(p.supplier || "");
     setComment("");
     setLines(
@@ -225,14 +232,52 @@ export default function Warehouse() {
         scanId ? `/inventory/receipt-scans/${scanId}/confirm/` : "/inventory/receipts/",
         body
       );
+      // Правка = пересоздание: новый приход завели, старый (с откатом остатков)
+      // удаляем. Если удаление не прошло — новый уже есть, сообщаем об этом.
+      if (editReceiptId) {
+        try {
+          await del(`/inventory/receipts/${editReceiptId}/`);
+        } catch {
+          notify("Новый приход создан, но старый удалить не вышло — удалите вручную");
+        }
+      }
       await load();
       setReceiptOpen(false);
       setScanId(null);
-      notify("Приход оприходован");
+      setEditReceiptId(null);
+      notify(editReceiptId ? "Приход изменён" : "Приход оприходован");
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "Ошибка");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  /** Правка прихода: подставляем его позиции в форму, при сохранении пересоздаём. */
+  function editReceipt(r: Receipt) {
+    setScanId(null);
+    setEditReceiptId(r.id);
+    setSupplier(r.supplier);
+    setComment(r.comment);
+    setLines(
+      r.items.map((li) => ({
+        item: li.item,
+        quantity: String(Number(li.quantity)),
+        unit_cost: li.unit_cost != null ? String(Number(li.unit_cost)) : "",
+      }))
+    );
+    setReceiptOpen(true);
+    setTab("stock"); // форма прихода живёт над вкладкой остатков
+  }
+
+  async function deleteReceipt(id: number) {
+    try {
+      await del(`/inventory/receipts/${id}/`);
+      await load();
+      setDelReceiptId(null);
+      notify("Приход удалён, остатки откачены");
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Ошибка");
     }
   }
 
@@ -438,12 +483,19 @@ export default function Warehouse() {
         <div className="card enter" style={{ marginTop: 12 }}>
           <div className="between">
             <strong style={{ fontFamily: "Fredoka", fontSize: 18 }}>
-              {scanId ? "Приход по фото" : "Новый приход"}
+              {editReceiptId ? `Правка прихода №${editReceiptId}` : scanId ? "Приход по фото" : "Новый приход"}
             </strong>
-            <button className="btn sm ghost" onClick={() => setReceiptOpen(false)}>
+            <button className="btn sm ghost" onClick={() => { setReceiptOpen(false); setEditReceiptId(null); }}>
               Отмена
             </button>
           </div>
+          {editReceiptId != null && (
+            <p className="muted" style={{ margin: "6px 0 0", fontSize: 13 }}>
+              <Icon name="edit" size={14} /> Правка пересоздаёт приход: остатки
+              старого откатятся, применится новый. Цена — за 1 базовую единицу
+              (г/мл/шт): для товара в граммах это цена за грамм, а не за кг.
+            </p>
+          )}
           {scanId != null && (
             <p className="muted" style={{ margin: "6px 0 0", fontSize: 13 }}>
               <Icon name="spark" size={14} /> Распознано с фото. Проверьте позиции и
@@ -528,7 +580,8 @@ export default function Warehouse() {
           </div>
 
           <button className="btn block" onClick={submitReceipt} disabled={submitting} style={{ marginTop: 14 }}>
-            <Icon name={submitting ? "spark" : "check"} size={18} /> Оприходовать
+            <Icon name={submitting ? "spark" : "check"} size={18} />{" "}
+            {editReceiptId ? "Сохранить изменения" : "Оприходовать"}
           </button>
         </div>
       )}
@@ -775,6 +828,35 @@ export default function Warehouse() {
                   </li>
                 ))}
               </ul>
+
+              {delReceiptId === r.id ? (
+                <div className="between" style={{ marginTop: 12, gap: 8 }}>
+                  <span className="muted" style={{ minWidth: 0 }}>
+                    Удалить приход и откатить остатки?
+                  </span>
+                  <span className="wrap" style={{ gap: 8 }}>
+                    <button className="btn sm ghost" onClick={() => setDelReceiptId(null)}>
+                      Отмена
+                    </button>
+                    <button
+                      className="btn sm"
+                      style={{ background: "var(--danger)" }}
+                      onClick={() => deleteReceipt(r.id)}
+                    >
+                      <Icon name="trash" size={15} /> Удалить
+                    </button>
+                  </span>
+                </div>
+              ) : (
+                <div className="wrap" style={{ gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
+                  <button className="btn sm ghost" onClick={() => editReceipt(r)}>
+                    <Icon name="edit" size={15} /> Изменить
+                  </button>
+                  <button className="btn sm ghost" onClick={() => setDelReceiptId(r.id)}>
+                    <Icon name="trash" size={15} /> Удалить
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>

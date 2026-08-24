@@ -38,7 +38,7 @@ from .serializers import (
     StockItemSerializer,
     StockMovementSerializer,
 )
-from .services import get_or_build_purchase, last_unit_costs
+from .services import delete_receipt, get_or_build_purchase, last_unit_costs
 from .tasks import process_receipt_scan
 
 
@@ -116,12 +116,21 @@ class ReceiptViewSet(viewsets.ModelViewSet):
         "received_by"
     )
     permission_classes = [IsWarehouseOrAdmin]
-    http_method_names = ["get", "post", "head", "options"]
+    http_method_names = ["get", "post", "delete", "head", "options"]
 
     def get_serializer_class(self):
         if self.action == "create":
             return ReceiptCreateSerializer
         return ReceiptSerializer
+
+    def destroy(self, request, *args, **kwargs):
+        """Удалить приход (ошиблись при оприходовании) и откатить остатки.
+
+        Редактирование делается на фронте как «пересоздать»: заводится новый
+        приход с исправленными позициями, а старый удаляется этим же методом.
+        """
+        delete_receipt(self.get_object())
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class ReceiptScanViewSet(viewsets.ModelViewSet):

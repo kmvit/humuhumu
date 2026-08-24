@@ -4,6 +4,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
 
 from .models import (
@@ -83,6 +84,26 @@ def return_order_item(order_item, user=None) -> None:
 
     order_item.stock_written_off_at = None
     order_item.save(update_fields=["stock_written_off_at"])
+
+
+@transaction.atomic
+def delete_receipt(receipt) -> None:
+    """Удалить приход и откатить его влияние на остатки.
+
+    При создании приход увеличил остатки (движения kind=receipt). Здесь эти
+    движения удаляются, а остаток каждого затронутого товара пересчитывается как
+    сумма оставшихся движений — как будто прихода и не было. Остаток может уйти в
+    минус, если товар уже частично списали по тех картам, — это корректно
+    показывает, что приход был ошибочным.
+    """
+    item_ids = list(receipt.items.values_list("item_id", flat=True))
+    # движения именно этого прихода (FK receipt) — снимаем их вклад в остаток
+    StockMovement.objects.filter(receipt=receipt).delete()
+    for item in StockItem.objects.select_for_update().filter(id__in=item_ids):
+        total = item.movements.aggregate(s=Sum("delta"))["s"] or Decimal("0")
+        item.quantity = total
+        item.save(update_fields=["quantity"])
+    receipt.delete()
 
 
 def get_or_build_purchase(date) -> PurchaseList:
