@@ -3,6 +3,8 @@ import { get, post, ApiError } from "../../api";
 import type { Category, Order, Product } from "../../types";
 import Icon, { categoryIcon } from "../../components/Icon";
 import Lightbox from "../../components/Lightbox";
+import { useToast } from "../../components/ui/Toast";
+import Stepper from "../../components/ui/Stepper";
 
 // Сбор заказа для стола. Позиции можно писать на гостя (Общий / Гость 1, 2, …)
 // для раздельного счёта — либо оставить всё общим.
@@ -27,7 +29,7 @@ export default function Compose({
   const [guests, setGuests] = useState(initialGuests); // сколько именованных гостей (0 = только общий)
   const [activeGuest, setActiveGuest] = useState(0); // 0 = общий
   const [comment, setComment] = useState("");
-  const [toast, setToast] = useState<string | null>(null);
+  const notify = useToast();
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [zoom, setZoom] = useState<string | null>(null);
@@ -88,9 +90,8 @@ export default function Compose({
       }
       onCreated();
     } catch (err) {
-      setToast(err instanceof ApiError ? err.message : "Ошибка");
+      notify(err instanceof ApiError ? err.message : "Ошибка", "bad");
       setBusy(false);
-      setTimeout(() => setToast(null), 3500);
     }
   }
 
@@ -100,14 +101,14 @@ export default function Compose({
         <h1 className="h1">{adding ? `Заказ №${orderId}` : `Стол ${table}`}</h1>
         <button className="btn sm ghost" onClick={onCancel}>Назад</button>
       </div>
-      <p className="muted" style={{ marginTop: 4 }}>
+      <p className="muted subtitle">
         {adding
           ? `Добавляем позиции в заказ · стол ${table}`
           : "Выберите гостя и добавляйте позиции · можно оставить общим"}
       </p>
 
       {/* выбор гостя, на которого пишутся позиции */}
-      <div className="scroll-x" style={{ marginTop: 12 }}>
+      <div className="scroll-x mt-3">
         {guestList.map((g) => (
           <button
             key={g}
@@ -131,7 +132,7 @@ export default function Compose({
       </div>
 
       {!adding && (
-        <label className="field" style={{ display: "block", marginTop: 12 }}>
+        <label className="field mt-3">
           <span className="label">Комментарий к заказу</span>
           <input
             className="input"
@@ -159,9 +160,9 @@ export default function Compose({
       </div>
 
       {loading ? (
-        <div className="stack" style={{ gap: 14, marginTop: 24 }}>
+        <div className="stack loose mt-5">
           {Array.from({ length: 5 }).map((_, i) => (
-            <div className="skeleton" style={{ height: 56 }} key={i} />
+            <div className="skeleton sm" key={i} />
           ))}
         </div>
       ) : (
@@ -187,7 +188,7 @@ export default function Compose({
                     />
                   )}
                   <div className="menu-item">
-                    <h3>{p.name} <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>#{p.id}</span></h3>
+                    <h3>{p.name} <span className="muted sm">#{p.id}</span></h3>
                     {p.description && <p className="menu-desc">{p.description}</p>}
                     {p.is_stopped && <span className="stop-badge">Sold out</span>}
                   </div>
@@ -195,13 +196,9 @@ export default function Compose({
                 <span className="menu-price num">{Number(p.price).toLocaleString("ru")}</span>
                 <div className="menu-add">
                   {p.is_stopped ? (
-                    <span className="muted" style={{ fontSize: 12 }}>стоп</span>
+                    <span className="muted sm">стоп</span>
                   ) : qtyOf(p.id) ? (
-                    <div className="stepper" style={{ width: 116 }}>
-                      <button onClick={() => remove(p.id)} aria-label="Убрать"><Icon name="minus" size={16} /></button>
-                      <span className="count num">{qtyOf(p.id)}</span>
-                      <button onClick={() => add(p.id)} aria-label="Добавить"><Icon name="plus" size={16} /></button>
-                    </div>
+                    <Stepper value={qtyOf(p.id)} width={116} onDec={() => remove(p.id)} onInc={() => add(p.id)} />
                   ) : (
                     <button
                       className="btn sm icon"
@@ -221,16 +218,16 @@ export default function Compose({
 
       {/* разбивка по гостям перед отправкой */}
       {count > 0 && guests > 0 && (
-        <div className="card" style={{ marginTop: 18, marginBottom: 88 }}>
-          <strong style={{ fontFamily: "Fredoka", fontSize: 17 }}>Разбивка</strong>
-          <div className="stack" style={{ gap: 12, marginTop: 10 }}>
+        <div className="card mt-4" style={{ marginBottom: 88 }}>
+          <strong className="title">Разбивка</strong>
+          <div className="stack loose mt-3">
             {guestList.filter((g) => guestCount(g) > 0).map((g) => (
-              <div key={g} style={{ borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+              <div key={g} className="rule-top">
                 <div className="between">
                   <strong>{guestLabel(g)}</strong>
                   <span className="num">{guestTotal(g).toLocaleString("ru")} ₽</span>
                 </div>
-                <ul className="stack" style={{ gap: 2, margin: "6px 0 0", listStyle: "none", padding: 0 }}>
+                <ul className="stack tight list mt-2">
                   {guestItems(g).map((x) => (
                     <li key={x.p.id} className="between">
                       <span>{x.p.name}</span>
@@ -241,12 +238,6 @@ export default function Compose({
               </div>
             ))}
           </div>
-        </div>
-      )}
-
-      {toast && (
-        <div className="toast bad" role="status">
-          <Icon name="spark" size={18} /> {toast}
         </div>
       )}
 

@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { get, post, ApiError } from "../../api";
 import type { Category, Order, Product } from "../../types";
 import Icon, { categoryIcon, type IconName } from "../../components/Icon";
+import Modal from "../../components/ui/Modal";
+import { useToast } from "../../components/ui/Toast";
 import { initTable } from "../../table";
 
 const COACH_KEY = "humu_reels_coached";
@@ -29,7 +31,7 @@ export default function MenuReels() {
   const [cartOpen, setCartOpen] = useState(false);
   const [name, setName] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const notify = useToast();
   const [activeIdx, setActiveIdx] = useState(0);
   const [table] = useState<string | null>(initTable);
   const [coach, setCoach] = useState<boolean>(() => !localStorage.getItem(COACH_KEY));
@@ -134,8 +136,7 @@ export default function MenuReels() {
 
   async function submit() {
     if (!name.trim()) {
-      setToast("Укажите имя, чтобы официант нашёл заказ");
-      setTimeout(() => setToast(null), 3000);
+      notify("Укажите имя, чтобы официант нашёл заказ", "bad");
       return;
     }
     setSubmitting(true);
@@ -152,11 +153,9 @@ export default function MenuReels() {
       setCart({});
       setCartOpen(false);
       setName("");
-      setToast("Заказ отправлен — подойдёт официант");
-      setTimeout(() => setToast(null), 3500);
+      notify("Заказ отправлен — подойдёт официант", "ok");
     } catch (err) {
-      setToast(err instanceof ApiError ? err.message : "Ошибка");
-      setTimeout(() => setToast(null), 3500);
+      notify(err instanceof ApiError ? err.message : "Ошибка", "bad");
     } finally {
       setSubmitting(false);
     }
@@ -175,7 +174,7 @@ export default function MenuReels() {
       <div className="reels">
         <div className="reels-loading">
           Нет доступных позиций
-          <Link className="btn sm ghost" style={{ marginTop: 14 }} to="/">На обычное меню</Link>
+          <Link className="btn sm ghost mt-4" to="/">На обычное меню</Link>
         </div>
       </div>
     );
@@ -186,7 +185,7 @@ export default function MenuReels() {
       {/* верхняя лента категорий */}
       <div className="reels-top">
         <Link className="reels-back" to="/" aria-label="Обычное меню">
-          <span style={{ display: "inline-flex", transform: "rotate(90deg)" }}>
+          <span className="rot-90">
             <Icon name="arrowDown" size={18} />
           </span>
         </Link>
@@ -260,12 +259,6 @@ export default function MenuReels() {
         ))}
       </div>
 
-      {toast && (
-        <div className="reels-toast" role="status">
-          <Icon name="spark" size={16} /> {toast}
-        </div>
-      )}
-
       {/* корзина */}
       {count > 0 && !cartOpen && (
         <button className="reels-cartbar" onClick={() => setCartOpen(true)}>
@@ -277,14 +270,18 @@ export default function MenuReels() {
       )}
 
       {cartOpen && (
-        <div className="reels-sheet-overlay" onClick={(e) => { if (e.target === e.currentTarget) setCartOpen(false); }}>
-          <div className="reels-sheet">
+        <Modal
+          variant="sheet"
+          onClose={() => setCartOpen(false)}
+          head={
             <div className="between">
-              <strong style={{ fontFamily: "Fredoka", fontSize: 19 }}>Ваш заказ</strong>
+              <strong className="title lg">Ваш заказ</strong>
               <button className="icon-btn" onClick={() => setCartOpen(false)} aria-label="Закрыть">
-                <span style={{ display: "inline-flex", transform: "rotate(45deg)" }}><Icon name="plus" size={18} /></span>
+                <span className="rot-45"><Icon name="plus" size={18} /></span>
               </button>
             </div>
+          }
+        >
             <div className="reels-sheet-items">
               {Object.entries(cart).map(([pid, q]) => {
                 const p = products.find((x) => x.id === Number(pid));
@@ -292,7 +289,7 @@ export default function MenuReels() {
                 return (
                   <div className="between reels-sheet-row" key={pid}>
                     <span>{p.name}</span>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+                    <span className="inline">
                       <div className="reel-stepper sm">
                         <button onClick={() => remove(p.id)} aria-label="Убрать"><Icon name="minus" size={16} /></button>
                         <span className="num">{q}</span>
@@ -307,29 +304,27 @@ export default function MenuReels() {
               })}
             </div>
             {table && (
-              <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>
+              <div className="muted sm mt-1">
                 <Icon name="store" size={14} /> Стол №{table}
               </div>
             )}
-            <label className="field" style={{ display: "block", marginTop: 12 }}>
-              <span className="muted" style={{ fontSize: 13 }}>Ваше имя</span>
+            <label className="field mt-3">
+              <span className="label">Ваше имя</span>
               <input
                 className="input"
-                style={{ marginTop: 6 }}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Как вас зовут?"
                 maxLength={120}
               />
             </label>
-            <div className="between" style={{ marginTop: 14 }}>
+            <div className="between mt-4">
               <strong className="num" style={{ fontSize: 20 }}>{total.toLocaleString("ru")} ₽</strong>
               <button className="btn" onClick={submit} disabled={submitting}>
                 <Icon name={submitting ? "spark" : "check"} size={18} /> Отправить
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
       {/* одноразовая подсказка по жестам — закрывается тапом, кнопкой или первым свайпом */}
@@ -338,9 +333,9 @@ export default function MenuReels() {
           <div className="reels-coach-card" onClick={(e) => e.stopPropagation()}>
             <div className="reels-gesture">
               <div className="reels-gesture-h">
-                <span style={{ transform: "rotate(90deg)", display: "inline-flex" }}><Icon name="arrowDown" size={22} /></span>
+                <span className="rot-90"><Icon name="arrowDown" size={22} /></span>
                 <span className="reels-hand" />
-                <span style={{ transform: "rotate(-90deg)", display: "inline-flex" }}><Icon name="arrowDown" size={22} /></span>
+                <span className="rot--90"><Icon name="arrowDown" size={22} /></span>
               </div>
               <strong>Категории</strong>
               <span>свайп влево-вправо</span>

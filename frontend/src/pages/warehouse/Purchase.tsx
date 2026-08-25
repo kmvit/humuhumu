@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { get, post, patch, del, ApiError } from "../../api";
 import type { PurchaseList, PurchaseLine, StockItem } from "../../types";
 import Icon from "../../components/Icon";
+import { useToast } from "../../components/ui/Toast";
 
 // «2026-08-14» → «14 августа, пятница»
 const FMT = new Intl.DateTimeFormat("ru", {
@@ -23,12 +24,12 @@ function fmtQty(q: string | number | null): string {
 
 type Props = {
   items: StockItem[];
-  notify: (m: string) => void;
   /** Оприходовать купленное: открыть форму прихода с этими строками. */
   onReceive: (lines: { item: number; quantity: number }[]) => void;
 };
 
-export default function Purchase({ items, notify, onReceive }: Props) {
+export default function Purchase({ items, onReceive }: Props) {
+  const notify = useToast();
   const [date, setDate] = useState(() => isoDate(1)); // по умолчанию завтра
   const [list, setList] = useState<PurchaseList | null>(null);
   const [loading, setLoading] = useState(true);
@@ -47,7 +48,7 @@ export default function Purchase({ items, notify, onReceive }: Props) {
     try {
       setList(await get<PurchaseList>(`/inventory/purchases/day/?date=${day}`));
     } catch (e) {
-      notify(e instanceof ApiError ? e.message : "Не удалось загрузить закуп");
+      notify(e instanceof ApiError ? e.message : "Не удалось загрузить закуп", "bad");
     } finally {
       setLoading(false);
     }
@@ -66,14 +67,14 @@ export default function Purchase({ items, notify, onReceive }: Props) {
       l ? { ...l, lines: l.lines.map((x) => (x.id === line.id ? { ...x, ...body } : x)) } : l
     );
     patch(`/inventory/purchase-lines/${line.id}/`, body).catch(() => {
-      notify("Не удалось сохранить — обновляю список");
+      notify("Не удалось сохранить — обновляю список", "bad");
       load(date);
     });
   }
 
   async function addLine() {
     if (addItem === "" || !Number(addQty)) {
-      notify("Выберите товар и количество");
+      notify("Выберите товар и количество", "bad");
       return;
     }
     try {
@@ -85,9 +86,9 @@ export default function Purchase({ items, notify, onReceive }: Props) {
       setAddQty("");
       setAddOpen(false);
       await load(date);
-      notify("Строка добавлена");
+      notify("Строка добавлена", "ok");
     } catch (e) {
-      notify(e instanceof ApiError ? e.message : "Ошибка");
+      notify(e instanceof ApiError ? e.message : "Ошибка", "bad");
     }
   }
 
@@ -96,16 +97,16 @@ export default function Purchase({ items, notify, onReceive }: Props) {
       await del(`/inventory/purchase-lines/${line.id}/`);
       setList((l) => (l ? { ...l, lines: l.lines.filter((x) => x.id !== line.id) } : l));
     } catch (e) {
-      notify(e instanceof ApiError ? e.message : "Ошибка");
+      notify(e instanceof ApiError ? e.message : "Ошибка", "bad");
     }
   }
 
   const done = lines.filter((l) => l.is_done);
 
   return (
-    <div className="stack" style={{ gap: 12, marginTop: 14 }}>
+    <div className="stack loose mt-4">
       {/* выбор дня */}
-      <div className="wrap" style={{ gap: 8, alignItems: "center" }}>
+      <div className="wrap" style={{ alignItems: "center" }}>
         {[
           { label: "Сегодня", value: isoDate(0) },
           { label: "Завтра", value: isoDate(1) },
@@ -128,21 +129,21 @@ export default function Purchase({ items, notify, onReceive }: Props) {
       </div>
 
       <div className="between">
-        <strong style={{ fontFamily: "Fredoka", fontSize: 18 }}>
+        <strong className="title">
           {FMT.format(new Date(date + "T12:00:00"))}
         </strong>
-        <span className="muted" style={{ fontSize: 13 }}>
+        <span className="muted sm">
           {lines.length === 0
             ? "покупать нечего"
             : `${left} из ${lines.length} осталось купить`}
         </span>
       </div>
 
-      {loading && <div className="skeleton" style={{ height: 52 }} />}
+      {loading && <div className="skeleton sm" />}
 
       {!loading && lines.length === 0 && (
-        <div className="card" style={{ textAlign: "center" }}>
-          <p className="muted" style={{ margin: 0 }}>
+        <div className="card center">
+          <p className="muted m-0">
             Ничего не заканчивается — список пуст. Строку можно добавить руками.
           </p>
         </div>
@@ -158,18 +159,18 @@ export default function Purchase({ items, notify, onReceive }: Props) {
           >
             <Icon name={l.is_done ? "check" : "box"} size={16} />
           </button>
-          <div className="stack" style={{ gap: 2, flex: 1, minWidth: 0 }}>
-            <strong style={{ textDecoration: l.is_done ? "line-through" : "none" }}>
+          <div className="row-body">
+            <strong className={l.is_done ? "strike" : ""}>
               {l.item_name}
             </strong>
-            <span className="muted" style={{ fontSize: 12 }}>
+            <span className="muted sm">
               на складе {fmtQty(l.in_stock)} {l.unit_display} · {l.category_name}
               {l.is_auto ? "" : " · вручную"}
             </span>
           </div>
 
           {editId === l.id ? (
-            <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+            <span className="inline tight">
               <input
                 className="input"
                 inputMode="decimal"
@@ -190,7 +191,7 @@ export default function Purchase({ items, notify, onReceive }: Props) {
               </button>
             </span>
           ) : (
-            <span style={{ display: "inline-flex", gap: 10, alignItems: "center" }}>
+            <span className="inline">
               <button
                 className="chip"
                 style={{ minWidth: 84, justifyContent: "center" }}
@@ -207,7 +208,7 @@ export default function Purchase({ items, notify, onReceive }: Props) {
                 onClick={() => removeLine(l)}
                 aria-label="Убрать из закупа"
               >
-                <Icon name="minus" size={16} />
+                <Icon name="trash" size={16} />
               </button>
             </span>
           )}
@@ -217,10 +218,9 @@ export default function Purchase({ items, notify, onReceive }: Props) {
       {/* добавить свою строку */}
       {addOpen ? (
         <div className="card enter">
-          <div className="wrap" style={{ gap: 8 }}>
+          <div className="wrap">
             <select
-              className="input"
-              style={{ flex: 1, minWidth: 160 }}
+              className="input grow"
               value={addItem}
               onChange={(e) => setAddItem(Number(e.target.value))}
             >

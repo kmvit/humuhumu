@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import Icon from "./Icon";
+import Modal from "./ui/Modal";
 
 // Событие Chrome/Edge, которое даёт показать нативный диалог установки.
 type InstallPromptEvent = Event & {
@@ -75,31 +76,26 @@ export default function InstallPWA() {
       </button>
 
       {showIosHint && (
-        <div
-          className="install-hint-overlay"
-          role="dialog"
-          aria-modal="true"
-          onClick={() => setShowIosHint(false)}
-        >
-          <div className="install-hint" onClick={(e) => e.stopPropagation()}>
+        <Modal variant="sheet" onClose={() => setShowIosHint(false)}>
+          <div className="stack loose">
             <span className="brand" style={{ fontSize: 20 }}>
               <span className="logo">
                 <Icon name="coffee" size={17} />
               </span>
               <span className="brand-name">Установить на экран «Домой»</span>
             </span>
-            <p className="muted" style={{ margin: 0 }}>
+            <p className="muted m-0">
               Нажмите{" "}
               <span className="tx-icon" style={{ width: 26, height: 26, verticalAlign: "middle" }}>
                 <Icon name="share" size={14} />
               </span>{" "}
               «Поделиться» внизу Safari, затем выберите «На экран „Домой“».
             </p>
-            <button className="btn sm" onClick={() => setShowIosHint(false)}>
+            <button className="btn sm self-end" onClick={() => setShowIosHint(false)}>
               Понятно
             </button>
           </div>
-        </div>
+        </Modal>
       )}
     </>
   );

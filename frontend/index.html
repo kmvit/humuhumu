@@ -13,11 +13,28 @@
     <meta name="apple-mobile-web-app-title" content="ХУМУ" />
     <title>Кафе — заказы и токены</title>
     <script>
-      // Ставим тему до первой отрисовки, чтобы не было вспышки
+      // Ставим темы до первой отрисовки, чтобы не было вспышки:
+      // "theme" — день/ночь, "app_theme"/"app_accent" — оформление заведения
+      // (кэш последнего ответа /api/site/, пишет site.tsx).
       (function () {
         try {
+          var el = document.documentElement;
           var t = localStorage.getItem("theme") || "light"; // по умолчанию светлая
-          document.documentElement.setAttribute("data-theme", t);
+          el.setAttribute("data-theme", t);
+          var at = localStorage.getItem("app_theme");
+          if (at) el.setAttribute("data-app-theme", at);
+          var ac = localStorage.getItem("app_accent");
+          if (ac && /^#[0-9a-fA-F]{6}$/.test(ac)) {
+            var n = parseInt(ac.slice(1), 16);
+            var mix = function (c) { return Math.round(c + (255 - c) * 0.45); };
+            var light =
+              "#" +
+              ((1 << 24) + (mix((n >> 16) & 255) << 16) + (mix((n >> 8) & 255) << 8) + mix(n & 255))
+                .toString(16)
+                .slice(1);
+            el.style.setProperty("--brand-user", ac);
+            el.style.setProperty("--brand-user-dark", light);
+          }
         } catch (e) {}
       })();
     </script>

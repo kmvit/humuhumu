@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { get, put, ApiError } from "../../api";
 import type { Recipe, StockItem } from "../../types";
 import Icon from "../../components/Icon";
+import { useToast } from "../../components/ui/Toast";
 
 type Draft = { item: number | ""; quantity: string; comment: string };
 
@@ -11,10 +12,10 @@ function fmtQty(q: string | number): string {
 
 type Props = {
   items: StockItem[];
-  notify: (m: string) => void;
 };
 
-export default function Recipes({ items, notify }: Props) {
+export default function Recipes({ items }: Props) {
+  const notify = useToast();
   const [cards, setCards] = useState<Recipe[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -30,7 +31,7 @@ export default function Recipes({ items, notify }: Props) {
     try {
       setCards(await get<Recipe[]>("/inventory/recipes/"));
     } catch (e) {
-      notify(e instanceof ApiError ? e.message : "Не удалось загрузить тех карты");
+      notify(e instanceof ApiError ? e.message : "Не удалось загрузить тех карты", "bad");
     } finally {
       setLoading(false);
     }
@@ -77,20 +78,19 @@ export default function Recipes({ items, notify }: Props) {
       const saved = await put<Recipe>(`/inventory/recipes/${productId}/`, { lines });
       setCards((cs) => cs.map((c) => (c.product === productId ? saved : c)));
       setEditId(null);
-      notify(lines.length ? "Тех карта сохранена" : "Тех карта очищена");
+      notify(lines.length ? "Тех карта сохранена" : "Тех карта очищена", "ok");
     } catch (e) {
-      notify(e instanceof ApiError ? e.message : "Ошибка");
+      notify(e instanceof ApiError ? e.message : "Ошибка", "bad");
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <div className="stack" style={{ gap: 12, marginTop: 14 }}>
-      <div className="wrap" style={{ gap: 8, alignItems: "center" }}>
+    <div className="stack loose mt-4">
+      <div className="wrap" style={{ alignItems: "center" }}>
         <input
-          className="input"
-          style={{ flex: 1, minWidth: 160 }}
+          className="input grow"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Найти блюдо"
@@ -103,24 +103,24 @@ export default function Recipes({ items, notify }: Props) {
           Без карты
         </button>
       </div>
-      <span className="muted" style={{ fontSize: 13 }}>
+      <span className="muted sm">
         Карта есть у {filled} из {cards.length} блюд. Расход указывается на одну
         порцию — по нему списывается склад, когда блюдо готово.
       </span>
 
       {loading &&
         Array.from({ length: 3 }).map((_, i) => (
-          <div className="skeleton" style={{ height: 52 }} key={i} />
+          <div className="skeleton sm" key={i} />
         ))}
 
       {shown.map((card) => (
         <div className="card" key={card.product}>
           <div className="between">
-            <div className="stack" style={{ gap: 2, minWidth: 0 }}>
-              <strong style={{ fontFamily: "Fredoka", fontSize: 16 }}>
+            <div className="row-body">
+              <strong className="title">
                 {card.product_name}
               </strong>
-              <span className="muted" style={{ fontSize: 12 }}>
+              <span className="muted sm">
                 {card.category_name}
                 {card.lines.length === 0
                   ? " · тех карты нет"
@@ -140,16 +140,13 @@ export default function Recipes({ items, notify }: Props) {
 
           {/* просмотр */}
           {editId !== card.product && card.lines.length > 0 && (
-            <ul
-              className="stack"
-              style={{ gap: 4, margin: "10px 0 0", listStyle: "none", padding: 0 }}
-            >
+            <ul className="stack tight list mt-3">
               {card.lines.map((l) => (
                 <li key={l.id} className="between">
                   <span>
                     {l.item_name}
                     {l.comment && (
-                      <span className="muted" style={{ fontSize: 12 }}> · {l.comment}</span>
+                      <span className="muted sm"> · {l.comment}</span>
                     )}
                   </span>
                   <span className="num muted">
@@ -162,7 +159,7 @@ export default function Recipes({ items, notify }: Props) {
 
           {/* редактор */}
           {editId === card.product && (
-            <div className="stack" style={{ gap: 8, marginTop: 12 }}>
+            <div className="stack mt-3">
               {draft.map((d, idx) => {
                 const it = items.find((i) => i.id === d.item);
                 return (
@@ -212,12 +209,12 @@ export default function Recipes({ items, notify }: Props) {
                       onClick={() => setDraft((ds) => ds.filter((_, i) => i !== idx))}
                       aria-label="Убрать строку"
                     >
-                      <Icon name="minus" size={16} />
+                      <Icon name="trash" size={16} />
                     </button>
                   </div>
                 );
               })}
-              <div className="wrap" style={{ gap: 8 }}>
+              <div className="wrap">
                 <button
                   className="btn sm ghost"
                   onClick={() =>
@@ -243,8 +240,8 @@ export default function Recipes({ items, notify }: Props) {
       ))}
 
       {!loading && shown.length === 0 && (
-        <div className="card" style={{ textAlign: "center" }}>
-          <p className="muted" style={{ margin: 0 }}>Блюда не нашлись.</p>
+        <div className="card center">
+          <p className="muted m-0">Блюда не нашлись.</p>
         </div>
       )}
     </div>

@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { get, patch, post } from "../../api";
-import type { Order, OrderItem, Station, StationStatus, Table } from "../../types";
+import { get, patch, post, ApiError } from "../../api";
+import { useToast } from "../../components/ui/Toast";
+import type { Order, OrderItem, PayMethod, Station, StationStatus, Table } from "../../types";
 import Icon from "../../components/Icon";
 import { useLiveOrders } from "../../useLiveOrders";
 import { playChime } from "../../sound";
 import { fmtClock, fmtDuration, minutesBetween } from "../../time";
 import Compose from "./Compose";
+import Modal from "../../components/ui/Modal";
+import Stepper from "../../components/ui/Stepper";
 
 const STATUS_LABEL: Record<StationStatus, string> = {
   new: "новый",
@@ -17,6 +20,9 @@ const STATUS_CLASS: Record<StationStatus, string> = {
   in_progress: "preparing",
   ready: "ready",
 };
+
+// дев-эмуляция результата терминала; в бою результат приходит вебхуком провайдера
+const DEV = import.meta.env.DEV;
 
 export default function Waiter() {
   const { orders, reload } = useLiveOrders("/orders/?status=open", { sound: false });
@@ -44,8 +50,11 @@ export default function Waiter() {
   const [moveFor, setMoveFor] = useState<number | null>(null);
   const [busyMove, setBusyMove] = useState<number | null>(null);
   const [busyClose, setBusyClose] = useState<number | null>(null);
+  // какой счёт сейчас на выборе способа оплаты: id заказа или "table" (весь стол)
+  const [payFor, setPayFor] = useState<number | "table" | null>(null);
   const [busyServe, setBusyServe] = useState<string | null>(null);
   const seenServe = useRef<Set<string> | null>(null);
+  const notify = useToast();
 
   useEffect(() => {
     get<Table[]>("/tables/").then((ts) => setTables(ts.map((t) => t.name))).catch(() => {});
@@ -78,6 +87,8 @@ export default function Waiter() {
       await post(`/orders/${order.id}/remove_item/`, { item_id: item.id });
       setConfirmId(null);
       await reload();
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Не удалось убрать позицию", "bad");
     } finally {
       setBusyItem(null);
     }
@@ -91,6 +102,8 @@ export default function Waiter() {
     try {
       await patch(`/orders/${order.id}/item_qty/`, { item_id: item.id, quantity: next });
       await reload();
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Не удалось изменить количество", "bad");
     } finally {
       setBusyItem(null);
     }
@@ -201,21 +214,49 @@ export default function Waiter() {
     await reload();
   }
 
-  // закрыть один заказ (не весь стол)
-  async function closeOrder(order: Order) {
+  // закрыть один заказ (не весь стол), зафиксировав способ оплаты
+  async function closeOrder(order: Order, method: PayMethod) {
     setBusyClose(order.id);
     try {
-      await post(`/orders/${order.id}/close/`, {});
+      await post(`/orders/${order.id}/close/`, { pay_method: method });
+      setPayFor(null);
       await reload();
     } finally {
       setBusyClose(null);
     }
   }
 
-  async function closeTable(table: string) {
+  // отправить заказ на кассу-терминал → «к оплате»
+  async function payTerminal(order: Order) {
+    setBusyClose(order.id);
+    try {
+      await post(`/orders/${order.id}/pay_terminal/`, { method: "card" });
+      setPayFor(null);
+      await reload();
+    } finally {
+      setBusyClose(null);
+    }
+  }
+
+  // применить результат оплаты с терминала (в дев-режиме — вручную; в бою придёт вебхуком)
+  async function payResult(order: Order, result: "success" | "cancel") {
+    setBusyClose(order.id);
+    try {
+      await post(`/orders/${order.id}/pay_result/`, {
+        result,
+        fiscal_receipt: result === "success" ? `demo-${order.id}` : "",
+      });
+      await reload();
+    } finally {
+      setBusyClose(null);
+    }
+  }
+
+  async function closeTable(table: string, method: PayMethod) {
     setClosing(true);
     try {
-      await post("/orders/close_table/", { table });
+      await post("/orders/close_table/", { table, pay_method: method });
+      setPayFor(null);
       setSelected(null);
       await reload();
     } finally {
@@ -259,10 +300,10 @@ export default function Waiter() {
 
       {view === "closed" ? (
         <>
-          <p className="muted" style={{ marginTop: 4 }}>Закрытые счета за сегодня</p>
-          <div className="stack" style={{ gap: 10, marginTop: 16 }}>
+          <p className="muted subtitle">Закрытые счета за сегодня</p>
+          <div className="stack loose mt-4">
             {closed.length === 0 ? (
-              <p className="muted" style={{ textAlign: "center", marginTop: 24 }}>Сегодня закрытых счетов нет</p>
+              <p className="muted center mt-5">Сегодня закрытых счетов нет</p>
             ) : (
               closed.map((o) => {
                 const open = openClosed.has(o.id);
@@ -271,31 +312,35 @@ export default function Waiter() {
                   <div className="card hover" key={o.id} style={{ cursor: "pointer" }} onClick={() => toggleClosed(o.id)}>
                     <div className="between">
                       <strong>Стол {o.table || "—"} <span className="muted" style={{ fontWeight: 400 }}>· №{o.id}</span></strong>
-                      <span className="num">{Number(o.total).toLocaleString("ru")} ₽</span>
-                    </div>
-                    <div className="between" style={{ marginTop: 2 }}>
-                      <span className="muted" style={{ fontSize: 12 }}>
-                        закрыт {o.closed_at ? fmtClock(o.closed_at) : "—"} · {o.items.length} поз.
+                      <span className="inline tight">
+                        <span className="badge"><Icon name={o.pay_method === "card" ? "card" : "cash"} size={12} /> {o.pay_method_display}</span>
+                        <span className="num">{Number(o.total).toLocaleString("ru")} ₽</span>
                       </span>
-                      <span className="muted" style={{ fontSize: 12 }}>{open ? "скрыть" : "позиции"}</span>
+                    </div>
+                    <div className="between mt-1">
+                      <span className="muted sm">
+                        закрыт {o.closed_at ? fmtClock(o.closed_at) : "—"} · {o.items.length} поз.
+                        {o.fiscal_receipt ? ` · чек ${o.fiscal_receipt}` : ""}
+                      </span>
+                      <span className="muted sm">{open ? "скрыть" : "позиции"}</span>
                     </div>
 
                     {open && (
-                      <div style={{ marginTop: 10, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
-                        <ul className="stack" style={{ gap: 4, listStyle: "none", padding: 0, margin: 0 }}>
+                      <div className="rule-top mt-3">
+                        <ul className="stack tight list">
                           {o.items.map((it) => (
                             <li key={it.id} className="between">
                               <span>
                                 {it.product_name}
-                                {it.guest ? <span className="badge open" style={{ marginLeft: 6, padding: "1px 7px", fontSize: 11 }}>Гость {it.guest}</span> : null}
+                                {it.guest ? <span className="badge open mini ml-2">Гость {it.guest}</span> : null}
                               </span>
                               <span className="num muted">× {it.quantity} · {Number(it.subtotal).toLocaleString("ru")} ₽</span>
                             </li>
                           ))}
                         </ul>
                         {bd.some(([g]) => g !== 0) && (
-                          <div className="stack" style={{ gap: 3, marginTop: 8 }}>
-                            <div className="muted" style={{ fontSize: 12 }}>По гостям:</div>
+                          <div className="stack tight mt-2">
+                            <div className="muted sm">По гостям:</div>
                             {bd.map(([g, sum]) => (
                               <div className="between" key={g}>
                                 <span>{g === 0 ? "Общий" : `Гость ${g}`}</span>
@@ -314,15 +359,15 @@ export default function Waiter() {
         </>
       ) : (
       <>
-      <p className="muted" style={{ marginTop: 4 }}>Выберите стол, чтобы создать заказ или закрыть счёт</p>
+      <p className="muted subtitle">Выберите стол, чтобы создать заказ или закрыть счёт</p>
 
       {serveList.length > 0 && (
-        <div style={{ marginTop: 16 }}>
+        <div className="mt-4">
           <div className="between">
-            <strong style={{ fontFamily: "Fredoka", fontSize: 17 }}>К подаче</strong>
+            <strong className="title">К подаче</strong>
             <span className="chip"><Icon name="check" size={15} /> {serveList.length}</span>
           </div>
-          <div className="grid" style={{ marginTop: 10, gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
+          <div className="grid cards mt-3">
             {serveList.map(({ order: o, station }) => {
               const its = o.items.filter((it) => it.station === station);
               const key = `${o.id}:${station}`;
@@ -338,9 +383,9 @@ export default function Waiter() {
                     </span>
                   </div>
                   {o.customer_name && (
-                    <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{o.customer_name}</div>
+                    <div className="muted sm mt-1">{o.customer_name}</div>
                   )}
-                  <ul className="stack" style={{ gap: 3, margin: "8px 0", listStyle: "none", padding: 0 }}>
+                  <ul className="stack tight list my-2">
                     {its.map((it) => (
                       <li key={it.id} className="between">
                         <span>{it.product_name}</span>
@@ -363,25 +408,25 @@ export default function Waiter() {
       )}
 
       {requests.length > 0 && (
-        <div style={{ marginTop: 16 }}>
+        <div className="mt-4">
           <div className="between">
-            <strong style={{ fontFamily: "Fredoka", fontSize: 17 }}>Заявки клиентов</strong>
+            <strong className="title">Заявки клиентов</strong>
             <span className="chip"><Icon name="spark" size={15} /> {requests.length}</span>
           </div>
-          <div className="grid" style={{ marginTop: 10, gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
+          <div className="grid cards mt-3">
             {requests.map((o) => (
               <div className={"card request-card" + (reqHighlight.has(o.id) ? " new-order" : "")} key={o.id}>
                 <div className="between">
                   <strong>
                     {o.customer_name || "Клиент"}
-                    {o.table && <span className="badge open" style={{ marginLeft: 6 }}>Стол {o.table}</span>}
+                    {o.table && <span className="badge open ml-2">Стол {o.table}</span>}
                   </strong>
                   <span className="num">{Number(o.total).toLocaleString("ru")} ₽</span>
                 </div>
-                <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                <div className="muted sm mt-1">
                   <Icon name="spark" size={12} /> {fmtDuration(minutesBetween(o.created_at))} · {o.items.length} поз.
                 </div>
-                <ul className="stack" style={{ gap: 3, margin: "8px 0", listStyle: "none", padding: 0 }}>
+                <ul className="stack tight list my-2">
                   {o.items.map((it) => (
                     <li key={it.id} className="between">
                       <span>{it.product_name}</span>
@@ -399,8 +444,8 @@ export default function Waiter() {
                   </button>
                 ) : (
                   <>
-                    <div className="muted" style={{ fontSize: 12 }}>Принять на стол:</div>
-                    <div className="scroll-x" style={{ marginTop: 6 }}>
+                    <div className="muted sm">Принять на стол:</div>
+                    <div className="scroll-x mt-2">
                       {tables.map((t) => (
                         <button key={t} className="navlink" disabled={busyReq === o.id} onClick={() => confirmRequest(o, t)}>{t}</button>
                       ))}
@@ -413,7 +458,7 @@ export default function Waiter() {
         </div>
       )}
 
-      <div className="grid" style={{ marginTop: 16, gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))" }}>
+      <div className="grid tiles mt-4">
         {tables.map((t) => {
           const os = byTable[t] ?? [];
           const occupied = os.length > 0;
@@ -429,139 +474,141 @@ export default function Waiter() {
               className={"card hover table-tile" + (selected === t ? " sel" : "") + (occupied ? (ready ? " ready" : " busy") : " free")}
               onClick={() => setSelected(t)}
             >
-              <strong style={{ fontFamily: "Fredoka", fontSize: 22 }}>{t}</strong>
-              <span style={{ fontSize: 14.5, fontWeight: 700 }}>
+              <strong>{t}</strong>
+              <span className="state">
                 {occupied ? (ready ? "готов" : "готовится") : "свободен"}
               </span>
               {occupied && (
-                <span className="muted" style={{ fontSize: 11.5, display: "inline-flex", alignItems: "center", gap: 3 }}>
+                <span className="muted">
                   <Icon name="spark" size={11} /> {fmtDuration(minutesBetween(openedAt!))}
                 </span>
               )}
-              {occupied && <span className="num" style={{ fontSize: 18, fontWeight: 700 }}>{total.toLocaleString("ru")} ₽</span>}
+              {occupied && <span className="num">{total.toLocaleString("ru")} ₽</span>}
             </button>
           );
         })}
       </div>
 
       {selected && (
-        <div
-          className="table-modal"
-          role="dialog"
-          aria-modal="true"
-          onClick={(e) => { if (e.target === e.currentTarget) setSelected(null); }}
+        <Modal
+          onClose={() => setSelected(null)}
+          head={
+            <>
+              <button className="btn sm ghost" onClick={() => setSelected(null)}>
+                <span className="rot-90"><Icon name="arrowDown" size={16} /></span>
+                Все столы
+              </button>
+              <h2>Стол {selected}</h2>
+            </>
+          }
         >
-        <div className="table-modal-panel">
-          <div className="table-modal-head">
-            <button className="btn sm ghost" onClick={() => setSelected(null)}>
-              <span style={{ display: "inline-flex", transform: "rotate(90deg)" }}><Icon name="arrowDown" size={16} /></span>
-              Все столы
-            </button>
-            <h2>Стол {selected}</h2>
-          </div>
-          <div className="table-modal-body">
 
           {selOrders.length === 0 ? (
-            <p className="muted" style={{ margin: "12px 0" }}>Стол свободен — заказов нет.</p>
+            <p className="muted my-3">Стол свободен — заказов нет.</p>
           ) : (
-            <div className="stack" style={{ gap: 12, margin: "12px 0" }}>
+            <div className="stack loose my-3">
               {selOrders.map((o) => (
-                <div key={o.id} style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+                <div key={o.id} className="order-card">
                   <div className="between">
                     <strong>
                       №{o.id}
                       {o.customer_name && <span className="muted" style={{ fontWeight: 400 }}> · {o.customer_name}</span>}
-                      {" · "}<span className="num">{o.total}</span> ₽
+                      {" · "}<span className="num">{Number(o.total).toLocaleString("ru")}</span> ₽
                     </strong>
-                    <span className={"badge " + (o.is_ready ? "ready" : "preparing")}>
-                      {o.is_ready ? "готов" : "готовится"}
-                    </span>
+                    {o.status === "awaiting" ? (
+                      <span className="badge pending">к оплате</span>
+                    ) : (
+                      <span className={"badge " + (o.is_ready ? "ready" : "preparing")}>
+                        {o.is_ready ? "готов" : "готовится"}
+                      </span>
+                    )}
                   </div>
-                  <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                  <div className="muted sm mt-1">
                     <Icon name="spark" size={12} /> {fmtDuration(minutesBetween(o.created_at))} · с открытия
                   </div>
-                  <ul className="stack" style={{ gap: 3, margin: "8px 0 0", listStyle: "none", padding: 0 }}>
+
+                  {/* статусы станций */}
+                  {(o.has_food || o.has_drinks) && (
+                    <div className="wrap tight mt-2">
+                      {o.has_food && (
+                        <span className={"badge " + STATUS_CLASS[o.food_status]}>Кухня: {STATUS_LABEL[o.food_status]}</span>
+                      )}
+                      {o.has_drinks && (
+                        <span className={"badge " + STATUS_CLASS[o.drinks_status]}>Бар: {STATUS_LABEL[o.drinks_status]}</span>
+                      )}
+                    </div>
+                  )}
+
+                  <ul className="stack tight list mt-3">
                     {o.items.map((it) => (
-                      <li key={it.id} className="between">
+                      <li
+                        key={it.id}
+                        className={
+                          "between" +
+                          ((it.station === "kitchen" ? o.food_served : o.drinks_served) ? " item-served" : "")
+                        }
+                      >
                         <span>
                           {it.product_name}
-                          <span className="muted" style={{ fontSize: 12 }}> · {it.station === "kitchen" ? "кухня" : "бар"}</span>
+                          <span className="station-tag">{it.station === "kitchen" ? "кухня" : "бар"}</span>
                           <button
-                            className={"badge guest-chip" + (it.guest ? " open" : "")}
-                            style={{ marginLeft: 6 }}
+                            className={"badge guest-chip ml-2" + (it.guest ? " open" : "")}
                             disabled={busyGuest === it.id}
                             title="Тап — сменить гостя"
                             onClick={() => cycleGuest(o, it)}
                           >
                             {it.guest ? `Гость ${it.guest}` : "общий"}
                           </button>
+                          {/* статус позиции у станции — объясняет, почему её нельзя убрать */}
+                          {it.status !== "new" && (
+                            <span className={"badge mini ml-2 " + STATUS_CLASS[it.status]}>
+                              {STATUS_LABEL[it.status]}
+                            </span>
+                          )}
                         </span>
                         {confirmId === it.id ? (
-                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                            <span className="muted" style={{ fontSize: 12.5 }}>Убрать?</span>
+                          <span className="inline tight">
+                            <span className="muted sm">Убрать?</span>
                             <button
-                              className="icon-btn sm danger"
+                              className="icon-btn danger"
                               title="Да, убрать"
                               disabled={busyItem === it.id}
                               onClick={() => removeItem(o, it)}
                             >
-                              <Icon name="check" size={14} />
+                              <Icon name="check" size={16} />
                             </button>
                             <button
-                              className="icon-btn sm"
+                              className="icon-btn"
                               title="Отмена"
                               onClick={() => setConfirmId(null)}
                             >
-                              <span style={{ display: "inline-flex", transform: "rotate(45deg)" }}>
-                                <Icon name="plus" size={14} />
-                              </span>
+                              <Icon name="close" size={16} />
                             </button>
                           </span>
                         ) : (
-                          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                            <button
-                              className={"icon-btn sm" + (it.quantity === 1 ? " danger" : "")}
-                              title={it.quantity === 1 ? "Убрать позицию" : "На одну меньше"}
-                              disabled={busyItem === it.id}
-                              onClick={() => (it.quantity > 1 ? changeQty(o, it, -1) : setConfirmId(it.id))}
-                            >
-                              <Icon name="minus" size={14} />
-                            </button>
-                            <span className="num" style={{ minWidth: 26, textAlign: "center" }}>× {it.quantity}</span>
-                            <button
-                              className="icon-btn sm"
-                              title="Ещё одну"
-                              disabled={busyItem === it.id}
-                              onClick={() => changeQty(o, it, +1)}
-                            >
-                              <Icon name="plus" size={14} />
-                            </button>
-                          </span>
+                          <Stepper
+                            value={"× " + it.quantity}
+                            width={112}
+                            // кухня/бар уже взяли позицию — менять её нельзя (ни +, ни −);
+                            // добавить ещё можно только новой позицией через «Позиция»
+                            disabled={busyItem === it.id || it.status !== "new"}
+                            decDanger={it.quantity === 1}
+                            decIcon={it.quantity === 1 ? "trash" : "minus"}
+                            ariaDec={it.quantity === 1 ? "Убрать позицию" : "На одну меньше"}
+                            ariaInc="Ещё одну"
+                            onDec={() => (it.quantity > 1 ? changeQty(o, it, -1) : setConfirmId(it.id))}
+                            onInc={() => changeQty(o, it, +1)}
+                          />
                         )}
                       </li>
                     ))}
                   </ul>
-                  <button
-                    className="btn sm ghost block"
-                    style={{ marginTop: 8 }}
-                    onClick={() => setAddFor(o)}
-                  >
-                    <Icon name="plus" size={15} /> Добавить позицию
-                  </button>
-                  <div className="wrap" style={{ marginTop: 8 }}>
-                    {o.has_food && (
-                      <span className={"badge " + STATUS_CLASS[o.food_status]}>Кухня: {STATUS_LABEL[o.food_status]}</span>
-                    )}
-                    {o.has_drinks && (
-                      <span className={"badge " + STATUS_CLASS[o.drinks_status]}>Бар: {STATUS_LABEL[o.drinks_status]}</span>
-                    )}
-                  </div>
 
+                  {/* комментарий: заметка или инлайн-редактор */}
                   {commentEdit === o.id ? (
-                    <div className="wrap" style={{ gap: 8, marginTop: 10 }}>
+                    <div className="wrap mt-3">
                       <input
-                        className="input"
-                        style={{ flex: 1, minWidth: 160 }}
+                        className="input grow"
                         value={commentText}
                         onChange={(e) => setCommentText(e.target.value)}
                         placeholder="без лука, аллергия, стол у окна…"
@@ -569,78 +616,119 @@ export default function Waiter() {
                         autoFocus
                       />
                       <button className="icon-btn" onClick={() => saveComment(o)} aria-label="Сохранить"><Icon name="check" size={16} /></button>
-                      <button className="icon-btn" onClick={() => setCommentEdit(null)} aria-label="Отмена"><Icon name="minus" size={16} /></button>
+                      <button className="icon-btn" onClick={() => setCommentEdit(null)} aria-label="Отмена"><Icon name="close" size={16} /></button>
                     </div>
                   ) : o.comment ? (
                     <button
-                      className="order-note"
+                      className="order-note mt-3"
                       onClick={() => { setCommentEdit(o.id); setCommentText(o.comment); }}
                       title="Изменить комментарий"
                     >
                       <Icon name="edit" size={14} /> {o.comment}
                     </button>
-                  ) : (
-                    <button
-                      className="btn sm ghost"
-                      style={{ marginTop: 10 }}
-                      onClick={() => { setCommentEdit(o.id); setCommentText(""); }}
-                    >
-                      <Icon name="plus" size={15} /> Комментарий
-                    </button>
-                  )}
+                  ) : null}
 
-                  {moveFor === o.id ? (
-                    <div style={{ marginTop: 10 }}>
+                  {/* инлайн-перенос на другой стол */}
+                  {moveFor === o.id && (
+                    <div className="mt-3">
                       <div className="between">
-                        <span className="muted" style={{ fontSize: 12 }}>Перенести на стол:</span>
-                        <button className="icon-btn sm" onClick={() => setMoveFor(null)} aria-label="Отмена"><Icon name="minus" size={14} /></button>
+                        <span className="muted sm">Перенести на стол:</span>
+                        <button className="icon-btn" onClick={() => setMoveFor(null)} aria-label="Отмена"><Icon name="close" size={16} /></button>
                       </div>
-                      <div className="scroll-x" style={{ marginTop: 6 }}>
+                      <div className="scroll-x mt-2">
                         {tables.filter((t) => t !== o.table).map((t) => (
                           <button key={t} className="navlink" disabled={busyMove === o.id} onClick={() => moveOrder(o, t)}>{t}</button>
                         ))}
                       </div>
                     </div>
-                  ) : (
-                    <button
-                      className="btn sm ghost"
-                      style={{ marginTop: 10, marginLeft: 8 }}
-                      disabled={busyMove === o.id}
-                      onClick={() => setMoveFor(o.id)}
-                    >
-                      <Icon name="store" size={15} /> Перенести на другой стол
-                    </button>
                   )}
 
-                  <div style={{ marginTop: 10 }}>
-                    <button
-                      className="btn sm block"
-                      disabled={busyClose === o.id}
-                      onClick={() => closeOrder(o)}
-                    >
-                      <Icon name="check" size={16} /> Закрыть заказ · {Number(o.total).toLocaleString("ru")} ₽
+                  {/* второстепенные действия — компактный ряд */}
+                  {commentEdit !== o.id && moveFor !== o.id && o.status !== "awaiting" && (
+                    <div className="wrap mt-3">
+                      <button className="btn sm ghost" onClick={() => setAddFor(o)}>
+                        <Icon name="plus" size={15} /> Позиция
+                      </button>
+                      {!o.comment && (
+                        <button className="btn sm ghost" onClick={() => { setCommentEdit(o.id); setCommentText(""); }}>
+                          <Icon name="edit" size={15} /> Комментарий
+                        </button>
+                      )}
+                      <button className="btn sm ghost" disabled={busyMove === o.id} onClick={() => setMoveFor(o.id)}>
+                        <Icon name="store" size={15} /> Перенести
+                      </button>
+                    </div>
+                  )}
+
+                  {/* оплата: ожидание терминала / выбор способа / кнопка закрытия */}
+                  {o.status === "awaiting" ? (
+                    <div className="rule-top mt-3">
+                      <div className="inline">
+                        <span className="spin" style={{ display: "inline-flex", color: "var(--brand)" }}>
+                          <Icon name="spark" size={16} />
+                        </span>
+                        <strong>Ожидаем оплату на терминале…</strong>
+                      </div>
+                      <div className="muted sm mt-1">
+                        Сумма {Number(o.total).toLocaleString("ru")} ₽ · оплата на кассе
+                      </div>
+                      {DEV && (
+                        <div className="grid cols-2 mt-2">
+                          <button className="btn" disabled={busyClose === o.id} onClick={() => payResult(o, "success")}>
+                            <Icon name="check" size={16} /> Оплата прошла
+                          </button>
+                          <button className="btn ghost" disabled={busyClose === o.id} onClick={() => payResult(o, "cancel")}>
+                            <Icon name="close" size={16} /> Отмена
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ) : payFor === o.id ? (
+                    <div className="rule-top mt-3">
+                      <div className="muted sm center">Оплата · {Number(o.total).toLocaleString("ru")} ₽</div>
+                      <div className="grid cols-2 mt-2">
+                        <button className="btn" disabled={busyClose === o.id} onClick={() => closeOrder(o, "cash")}>
+                          <Icon name="cash" size={17} /> Наличными
+                        </button>
+                        <button className="btn" disabled={busyClose === o.id} onClick={() => closeOrder(o, "card")}>
+                          <Icon name="card" size={17} /> Картой
+                        </button>
+                      </div>
+                      {/* «На терминал» скрыт до реальной интеграции провайдера:
+                          в проде дев-кнопки завершения оплаты нет, заказ завис бы в «к оплате» */}
+                      {DEV && (
+                        <button className="btn block mt-2" disabled={busyClose === o.id} onClick={() => payTerminal(o)}>
+                          <Icon name="card" size={17} /> На терминал
+                        </button>
+                      )}
+                      <button className="btn sm ghost block mt-2" onClick={() => setPayFor(null)}>Отмена</button>
+                    </div>
+                  ) : (
+                    <button className="btn block mt-3" onClick={() => setPayFor(o.id)}>
+                      <Icon name="check" size={17} /> Закрыть заказ · {Number(o.total).toLocaleString("ru")} ₽
                     </button>
-                  </div>
+                  )}
                 </div>
               ))}
             </div>
           )}
 
           {selOrders.length > 0 && (
-            <div style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+            <div className="rule-top mt-3">
               <div className="between">
-                <span className="muted" style={{ fontSize: 12.5 }}>Разбить по гостям</span>
-                <div className="stepper" style={{ width: 108 }}>
-                  <button onClick={() => setSplitN((n) => Math.max(2, n - 1))} aria-label="Меньше"><Icon name="minus" size={14} /></button>
-                  <span className="count num">{splitN}</span>
-                  <button onClick={() => setSplitN((n) => Math.min(12, n + 1))} aria-label="Больше"><Icon name="plus" size={14} /></button>
-                </div>
+                <span className="muted sm">Разбить по гостям</span>
+                <Stepper
+                  value={splitN}
+                  width={108}
+                  onDec={() => setSplitN((n) => Math.max(2, n - 1))}
+                  onInc={() => setSplitN((n) => Math.min(12, n + 1))}
+                />
               </div>
-              <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+              <div className="muted sm mt-2">
                 Тапайте позицию, чтобы назначить гостя (Общий → 1 … {splitN})
               </div>
               {hasGuests && (
-                <div className="stack" style={{ gap: 4, marginTop: 10 }}>
+                <div className="stack tight mt-3">
                   {guestBreakdown.map(([g, sum]) => (
                     <div className="between" key={g}>
                       <span>{g === 0 ? "Общий" : `Гость ${g}`}</span>
@@ -652,23 +740,36 @@ export default function Waiter() {
             </div>
           )}
 
-          <div className="wrap" style={{ marginTop: 14 }}>
-            <button className="btn sm" onClick={() => setComposeFor(selected)}>
-              <Icon name="plus" size={16} /> Новый заказ
-            </button>
-            {selOrders.length > 1 && (
-              <button
-                className="btn sm ghost"
-                onClick={() => closeTable(selected)}
-                disabled={closing}
-              >
-                <Icon name="check" size={16} /> Закрыть весь стол{selTotal ? ` · ${selTotal.toLocaleString("ru")} ₽` : ""}
+          {payFor === "table" ? (
+            <div className="rule-top mt-4">
+              <div className="muted sm center">Оплата всего стола · {selTotal.toLocaleString("ru")} ₽</div>
+              <div className="grid cols-2 mt-2">
+                <button className="btn" disabled={closing} onClick={() => closeTable(selected, "cash")}>
+                  <Icon name="cash" size={17} /> Наличными
+                </button>
+                <button className="btn" disabled={closing} onClick={() => closeTable(selected, "card")}>
+                  <Icon name="card" size={17} /> Картой
+                </button>
+              </div>
+              <button className="btn sm ghost block mt-2" onClick={() => setPayFor(null)}>Отмена</button>
+            </div>
+          ) : (
+            <div className="wrap mt-4">
+              <button className="btn sm" onClick={() => setComposeFor(selected)}>
+                <Icon name="plus" size={16} /> Новый заказ
               </button>
-            )}
-          </div>
-          </div>
-        </div>
-        </div>
+              {selOrders.length > 1 && (
+                <button
+                  className="btn sm ghost"
+                  onClick={() => setPayFor("table")}
+                  disabled={closing}
+                >
+                  <Icon name="check" size={16} /> Закрыть весь стол{selTotal ? ` · ${selTotal.toLocaleString("ru")} ₽` : ""}
+                </button>
+              )}
+            </div>
+          )}
+        </Modal>
       )}
       </>
       )}

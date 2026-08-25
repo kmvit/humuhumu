@@ -1,3 +1,5 @@
+export type AppTheme = "neutral" | "warm" | "strict" | "humu";
+
 export interface Site {
   name: string;
   tagline: string;
@@ -9,6 +11,8 @@ export interface Site {
   instagram: string;
   telegram: string;
   about: string;
+  theme: AppTheme;
+  accent_color: string;
 }
 
 export type Role = "client" | "waiter" | "cook" | "bar" | "warehouse" | "admin";
@@ -69,7 +73,9 @@ export interface OrderItem {
   subtotal: string;
 }
 
-export type OrderStatus = "requested" | "open" | "paid" | "cancelled";
+export type OrderStatus = "requested" | "open" | "awaiting" | "paid" | "cancelled";
+
+export type PayMethod = "cash" | "card";
 
 export interface Order {
   id: number;
@@ -82,6 +88,9 @@ export interface Order {
   public_token: string | null;
   status: OrderStatus;
   status_display: string;
+  pay_method: PayMethod;
+  pay_method_display: string;
+  fiscal_receipt: string;
   food_status: StationStatus;
   drinks_status: StationStatus;
   food_served: boolean;

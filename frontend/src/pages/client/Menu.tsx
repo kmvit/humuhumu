@@ -4,6 +4,9 @@ import type { Category, Order, Product } from "../../types";
 import Icon, { categoryIcon } from "../../components/Icon";
 import { SceneBanner, WaveRule } from "../../components/Ornaments";
 import Lightbox from "../../components/Lightbox";
+import { useToast } from "../../components/ui/Toast";
+import Stepper from "../../components/ui/Stepper";
+import { useAppearance } from "../../site";
 import { initTable } from "../../table";
 
 const TOKEN_KEY = "humu_order_token";
@@ -20,7 +23,8 @@ export default function Menu() {
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const notify = useToast();
+  const { theme } = useAppearance();
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [tracked, setTracked] = useState<Order | null>(null);
   const [table] = useState<string | null>(initTable);
@@ -99,8 +103,7 @@ export default function Menu() {
   async function submit() {
     if (!name.trim()) {
       setCartOpen(true);
-      setToast("Укажите имя, чтобы официант нашёл заказ");
-      setTimeout(() => setToast(null), 3000);
+      notify("Укажите имя, чтобы официант нашёл заказ", "bad");
       return;
     }
     setSubmitting(true);
@@ -122,8 +125,7 @@ export default function Menu() {
       }
       setCart({});
     } catch (err) {
-      setToast(err instanceof ApiError ? err.message : "Ошибка");
-      setTimeout(() => setToast(null), 3500);
+      notify(err instanceof ApiError ? err.message : "Ошибка", "bad");
     } finally {
       setSubmitting(false);
     }
@@ -145,8 +147,7 @@ export default function Menu() {
       await post("/orders/cancel_request/", { token });
       newOrder();
     } catch (err) {
-      setToast(err instanceof ApiError ? err.message : "Не удалось отменить");
-      setTimeout(() => setToast(null), 3500);
+      notify(err instanceof ApiError ? err.message : "Не удалось отменить", "bad");
     } finally {
       setCancelling(false);
       setConfirmCancel(false);
@@ -169,17 +170,17 @@ export default function Menu() {
     return (
       <>
         <h1 className="h1">Ваш заказ</h1>
-        <div className="card enter" style={{ marginTop: 16 }}>
+        <div className="card enter mt-4">
           <div className="between">
-            <strong style={{ fontFamily: "Fredoka", fontSize: 20 }}>{head}</strong>
+            <strong className="title lg">{head}</strong>
             {st !== "requested" && (
               <span className={"badge " + (tracked.is_ready ? "ready" : st === "open" ? "preparing" : st === "paid" ? "paid" : "cancelled")}>
                 {tracked.status_display}
               </span>
             )}
           </div>
-          <p className="muted" style={{ marginTop: 6 }}>{note}</p>
-          <ul className="stack" style={{ gap: 4, margin: "14px 0 0", listStyle: "none", padding: 0 }}>
+          <p className="muted mt-2">{note}</p>
+          <ul className="stack tight list mt-4">
             {tracked.items.map((it) => (
               <li key={it.id} className="between">
                 <span>{it.product_name}</span>
@@ -187,35 +188,29 @@ export default function Menu() {
               </li>
             ))}
           </ul>
-          <div className="between" style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+          <div className="between rule-top mt-3">
             <strong>Итого</strong>
             <strong className="num">{Number(tracked.total).toLocaleString("ru")} ₽</strong>
           </div>
         </div>
         {st === "requested" ? (
           confirmCancel ? (
-            <div className="wrap" style={{ marginTop: 16, gap: 8, justifyContent: "center" }}>
+            <div className="wrap mt-4" style={{ justifyContent: "center" }}>
               <span className="muted" style={{ alignSelf: "center" }}>Точно отменить заказ?</span>
-              <button className="btn sm" style={{ background: "var(--danger)", color: "#fff" }} disabled={cancelling} onClick={cancelRequest}>
+              <button className="btn sm danger" disabled={cancelling} onClick={cancelRequest}>
                 <Icon name="check" size={16} /> Да, отменить
               </button>
               <button className="btn sm ghost" onClick={() => setConfirmCancel(false)}>Нет</button>
             </div>
           ) : (
-            <button className="btn ghost block" style={{ marginTop: 16 }} onClick={() => setConfirmCancel(true)}>
+            <button className="btn ghost block mt-4" onClick={() => setConfirmCancel(true)}>
               <Icon name="minus" size={18} /> Отменить заказ
             </button>
           )
         ) : (
-          <button className="btn ghost block" style={{ marginTop: 16 }} onClick={newOrder}>
+          <button className="btn ghost block mt-4" onClick={newOrder}>
             <Icon name="plus" size={18} /> Новый заказ
           </button>
-        )}
-
-        {toast && (
-          <div className="toast bad" role="status">
-            <Icon name="spark" size={18} /> {toast}
-          </div>
         )}
       </>
     );
@@ -231,16 +226,21 @@ export default function Menu() {
           </span>
         )}
       </div>
-      <p className="muted" style={{ marginTop: 4 }}>
+      <p className="muted subtitle">
         {table
           ? "Соберите заказ — он придёт официанту с вашим столом"
           : "Соберите заказ и отправьте — потом подойдите к стойке"}
       </p>
 
-      <SceneBanner />
-      <WaveRule />
+      {/* фирменная сцена с пальмами — только в теме «хуму» */}
+      {theme === "humu" && (
+        <>
+          <SceneBanner />
+          <WaveRule />
+        </>
+      )}
 
-      <div className="scroll-x" style={{ margin: "16px 0" }}>
+      <div className="scroll-x my-4">
         <button className={"navlink" + (activeCat === null ? " active" : "")} onClick={() => setActiveCat(null)}>
           <Icon name="spark" size={16} /> Все
         </button>
@@ -256,9 +256,9 @@ export default function Menu() {
       </div>
 
       {loading ? (
-        <div className="stack" style={{ gap: 14, marginTop: 24 }}>
+        <div className="stack loose mt-5">
           {Array.from({ length: 5 }).map((_, i) => (
-            <div className="skeleton" style={{ height: 56 }} key={i} />
+            <div className="skeleton sm" key={i} />
           ))}
         </div>
       ) : (
@@ -284,7 +284,7 @@ export default function Menu() {
                     />
                   )}
                   <div className="menu-item">
-                    <h3>{p.name} <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>#{p.id}</span></h3>
+                    <h3>{p.name} <span className="muted sm">#{p.id}</span></h3>
                     {p.description && <p className="menu-desc">{p.description}</p>}
                     {p.is_stopped && <span className="stop-badge">Sold out</span>}
                   </div>
@@ -292,13 +292,9 @@ export default function Menu() {
                 <span className="menu-price num">{Number(p.price).toLocaleString("ru")}</span>
                 <div className="menu-add">
                   {p.is_stopped ? (
-                    <span className="muted" style={{ fontSize: 12 }}>стоп</span>
+                    <span className="muted sm">стоп</span>
                   ) : cart[p.id] ? (
-                    <div className="stepper" style={{ width: 96 }}>
-                      <button onClick={() => remove(p.id)} aria-label="Убрать"><Icon name="minus" size={16} /></button>
-                      <span className="count num">{cart[p.id]}</span>
-                      <button onClick={() => add(p.id)} aria-label="Добавить"><Icon name="plus" size={16} /></button>
-                    </div>
+                    <Stepper value={cart[p.id]} width={96} onDec={() => remove(p.id)} onInc={() => add(p.id)} />
                   ) : (
                     <button
                       className="btn sm icon"
@@ -319,60 +315,48 @@ export default function Menu() {
       {count > 0 && cartOpen && (
         <div className="cart-sheet">
           <div className="between" style={{ marginBottom: 4 }}>
-            <strong style={{ fontFamily: "Fredoka", fontSize: 18 }}>Ваш заказ</strong>
+            <strong className="title">Ваш заказ</strong>
             <button className="btn sm ghost" onClick={() => setCartOpen(false)}>Свернуть</button>
           </div>
-          <ul className="stack" style={{ gap: 10, margin: "8px 0 0", listStyle: "none", padding: 0 }}>
+          <ul className="stack list mt-2">
             {Object.entries(cart).map(([id, qty]) => {
               const p = products.find((x) => x.id === Number(id));
               if (!p) return null;
               return (
-                <li key={id} className="between" style={{ gap: 10 }}>
-                  <span>{p.name} <span className="muted" style={{ fontSize: 12 }}>#{p.id}</span></span>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 12 }}>
+                <li key={id} className="between">
+                  <span>{p.name} <span className="muted sm">#{p.id}</span></span>
+                  <span className="inline">
                     <span className="num muted" style={{ minWidth: 62, textAlign: "right" }}>{(Number(p.price) * qty).toLocaleString("ru")} ₽</span>
-                    <div className="stepper" style={{ width: 104 }}>
-                      <button onClick={() => remove(Number(id))} aria-label="Убрать"><Icon name="minus" size={15} /></button>
-                      <span className="count num">{qty}</span>
-                      <button onClick={() => add(Number(id))} aria-label="Добавить"><Icon name="plus" size={15} /></button>
-                    </div>
+                    <Stepper value={qty} width={104} onDec={() => remove(Number(id))} onInc={() => add(Number(id))} />
                   </span>
                 </li>
               );
             })}
           </ul>
-          <div className="between" style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+          <div className="between rule-top mt-3">
             <strong>Итого</strong>
             <strong className="num">{total.toLocaleString("ru")} ₽</strong>
           </div>
-          <label className="field" style={{ display: "block", margin: "14px 0 0" }}>
-            <span className="muted" style={{ fontSize: 13 }}>Ваше имя</span>
+          <label className="field mt-4">
+            <span className="label">Ваше имя</span>
             <input
               className="input"
-              style={{ marginTop: 6 }}
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Как вас зовут?"
               maxLength={120}
             />
           </label>
-          <label className="field" style={{ display: "block", margin: "12px 0 0" }}>
-            <span className="muted" style={{ fontSize: 13 }}>Комментарий к заказу</span>
+          <label className="field mt-3">
+            <span className="label">Комментарий к заказу</span>
             <input
               className="input"
-              style={{ marginTop: 6 }}
               value={comment}
               onChange={(e) => setComment(e.target.value)}
               placeholder="напр. без лука, аллергия на орехи"
               maxLength={300}
             />
           </label>
-        </div>
-      )}
-
-      {toast && (
-        <div className="toast bad" role="status">
-          <Icon name="spark" size={18} /> {toast}
         </div>
       )}
 

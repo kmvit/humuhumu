@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./auth";
+import { useAppearance } from "./site";
 import Layout from "./components/Layout";
 import { PaperBackdrop } from "./components/Ornaments";
 import Login from "./pages/Login";
@@ -29,8 +30,10 @@ const HOME_BY_ROLE: Record<Role, string> = {
 
 export default function App() {
   const { user, loading } = useAuth();
+  const { theme } = useAppearance();
 
-  const orbs = <PaperBackdrop />;
+  // фирменный декор (штриховка, пальмы) — только в авторской теме «хуму»
+  const orbs = theme === "humu" ? <PaperBackdrop /> : null;
 
   if (loading)
     return (

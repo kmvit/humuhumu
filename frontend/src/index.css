@@ -1,69 +1,189 @@
 /* ============ Шрифты ============
-   Jost — геометрический гротеск как в печатном меню (заголовки, цены, бренд).
-   Manrope — спокойный текстовый для интерфейса. Оба с кириллицей. */
-@import url("https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500;600&family=Manrope:wght@400;500;600;700&display=swap");
+   Кириллические пары для тем: Onest (Нейтраль), Golos Text + Lora (Тёплая),
+   Manrope + Oswald (Строгая), Manrope + Jost (хуму). Файлы шрифтов браузер
+   грузит только для реально используемой темы. */
+@import url("https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Jost:wght@300;400;500;600&family=Lora:wght@500;600&family=Manrope:wght@400;500;600;700&family=Onest:wght@400;500;600;700&family=Oswald:wght@400;500;600&display=swap");
 
-/* ============ Дизайн-токены: гравюра синим по кремовой бумаге ============ */
+/* ============ Дизайн-токены ============
+   Базовые значения — тема «Нейтраль» (дефолт продукта). Темы заведений
+   переопределяют базовые токены через [data-app-theme=…] (ставится из
+   SiteSettings), а производные (--brand-2, --brand-soft, градиенты)
+   считаются из базовых автоматически. --brand-user / --brand-user-dark —
+   акцентный цвет конкретного заведения, его подставляет site.tsx. */
 :root {
-  /* палитра фирменного меню и стакана: сливочная бумага + глубокий синий */
-  --brand: #1f58a6;        /* синий как в меню — акценты, цены */
-  --brand-2: #2b6cb8;      /* светлее, для второстепенных акцентов */
-  --brand-soft: #e8eef7;   /* мягкая синяя подложка */
-  --teal-soft: #e3ebf5;    /* вторая подложка (имя историческое) */
-  --grad: linear-gradient(135deg, #305d9a 0%, #264671 100%);  /* на 15% светлее, ближе к логотипу */
+  --font-display: "Onest", sans-serif;
+  --font-body: "Onest", system-ui, sans-serif;
+  --w-display: 600;      /* вес заголовков display-шрифта */
+  --w-display-xl: 600;   /* вес .h1 */
+  --brand-case: none;    /* регистр названия заведения в шапке */
+
+  --accent: #3557c7;                          /* фирменный цвет темы */
+  --brand: var(--brand-user, var(--accent));  /* активный акцент */
+  --on-brand: #ffffff;                        /* текст на акцентной заливке */
+  --brand-2: color-mix(in srgb, var(--brand) 80%, #fff);
+  --brand-soft: color-mix(in srgb, var(--brand) 11%, var(--surface));
+  --teal-soft: color-mix(in srgb, var(--brand) 8%, var(--surface));
+  --grad: linear-gradient(135deg, color-mix(in srgb, var(--brand) 90%, #fff) 0%, color-mix(in srgb, var(--brand) 76%, #000) 100%);
+  --grad-warm: linear-gradient(160deg, color-mix(in srgb, var(--brand) 6%, var(--surface)) 0%, color-mix(in srgb, var(--brand) 13%, var(--surface)) 100%);
+  --grad-ocean: linear-gradient(160deg, color-mix(in srgb, var(--brand) 9%, var(--surface)) 0%, color-mix(in srgb, var(--brand) 17%, var(--surface)) 100%);
+  --grad-palm: linear-gradient(160deg, color-mix(in srgb, var(--success) 8%, var(--surface)) 0%, color-mix(in srgb, var(--success) 14%, var(--surface)) 100%);
+  --band: color-mix(in srgb, var(--fg) 88%, var(--bg));
+
+  --bg: #f4f5f8;
+  --bg-2: #eceef3;
+  --surface: #ffffff;
+  --surface-solid: #ffffff;
+  --fg: #21252d;
+  --muted: #5d6573;
+  --border: rgba(33, 37, 45, 0.13);
+  --rule: rgba(33, 37, 45, 0.22);
+  --shadow: 0 8px 26px -18px rgba(18, 22, 30, 0.45);
+  --shadow-lg: 0 22px 50px -28px rgba(18, 22, 30, 0.5);
+
+  --success: #1d6b4f;
+  --danger: #b3402f;
+
+  --radius: 12px;
+  --radius-sm: 9px;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  font-family: var(--font-body);
+  color: var(--fg);
+  color-scheme: light;
+}
+
+/* ============ Темы заведений (светлый режим) ============ */
+/* «Тёплая» — кофейни и пекарни: сливочные поверхности, серифные заголовки */
+:root[data-app-theme="warm"] {
+  --font-display: "Lora", serif;
+  --font-body: "Golos Text", system-ui, sans-serif;
+  --accent: #9c5a1e;
+  --bg: #faf7f1;
+  --bg-2: #f3eee4;
+  --surface: #fffdf8;
+  --surface-solid: #fffdf8;
+  --fg: #332a20;
+  --muted: #7a6c5c;
+  --border: rgba(51, 42, 32, 0.15);
+  --rule: rgba(51, 42, 32, 0.24);
+  --radius: 14px;
+  --radius-sm: 10px;
+}
+
+/* «Строгая» — бары и фастфуд: контраст, малые радиусы, узкие заголовки */
+:root[data-app-theme="strict"] {
+  --font-display: "Oswald", sans-serif;
+  --font-body: "Manrope", system-ui, sans-serif;
+  --w-display: 500;
+  --w-display-xl: 500;
+  --accent: #0d7a52;
+  --bg: #fbfbfa;
+  --bg-2: #f2f2f0;
+  --surface: #ffffff;
+  --surface-solid: #ffffff;
+  --fg: #15181c;
+  --muted: #5a6068;
+  --border: rgba(21, 24, 28, 0.13);
+  --rule: rgba(21, 24, 28, 0.24);
+  --radius: 8px;
+  --radius-sm: 6px;
+}
+
+/* «хуму» — авторская тема первого кафе: гравюра синим по кремовой бумаге */
+:root[data-app-theme="humu"] {
+  --font-display: "Jost", sans-serif;
+  --font-body: "Manrope", system-ui, sans-serif;
+  --w-display: 400;
+  --w-display-xl: 300;
+  --brand-case: lowercase;
+  --accent: #1f58a6;
+  --on-brand: #fdfaf3;
+  --brand-2: #2b6cb8;
+  --brand-soft: #e8eef7;
+  --teal-soft: #e3ebf5;
+  --grad: linear-gradient(135deg, #305d9a 0%, #264671 100%);
   --grad-warm: linear-gradient(160deg, #f3ecdd 0%, #e6dcc7 100%);
   --grad-ocean: linear-gradient(160deg, #e7eef7 0%, #d3e0ef 100%);
   --grad-palm: linear-gradient(160deg, #efeade 0%, #dfe6dc 100%);
-
-  /* чернильная полоса — как поля печатного меню */
   --band: #14243a;
-
-  --bg: #f7f1e4;           /* кремовая бумага */
+  --bg: #f7f1e4;
   --bg-2: #f1e9d8;
   --surface: #fdfaf3;
   --surface-solid: #fdfaf3;
-  --fg: #1e4d8c;           /* кобальтовые чернила, как в печатном меню */
+  --fg: #1e4d8c;
   --muted: #5e7ba6;
   --border: rgba(30, 77, 140, 0.18);
   --rule: rgba(30, 77, 140, 0.28);
   --shadow: 0 8px 26px -18px rgba(20, 36, 58, 0.5);
   --shadow-lg: 0 22px 50px -28px rgba(20, 36, 58, 0.55);
-
-  --success: #1d6b4f;
-  --danger: #b3402f;
-
   --radius: 14px;
   --radius-sm: 10px;
-  --ease: cubic-bezier(0.22, 1, 0.36, 1);
-
-  font-family: "Manrope", system-ui, sans-serif;
-  color: var(--fg);
-  color-scheme: light;
 }
 
-[data-theme="dark"] {
-  --brand: #8ab8ea;
-  --brand-2: #a8cbf2;
-  --brand-soft: rgba(138, 184, 234, 0.14);
-  --teal-soft: rgba(138, 184, 234, 0.1);
-  --grad: linear-gradient(135deg, #3969a2 0%, #284772 100%);  /* на 15% светлее, ближе к логотипу */
-  --grad-warm: linear-gradient(160deg, #1c3350 0%, #16283d 100%);
-  --grad-ocean: linear-gradient(160deg, #1a3048 0%, #142640 100%);
-  --grad-palm: linear-gradient(160deg, #1d3346 0%, #16283d 100%);
-
-  --band: #f2eadb;
-
-  --bg: #0e2036;           /* синяя ночь */
-  --bg-2: #0a1929;
-  --surface: #14293f;
-  --surface-solid: #14293f;
-  --fg: #f2eadb;           /* сливочные чернила */
-  --muted: #a3b8cf;
-  --border: rgba(242, 234, 219, 0.16);
-  --rule: rgba(242, 234, 219, 0.26);
+/* ============ Тёмный режим ============
+   Идёт после светлых тем: перекрывает их базовые токены, а блоки
+   [data-app-theme][data-theme="dark"] ниже уточняют тёмные палитры тем. */
+:root[data-theme="dark"] {
+  --accent: #8aa4f4;
+  --brand: var(--brand-user-dark, var(--accent));
+  /* акцент в тёмном режиме светлый, поэтому заливки делаем глубокими */
+  --grad: linear-gradient(135deg, color-mix(in srgb, var(--brand) 52%, #10151f) 0%, color-mix(in srgb, var(--brand) 34%, #0b0f16) 100%);
+  --bg: #14161b;
+  --bg-2: #101318;
+  --surface: #1d2027;
+  --surface-solid: #1d2027;
+  --fg: #e8eaef;
+  --muted: #9aa3b0;
+  --border: rgba(232, 234, 239, 0.15);
+  --rule: rgba(232, 234, 239, 0.25);
   --shadow: 0 12px 34px -20px rgba(0, 0, 0, 0.8);
   --shadow-lg: 0 26px 60px -30px rgba(0, 0, 0, 0.85);
   color-scheme: dark;
+}
+
+:root[data-app-theme="warm"][data-theme="dark"] {
+  --accent: #d99a5f;
+  --bg: #1e1913;
+  --bg-2: #191510;
+  --surface: #28211a;
+  --surface-solid: #28211a;
+  --fg: #f0e8db;
+  --muted: #b0a390;
+  --border: rgba(240, 232, 219, 0.15);
+  --rule: rgba(240, 232, 219, 0.25);
+}
+
+:root[data-app-theme="strict"][data-theme="dark"] {
+  --accent: #35b98a;
+  --bg: #101214;
+  --bg-2: #0c0e10;
+  --surface: #181c1f;
+  --surface-solid: #181c1f;
+  --fg: #edefef;
+  --muted: #98a0a6;
+  --border: rgba(237, 239, 239, 0.14);
+  --rule: rgba(237, 239, 239, 0.24);
+}
+
+:root[data-app-theme="humu"][data-theme="dark"] {
+  --accent: #8ab8ea;
+  --on-brand: #f2eadb;
+  --brand-2: #a8cbf2;
+  --brand-soft: rgba(138, 184, 234, 0.14);
+  --teal-soft: rgba(138, 184, 234, 0.1);
+  --grad: linear-gradient(135deg, #3969a2 0%, #284772 100%);
+  --grad-warm: linear-gradient(160deg, #1c3350 0%, #16283d 100%);
+  --grad-ocean: linear-gradient(160deg, #1a3048 0%, #142640 100%);
+  --grad-palm: linear-gradient(160deg, #1d3346 0%, #16283d 100%);
+  --band: #f2eadb;
+  --bg: #0e2036;
+  --bg-2: #0a1929;
+  --surface: #14293f;
+  --surface-solid: #14293f;
+  --fg: #f2eadb;
+  --muted: #a3b8cf;
+  --border: rgba(242, 234, 219, 0.16);
+  --rule: rgba(242, 234, 219, 0.26);
 }
 
 * { box-sizing: border-box; }
@@ -112,13 +232,19 @@ body {
 
 a { color: var(--brand); text-decoration: none; font-weight: 600; }
 
-h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-weight: 400; }
-.h1 { font-size: clamp(28px, 5vw, 40px); font-weight: 300; letter-spacing: 0.01em; }
-.section-title { font-size: 20px; font-weight: 400; letter-spacing: 0.04em; margin: 26px 0 12px; }
+h1, h2, h3 { font-family: var(--font-display); color: var(--fg); margin: 0; font-weight: var(--w-display); }
+.h1 { font-size: clamp(28px, 5vw, 40px); font-weight: var(--w-display-xl); letter-spacing: 0.01em; }
+.section-title { font-size: 20px; font-weight: var(--w-display); letter-spacing: 0.04em; margin: 26px 0 12px; }
+
+/* акцентный заголовок карточки/блока — фирменный шрифт */
+.title { font-family: var(--font-display); font-weight: 500; font-size: 17px; letter-spacing: 0.01em; }
+.title.lg { font-size: 20px; }
+/* крупное число в плитке статистики */
+.stat-value { font-family: var(--font-display); font-weight: 600; font-size: 28px; color: var(--brand); font-variant-numeric: tabular-nums; }
 
 /* мелкая разрядка заглавными — как «мл руб» в печатном меню */
 .script {
-  font-family: "Jost", sans-serif; font-weight: 400; font-size: 13px !important;
+  font-family: var(--font-display); font-weight: 400; font-size: 13px !important;
   text-transform: uppercase; letter-spacing: 0.22em; color: var(--brand) !important;
 }
 
@@ -139,7 +265,7 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
   display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
 }
 .header-actions { display: flex; align-items: center; gap: 10px; justify-self: end; }
-.brand { display: flex; align-items: center; gap: 10px; justify-self: center; font-family: "Jost", sans-serif; font-weight: 400; font-size: 19px; letter-spacing: 0.06em; line-height: 1; text-transform: lowercase; }
+.brand { display: flex; align-items: center; gap: 10px; justify-self: center; font-family: var(--font-display); font-weight: var(--w-display); font-size: 19px; letter-spacing: 0.06em; line-height: 1; text-transform: var(--brand-case); }
 /* логотип — чёрно-белая графика, поэтому кладём его на бумагу без заливки */
 .brand .logo { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: transparent; border: 1px solid var(--rule); color: var(--fg); overflow: hidden; }
 .brand .logo img { width: 100%; height: 100%; object-fit: contain; padding: 2px; }
@@ -151,11 +277,17 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 /* логотип — сам по себе леттеринг, поэтому название рядом не дублируем */
 .brand:has(.logo img) .brand-name { display: none; }
 .header nav { display: flex; gap: 4px; justify-self: start; min-width: 0; }
+
+/* тонкая рабочая панель для планшетных ролей (бар/официант/кухня/склад):
+   без чернильной полосы и логотипа, две колонки, минимум высоты */
+.header.slim::before { display: none; }
+.header.slim .header-inner { grid-template-columns: 1fr auto; padding: 7px 14px; gap: 10px; }
+/* верх ужимаем, низ оставляем — под фиксированной корзиной официанта */
+.container.staff { padding-top: 14px; }
 /* фильтры категорий — тоже .navlink, поэтому гасим стиль кнопки браузера */
 .navlink { display: flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 999px; font: inherit; font-weight: 600; font-size: 14px; color: var(--muted); background: transparent; border: 1px solid var(--rule); cursor: pointer; white-space: nowrap; transition: all 0.2s var(--ease); }
 .navlink:hover { background: var(--brand-soft); color: var(--brand); }
-.navlink.active { background: var(--grad); color: #fdfaf3; }
-[data-theme="dark"] .navlink.active { color: #f2eadb; }
+.navlink.active { background: var(--grad); color: var(--on-brand); }
 
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; background: var(--brand-soft); color: var(--brand); font-weight: 700; font-size: 14px; white-space: nowrap; }
 
@@ -165,10 +297,9 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   padding: 11px 20px; border-radius: var(--radius-sm); min-height: 44px;
   letter-spacing: 0.02em;
-  color: #fdfaf3; background: var(--grad); box-shadow: var(--shadow);
+  color: var(--on-brand); background: var(--grad); box-shadow: var(--shadow);
   transition: transform 0.18s var(--ease), box-shadow 0.18s var(--ease), filter 0.18s var(--ease);
 }
-[data-theme="dark"] .btn { color: #f2eadb; }
 .btn:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); filter: brightness(1.08); }
 .btn:active { transform: translateY(0) scale(0.97); }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; filter: none; }
@@ -178,6 +309,11 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 .btn.sm { padding: 7px 14px; min-height: 36px; border-radius: 8px; font-size: 14px; }
 .btn.block { width: 100%; }
 .btn.icon { padding: 0; width: 44px; }
+.btn.danger { background: var(--danger); color: #ffffff; }
+
+/* свотч акцентного цвета в настройках внешнего вида */
+.accent-dot { width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--surface-solid); box-shadow: 0 0 0 1px var(--rule); cursor: pointer; padding: 0; flex: none; }
+.accent-dot.on { box-shadow: 0 0 0 2px var(--brand); }
 
 .icon-btn { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: transparent; border: 1px solid var(--rule); color: var(--fg); cursor: pointer; transition: all 0.2s var(--ease); }
 .icon-btn:hover { background: var(--brand-soft); color: var(--brand); border-color: var(--brand); }
@@ -205,7 +341,7 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 /* канбан-доски кухни/бара */
 .kanban { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 16px; align-items: start; }
 .kanban-col { min-width: 0; }
-.kanban-head { display: flex; justify-content: space-between; align-items: center; font-family: "Fredoka", sans-serif; font-weight: 600; padding-bottom: 8px; margin-bottom: 12px; border-bottom: 2px solid var(--border); }
+.kanban-head { display: flex; justify-content: space-between; align-items: center; font-family: var(--font-display); font-weight: 600; padding-bottom: 8px; margin-bottom: 12px; border-bottom: 2px solid var(--border); }
 .chip.sm { padding: 2px 9px; font-size: 12.5px; }
 @media (max-width: 720px) { .kanban { grid-template-columns: 1fr; } }
 
@@ -234,10 +370,10 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 /* когда снизу висит корзина — приподнимаем контент, чтобы «+» и цена не перекрывались */
 .reels.has-cart .reel-body { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
 .reel-info { min-width: 0; }
-.reel-info h2 { font-family: "Fredoka", sans-serif; font-size: 26px; font-weight: 500; line-height: 1.15; color: #fff; text-shadow: 0 2px 12px rgba(0,0,0,0.6); }
+.reel-info h2 { font-family: var(--font-display); font-size: 26px; font-weight: 500; line-height: 1.15; color: #fff; text-shadow: 0 2px 12px rgba(0,0,0,0.6); }
 .reel-desc { margin: 6px 0 0; font-size: 13.5px; line-height: 1.4; color: rgba(255,255,255,0.85); max-width: 42ch; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .reel-meta { display: flex; align-items: baseline; gap: 12px; margin-top: 10px; }
-.reel-price { font-family: "Jost", sans-serif; font-size: 24px; font-weight: 600; }
+.reel-price { font-family: var(--font-display); font-size: 24px; font-weight: 600; }
 .reel-weight { font-size: 13px; color: rgba(255,255,255,0.7); }
 .reel-add-wrap { flex-shrink: 0; }
 .reel-add { width: 60px; height: 60px; border-radius: 50%; display: grid; place-items: center; background: var(--brand); color: #fff; border: none; box-shadow: 0 6px 20px rgba(0,0,0,0.4); cursor: pointer; }
@@ -255,23 +391,19 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 .reel-stepper.sm .num { color: var(--fg); font-size: 15px; }
 
 /* корзина */
-.reels-toast { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 999px; background: rgba(0,0,0,0.85); color: #fff; font-weight: 600; font-size: 14px; border: 1px solid rgba(255,255,255,0.2); animation: fadeIn 0.15s var(--ease); }
 .reels-cartbar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 45; display: flex; align-items: center; justify-content: space-between; gap: 18px; width: min(560px, calc(100% - 24px)); padding: 14px 20px; border-radius: 999px; background: var(--brand); color: #fff; border: none; box-shadow: 0 8px 28px rgba(0,0,0,0.45); font-size: 16px; font-weight: 600; cursor: pointer; animation: slideUp 0.3s var(--ease); }
 .reels-cartbar-l { display: inline-flex; align-items: center; gap: 8px; }
-.reels-cartbar .num { font-family: "Jost", sans-serif; font-size: 20px; }
-.reels-sheet-overlay { position: fixed; inset: 0; z-index: 55; display: flex; align-items: flex-end; justify-content: center; background: rgba(0,0,0,0.5); animation: fadeIn 0.15s var(--ease); }
-.reels-sheet { width: min(560px, 100%); max-height: 82dvh; overflow-y: auto; padding: 20px 20px calc(20px + env(safe-area-inset-bottom)); background: var(--surface-solid); color: var(--fg); border-radius: var(--radius) var(--radius) 0 0; box-shadow: var(--shadow-lg); animation: sheetUp 0.28s var(--ease); }
+.reels-cartbar .num { font-family: var(--font-display); font-size: 20px; }
 @keyframes sheetUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
 .reels-sheet-items { display: flex; flex-direction: column; gap: 10px; margin: 14px 0; }
 .reels-sheet-row { gap: 12px; }
-@media (min-width: 561px) { .reels-sheet { border-radius: var(--radius); margin-bottom: 16px; } }
-@media (prefers-reduced-motion: reduce) { .reels-cartbar, .reels-sheet, .reels-toast { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .reels-cartbar { animation: none; } }
 
 /* одноразовая подсказка по жестам */
 .reels-coach { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(0,0,0,0.72); backdrop-filter: blur(2px); animation: fadeIn 0.2s var(--ease); }
 .reels-coach-card { display: flex; flex-direction: column; align-items: stretch; gap: 22px; width: min(340px, 100%); padding: 26px 22px; border-radius: var(--radius); background: rgba(20,22,28,0.9); border: 1px solid rgba(255,255,255,0.14); color: #fff; text-align: center; }
 .reels-gesture { display: flex; flex-direction: column; align-items: center; gap: 4px; color: #fff; }
-.reels-gesture strong { font-family: "Fredoka", sans-serif; font-size: 18px; color: #fff; }
+.reels-gesture strong { font-family: var(--font-display); font-size: 18px; color: #fff; }
 .reels-gesture span { font-size: 13px; color: rgba(255,255,255,0.7); }
 .reels-gesture-h, .reels-gesture-v { display: flex; align-items: center; justify-content: center; gap: 14px; color: rgba(255,255,255,0.55); margin-bottom: 6px; }
 .reels-gesture-v { flex-direction: column; height: 74px; }
@@ -285,8 +417,12 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 
 /* плитки столов у официанта */
 .table-tile { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 16px 10px; cursor: pointer; text-align: center; }
+.table-tile strong { font-family: var(--font-display); font-size: 22px; font-weight: 500; }
+.table-tile .state { font-size: 14.5px; font-weight: 700; }
+.table-tile .muted { font-size: 11.5px; display: inline-flex; align-items: center; gap: 3px; }
+.table-tile .num { font-size: 18px; font-weight: 700; }
 /* светофор столов: свободен — нейтральный, готовится — оранжевый, готов — зелёный */
-.table-tile.free { background: #edece7; border-color: #dedbd3; }
+.table-tile.free { background: color-mix(in srgb, var(--fg) 6%, var(--bg)); border-color: color-mix(in srgb, var(--fg) 13%, var(--bg)); }
 .table-tile.free strong { color: var(--muted); }
 [data-theme="dark"] .table-tile.free { background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.12); }
 .table-tile.busy { background: #db9a5c; border-color: #db9a5c; color: #fff; box-shadow: 0 4px 16px rgba(219, 154, 92, 0.3); }
@@ -301,25 +437,44 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 [data-theme="dark"] .table-tile.ready { background: #5eb083; border-color: #5eb083; }
 .table-tile.sel { outline: 2px solid var(--brand); outline-offset: 1px; }
 
-/* карточка стола официанта — модальное окно поверх сетки */
-.table-modal { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(15, 23, 42, 0.55); animation: fadeIn 0.15s var(--ease); }
-.table-modal-panel { width: min(560px, 100%); max-height: calc(100dvh - 48px); display: flex; flex-direction: column; overflow: hidden; background: var(--surface-solid); border: 1px solid var(--rule); border-radius: var(--radius); box-shadow: var(--shadow-lg); animation: popUp 0.24s var(--ease); }
-.table-modal-head { display: flex; align-items: center; gap: 12px; flex-shrink: 0; padding: 14px 18px; border-bottom: 1px solid var(--border); }
-.table-modal-head h2 { font-family: "Fredoka", sans-serif; font-size: 20px; margin: 0; }
-.table-modal-body { padding: 16px 18px calc(18px + env(safe-area-inset-bottom)); overflow-y: auto; }
+/* ============ Модальные окна (компонент ui/Modal) ============ */
+/* центр — карточки поверх страницы; .sheet — нижний лист (корзины, подсказки) */
+.modal { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(15, 23, 42, 0.55); animation: fadeIn 0.15s var(--ease); }
+.modal-panel { width: min(560px, 100%); max-height: calc(100dvh - 48px); display: flex; flex-direction: column; overflow: hidden; background: var(--surface-solid); color: var(--fg); border: 1px solid var(--rule); border-radius: var(--radius); box-shadow: var(--shadow-lg); animation: popUp 0.24s var(--ease); }
+.modal-head { display: flex; align-items: center; gap: 12px; flex-shrink: 0; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.modal-head h2 { font-family: var(--font-display); font-size: 20px; margin: 0; }
+.modal-head > .between { flex: 1; min-width: 0; }
+.modal-body { padding: 16px 18px calc(18px + env(safe-area-inset-bottom)); overflow-y: auto; }
+
+/* карточка одного заказа в модалке стола — визуально группирует свои кнопки */
+.order-card { background: color-mix(in srgb, var(--fg) 4%, var(--surface)); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
+/* станция позиции (кухня/бар) как компактный тег вместо серого текста */
+.station-tag { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: color-mix(in srgb, var(--fg) 8%, var(--surface)); color: var(--muted); margin-left: 6px; }
+/* позиция уже отдана гостю — мягкая зелёная подложка */
+.item-served { background: color-mix(in srgb, var(--success) 9%, transparent); border-radius: 10px; padding: 5px 8px; margin: 0 -8px; }
+[data-theme="dark"] .item-served { background: color-mix(in srgb, var(--success) 20%, transparent); }
+
 @media (max-width: 560px) {
-  .table-modal { padding: 0; }
-  .table-modal-panel { width: 100%; height: 100dvh; max-height: 100dvh; border: none; border-radius: 0; }
+  .modal:not(.sheet) { padding: 0; }
+  .modal:not(.sheet) .modal-panel { width: 100%; height: 100dvh; max-height: 100dvh; border: none; border-radius: 0; }
+}
+.modal.sheet { align-items: flex-end; padding: 0; }
+.modal.sheet .modal-panel { max-height: 82dvh; border-radius: var(--radius) var(--radius) 0 0; animation: sheetUp 0.28s var(--ease); }
+@media (min-width: 561px) {
+  .modal.sheet .modal-panel { border-radius: var(--radius); margin-bottom: 16px; }
 }
 @keyframes popUp { from { opacity: 0; transform: translateY(12px) scale(0.985); } to { opacity: 1; transform: none; } }
 
 @media (prefers-reduced-motion: reduce) {
   .card.new-order { animation: none; }
-  .table-modal, .table-modal-panel { animation: none; }
+  .modal, .modal-panel { animation: none; }
 }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 14px; }
 .grid.stats { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.grid.cards { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+.grid.tiles { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+.grid.cols-2 { grid-template-columns: 1fr 1fr; gap: 10px; }
 
 /* ============ Карточка товара: штриховая графика на бумаге ============ */
 .product { display: flex; flex-direction: column; gap: 6px; overflow: hidden; position: relative; }
@@ -332,12 +487,14 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 .product:nth-child(3n + 2) .thumb { background: var(--grad-ocean); }
 .product:nth-child(3n) .thumb { background: var(--grad-palm); }
 .product h3 { font-size: 16px; font-weight: 400; letter-spacing: 0.01em; }
-.product .price { font-family: "Jost", sans-serif; font-weight: 400; font-size: 20px; color: var(--brand); }
+.product .price { font-family: var(--font-display); font-weight: 400; font-size: 20px; color: var(--brand); }
 .unavailable { position: absolute; top: 10px; right: 10px; }
 
 .stepper { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--brand-soft); border-radius: 10px; padding: 4px; }
 .stepper button { width: 32px; height: 32px; border-radius: 7px; border: none; cursor: pointer; background: var(--surface-solid); color: var(--brand); font-size: 18px; font-weight: 600; display: grid; place-items: center; transition: transform 0.15s var(--ease); }
 .stepper button:active { transform: scale(0.88); }
+.stepper button:disabled { opacity: 0.4; cursor: not-allowed; }
+.stepper button.danger { color: var(--danger); }
 .stepper .count { font-weight: 700; min-width: 20px; text-align: center; }
 
 /* ============ Меню списком, как в печатном ============ */
@@ -347,7 +504,7 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
   padding-bottom: 8px; border-bottom: 1px solid var(--rule);
 }
 .menu-head h2 { font-size: clamp(20px, 3.4vw, 26px); font-weight: 400; letter-spacing: 0.01em; color: var(--brand); }
-.menu-head .unit { font-family: "Jost", sans-serif; font-size: 13px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--muted); }
+.menu-head .unit { font-family: var(--font-display); font-size: 13px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--muted); }
 
 .menu-row {
   display: grid; grid-template-columns: 1fr auto auto; align-items: center;
@@ -363,9 +520,9 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 .lightbox { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(15, 23, 42, 0.82); cursor: zoom-out; animation: fadeIn 0.15s var(--ease); }
 .lightbox img { max-width: 100%; max-height: 100%; border-radius: 16px; object-fit: contain; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-.menu-item h3 { font-family: "Jost", sans-serif; font-size: 19px; font-weight: 400; line-height: 1.25; }
+.menu-item h3 { font-family: var(--font-display); font-size: 19px; font-weight: 400; line-height: 1.25; }
 .menu-desc { margin: 4px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); max-width: 46ch; }
-.menu-price { font-family: "Jost", sans-serif; font-size: 20px; font-weight: 400; color: var(--brand); white-space: nowrap; display: flex; align-items: center; min-height: 36px; }
+.menu-price { font-family: var(--font-display); font-size: 20px; font-weight: 400; color: var(--brand); white-space: nowrap; display: flex; align-items: center; min-height: 36px; }
 .menu-add { min-width: 0; display: flex; justify-content: flex-end; margin-right: -6px; }
 .menu-add .btn.sm.icon { width: 40px; min-height: 32px; padding: 0; }
 /* компактный степпер в строке меню */
@@ -384,25 +541,24 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
   margin-top: 18px; display: flex; align-items: center; justify-content: space-between;
   gap: 18px; flex-wrap: wrap;
 }
-.tariff-hero h3 { font-family: "Jost", sans-serif; font-size: 24px; font-weight: 400; }
+.tariff-hero h3 { font-family: var(--font-display); font-size: 24px; font-weight: 400; }
 .tariff-price { display: flex; align-items: baseline; gap: 8px; }
-.tariff-price .num { font-family: "Jost", sans-serif; font-size: clamp(38px, 7vw, 52px); font-weight: 300; color: var(--brand); line-height: 1; }
-.tariff-price .unit { font-family: "Jost", sans-serif; font-size: 13px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); }
+.tariff-price .num { font-family: var(--font-display); font-size: clamp(38px, 7vw, 52px); font-weight: 300; color: var(--brand); line-height: 1; }
+.tariff-price .unit { font-family: var(--font-display); font-size: 13px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); }
 
 .feature { display: flex; flex-direction: column; gap: 6px; }
 .feature-icon { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: var(--brand-soft); color: var(--brand); margin-bottom: 4px; }
-.feature h3 { font-family: "Jost", sans-serif; font-size: 17px; font-weight: 500; }
+.feature h3 { font-family: var(--font-display); font-size: 17px; font-weight: 500; }
 .feature p { margin: 0; }
 
 .grid.tariffs { grid-template-columns: repeat(auto-fit, minmax(216px, 1fr)); margin-top: 16px; }
 .tariff { position: relative; display: flex; flex-direction: column; gap: 2px; }
 .tariff-badge {
   position: absolute; top: 16px; right: 16px;
-  font-family: "Jost", sans-serif; font-size: 15px; font-weight: 500; letter-spacing: 0.02em;
-  padding: 4px 10px; border-radius: 999px; background: var(--grad); color: #fdfaf3;
+  font-family: var(--font-display); font-size: 15px; font-weight: 500; letter-spacing: 0.02em;
+  padding: 4px 10px; border-radius: 999px; background: var(--grad); color: var(--on-brand);
 }
-[data-theme="dark"] .tariff-badge { color: #f2eadb; }
-.tariff-amount { font-family: "Jost", sans-serif; font-size: 30px; font-weight: 300; color: var(--fg); margin: 0; }
+.tariff-amount { font-family: var(--font-display); font-size: 30px; font-weight: 300; color: var(--fg); margin: 0; }
 .tariff .muted { margin: 0; }
 .tariff-rows { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 7px; font-size: 14px; }
 
@@ -411,13 +567,13 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 .steps li::before {
   content: counter(step); position: absolute; left: 0; top: -2px;
   width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
-  font-family: "Jost", sans-serif; font-size: 14px; color: var(--brand);
+  font-family: var(--font-display); font-size: 14px; color: var(--brand);
   border: 1px solid var(--rule);
 }
 
 /* ============ Корзина ============ */
 .cartbar { position: fixed; left: 50%; transform: translateX(-50%); bottom: 16px; z-index: 30; width: min(680px, calc(100% - 24px)); display: flex; align-items: center; gap: 14px; justify-content: space-between; padding: 12px 14px 12px 20px; border-radius: var(--radius); background: var(--surface-solid); border: 1px solid var(--rule); box-shadow: var(--shadow-lg); animation: slideUp 0.35s var(--ease); }
-.cartbar .total { font-family: "Jost", sans-serif; font-weight: 400; font-size: 22px; }
+.cartbar .total { font-family: var(--font-display); font-weight: 400; font-size: 22px; }
 .cart-toggle { flex: 1; display: flex; align-items: center; gap: 10px; background: transparent; border: none; padding: 0; cursor: pointer; color: var(--fg); text-align: left; }
 .cart-sheet { position: fixed; left: 50%; transform: translateX(-50%); bottom: 88px; z-index: 30; width: min(680px, calc(100% - 24px)); max-height: 56vh; overflow-y: auto; padding: 18px 20px; border-radius: var(--radius); background: var(--surface-solid); border: 1px solid var(--rule); box-shadow: var(--shadow-lg); animation: slideUp 0.3s var(--ease); }
 
@@ -438,38 +594,36 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 .order-note.static { cursor: default; }
 .order-note svg { flex-shrink: 0; margin-top: 2px; }
 
-/* ============ Подсказка установки PWA (iOS) ============ */
-.install-hint-overlay { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: flex-end; justify-content: center; padding: 16px; background: rgba(15, 23, 42, 0.5); animation: fadeIn 0.15s var(--ease); }
-.install-hint { display: flex; flex-direction: column; gap: 12px; width: min(420px, 100%); padding: 20px 22px calc(20px + env(safe-area-inset-bottom)); border-radius: var(--radius); background: var(--surface-solid); border: 1px solid var(--rule); box-shadow: var(--shadow-lg); animation: slideUp 0.28s var(--ease); }
-.install-hint .btn { align-self: flex-end; }
-
 /* ============ Баланс: карточка-«билет» с чернильным полем ============ */
-.balance-card { position: relative; overflow: hidden; color: #fdfaf3; border: none; background: var(--grad); box-shadow: var(--shadow-lg); }
-[data-theme="dark"] .balance-card { color: #f2eadb; }
+.balance-card { position: relative; overflow: hidden; color: var(--on-brand); border: none; background: var(--grad); box-shadow: var(--shadow-lg); }
 .balance-card::before { content: ""; position: absolute; inset: 10px; border: 1px solid rgba(253, 250, 243, 0.28); border-radius: 8px; pointer-events: none; }
-.balance-card .amount { font-family: "Jost", sans-serif; font-weight: 300; font-size: 46px; line-height: 1.1; letter-spacing: 0.01em; }
+.balance-card .amount { font-family: var(--font-display); font-weight: 300; font-size: 46px; line-height: 1.1; letter-spacing: 0.01em; }
 .balance-card .label { opacity: 0.85; font-weight: 500; text-transform: uppercase; letter-spacing: 0.18em; font-size: 12px; }
 
 /* ============ Бейджи статусов ============ */
 .badge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 600; letter-spacing: 0.03em; border: 1px solid transparent; }
-.badge.pending { background: #f6efdc; color: #8a6a1f; border-color: rgba(138, 106, 31, 0.24); }
-.badge.paid, .badge.ready { background: var(--brand-soft); color: var(--brand); border-color: rgba(31, 88, 166, 0.26); }
-.badge.preparing, .badge.open { background: #e6edf7; color: #2b5a99; border-color: rgba(43, 90, 153, 0.24); }
+.badge.pending { background: #f6ecd8; color: #96631a; border-color: rgba(150, 99, 26, 0.26); }
+/* статусы: готов — зелёный, готовится — янтарный, новый/оплачен — акцент темы.
+   Активные состояния (готов/готовится) выделены цветом, чтобы официант и
+   кухня считывали их с одного взгляда. */
+.badge.ready { background: #e4f1ea; color: #1d6b4f; border-color: rgba(29, 107, 79, 0.28); }
+.badge.preparing { background: #f6ecd8; color: #96631a; border-color: rgba(150, 99, 26, 0.28); }
+.badge.paid, .badge.open { background: var(--brand-soft); color: var(--brand); border-color: color-mix(in srgb, var(--brand) 28%, transparent); }
+.badge.mini { padding: 1px 7px; font-size: 11px; }
 .badge.guest-chip { cursor: pointer; padding: 1px 8px; font-size: 11px; font-weight: 600; color: var(--muted); background: transparent; border: 1px dashed var(--rule); transition: all 0.15s var(--ease); }
 .badge.guest-chip:hover { border-color: var(--brand); color: var(--brand); }
 .badge.guest-chip.open { border-style: solid; }
 .badge.guest-chip:disabled { opacity: 0.5; }
-[data-theme="dark"] .badge.open { background: rgba(138, 184, 234, 0.12); color: #8ab8ea; border-color: rgba(138, 184, 234, 0.26); }
 .badge.done { background: #eae4d5; color: #5b6b52; border-color: rgba(91, 107, 82, 0.24); }
 .badge.cancelled { background: #f6e5e1; color: var(--danger); border-color: rgba(179, 64, 47, 0.24); }
 [data-theme="dark"] .badge.pending { background: rgba(214, 178, 92, 0.16); color: #e3c579; border-color: rgba(227, 197, 121, 0.3); }
-[data-theme="dark"] .badge.paid, [data-theme="dark"] .badge.ready { background: rgba(138, 184, 234, 0.16); color: #a8cbf2; border-color: rgba(168, 203, 242, 0.3); }
-[data-theme="dark"] .badge.preparing { background: rgba(138, 184, 234, 0.12); color: #8ab8ea; border-color: rgba(138, 184, 234, 0.26); }
+[data-theme="dark"] .badge.ready { background: rgba(79, 175, 127, 0.18); color: #7fd0a6; border-color: rgba(127, 208, 166, 0.32); }
+[data-theme="dark"] .badge.preparing { background: rgba(217, 154, 79, 0.18); color: #e6b578; border-color: rgba(230, 181, 120, 0.32); }
 [data-theme="dark"] .badge.done { background: rgba(242, 234, 219, 0.1); color: #cfc4ae; border-color: rgba(207, 196, 174, 0.26); }
 [data-theme="dark"] .badge.cancelled { background: rgba(214, 106, 88, 0.16); color: #e39383; border-color: rgba(227, 147, 131, 0.3); }
 
 /* ============ Формы ============ */
-.field { margin-bottom: 15px; }
+.field { display: block; margin-bottom: 15px; }
 .label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.12em; }
 .input, select.input { font: inherit; font-weight: 500; width: 100%; padding: 12px 14px; min-height: 46px; border: 1px solid var(--rule); border-radius: var(--radius-sm); background: var(--surface-solid); color: var(--fg); transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease); }
 .input::placeholder { color: color-mix(in srgb, var(--muted) 70%, transparent); }
@@ -488,18 +642,65 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 
 /* ============ Скелетоны ============ */
 .skeleton { border-radius: var(--radius); height: 120px; background: linear-gradient(100deg, var(--surface) 30%, var(--brand-soft) 50%, var(--surface) 70%); background-size: 200% 100%; animation: shimmer 1.3s infinite; }
+.skeleton.sm { height: 54px; }
 
 /* ============ Тосты ============ */
-.toast { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-radius: var(--radius-sm); background: var(--surface-solid); border: 1px solid var(--rule); box-shadow: var(--shadow-lg); font-weight: 600; animation: popIn 0.3s var(--ease); }
+.toast { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); z-index: 1100; display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-radius: var(--radius-sm); background: var(--surface-solid); border: 1px solid var(--rule); box-shadow: var(--shadow-lg); font-weight: 600; animation: popIn 0.3s var(--ease); }
 .toast.ok { color: var(--success); }
 .toast.bad { color: var(--danger); }
 
 /* ============ Утилиты ============ */
 .stack { display: flex; flex-direction: column; gap: 8px; }
+.stack.tight { gap: 4px; }
+.stack.loose { gap: 12px; }
 .between { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .wrap { display: flex; gap: 8px; flex-wrap: wrap; }
+.wrap.tight { gap: 4px; }
+.inline { display: inline-flex; align-items: center; gap: 8px; }
+.inline.tight { gap: 6px; }
+/* содержимое строки .row: колонка текста, занимает всё свободное место */
+.row-body { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.row.indent { padding-left: 22px; }
 .scroll-x { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; scrollbar-width: none; }
 .scroll-x::-webkit-scrollbar { display: none; }
+
+/* лента вкладок-фильтров под заголовком страницы */
+.tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 18px 0 6px; }
+
+/* текст */
+.muted.sm { font-size: 12px; }
+.subtitle { margin: 4px 0 0; }
+.center { text-align: center; }
+.strike { text-decoration: line-through; opacity: 0.55; }
+.text-brand { color: var(--brand); }
+.num.lg { font-size: 18px; }
+.list { list-style: none; padding: 0; margin: 0; }
+
+/* повёрнутые иконки (стрелка «вниз» как «назад»/«закрыть») */
+.rot-45 { display: inline-flex; transform: rotate(45deg); }
+.rot-90 { display: inline-flex; transform: rotate(90deg); }
+.rot--90 { display: inline-flex; transform: rotate(-90deg); }
+
+/* отступы по шкале 4px */
+.m-0 { margin: 0; }
+.mt-1 { margin-top: 4px; }
+.mt-2 { margin-top: 8px; }
+.mt-3 { margin-top: 12px; }
+.mt-4 { margin-top: 16px; }
+.mt-5 { margin-top: 24px; }
+.mb-3 { margin-bottom: 12px; }
+.my-2 { margin-top: 8px; margin-bottom: 8px; }
+.my-3 { margin-top: 12px; margin-bottom: 12px; }
+.my-4 { margin-top: 16px; margin-bottom: 16px; }
+.ml-2 { margin-left: 8px; }
+.self-start { align-self: flex-start; }
+.self-end { align-self: flex-end; }
+/* разделительная линия сверху блока */
+.rule-top { border-top: 1px solid var(--border); padding-top: 12px; }
+/* растущее поле в строке формы */
+.grow { flex: 1; min-width: 160px; }
+/* строка черновика с фото чека, требующая проверки */
+.line-warn { border-left: 3px solid var(--danger); padding-left: 8px; margin-left: -11px; }
 
 .enter { animation: fadeUp 0.5s var(--ease) both; }
 .stagger > * { animation: fadeUp 0.5s var(--ease) both; }
@@ -529,13 +730,13 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 .footer-item a { color: var(--fg); font-weight: 500; }
 .footer-item a:hover { color: var(--brand); }
 .footer-copy { text-align: center; padding: 0 0 22px; margin: 0; }
-.footer-title { font-family: "Jost", sans-serif; font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+.footer-title { font-family: var(--font-display); font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
 .footer-link { color: var(--fg); font-weight: 500; font-size: 14px; }
 .footer-link:hover { color: var(--brand); }
 
 /* ============ Юридические страницы (оферта, политика и т.д.) ============ */
 .legal { max-width: 74ch; }
-.legal h2 { font-family: "Fredoka", sans-serif; font-weight: 600; font-size: 18px; color: var(--brand); margin: 22px 0 8px; }
+.legal h2 { font-family: var(--font-display); font-weight: 600; font-size: 18px; color: var(--brand); margin: 22px 0 8px; }
 .legal h2:first-child { margin-top: 0; }
 .legal p { margin: 8px 0; line-height: 1.65; }
 .legal ul, .legal ol { margin: 8px 0 8px 22px; display: grid; gap: 5px; }
@@ -546,7 +747,7 @@ h1, h2, h3 { font-family: "Jost", sans-serif; color: var(--fg); margin: 0; font-
 
 /* ============ Календарь смен ============ */
 .cal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; max-width: 480px; margin: 0 auto 12px; }
-.cal-month { font-family: "Jost", sans-serif; font-size: 17px; font-weight: 500; }
+.cal-month { font-family: var(--font-display); font-size: 17px; font-weight: 500; }
 .cal-month::first-letter { text-transform: uppercase; }
 .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; max-width: 480px; margin: 0 auto; }
 .cal-dow { text-align: center; font-size: 12px; letter-spacing: 0.06em; color: var(--muted); padding-bottom: 2px; }

@@ -3,6 +3,7 @@ import { get, post, ApiError } from "../../api";
 import type { Payroll, Shift, StaffUser } from "../../types";
 import Icon, { type IconName } from "../../components/Icon";
 import { useAuth } from "../../auth";
+import { useToast } from "../../components/ui/Toast";
 
 // «2000.00» → «2 000», «1234.50» → «1 234,5»
 function fmtMoney(v: string | number | null | undefined): string {
@@ -54,18 +55,13 @@ export default function Shifts() {
   const [adding, setAdding] = useState(false);
   const [penEdit, setPenEdit] = useState(false); // менеджер правит ручной штраф
   const [penVal, setPenVal] = useState("");
-  const [toast, setToast] = useState<string | null>(null);
+  const notify = useToast();
 
   // период для истории и сводки — по умолчанию последние 30 дней
   const [from, setFrom] = useState(() =>
     isoDay(new Date(Date.now() - 30 * 86400000))
   );
   const [to, setTo] = useState(() => isoDay(new Date()));
-
-  function notify(m: string) {
-    setToast(m);
-    setTimeout(() => setToast(null), 2600);
-  }
 
   const loadDay = useCallback(async (d: string) => {
     setShift(await get<Shift>(`/shifts/day/?date=${d}`));
@@ -144,11 +140,11 @@ export default function Shifts() {
         })
       );
       setAdding(false);
-      notify(add ? "Поставлен в смену" : "Убран из смены");
+      notify(add ? "Поставлен в смену" : "Убран из смены", "ok");
       loadMonth(month).catch(() => {});
       loadPeriod().catch(() => {});
     } catch (e) {
-      notify(e instanceof ApiError ? e.message : "Не получилось");
+      notify(e instanceof ApiError ? e.message : "Не получилось", "bad");
     } finally {
       setBusy(false);
     }
@@ -164,10 +160,10 @@ export default function Shifts() {
         })
       );
       setPenEdit(false);
-      notify("Штраф за смену сохранён");
+      notify("Штраф за смену сохранён", "ok");
       loadPeriod().catch(() => {});
     } catch (e) {
-      notify(e instanceof ApiError ? e.message : "Не получилось");
+      notify(e instanceof ApiError ? e.message : "Не получилось", "bad");
     } finally {
       setBusy(false);
     }
@@ -196,7 +192,7 @@ export default function Shifts() {
     <>
       <h1 className="h1">Смены</h1>
 
-      <div className="wrap" style={{ gap: 8, margin: "18px 0 6px" }}>
+      <div className="tabs">
         <button
           className={"navlink" + (tab === "day" ? " active" : "")}
           onClick={() => setTab("day")}
@@ -221,7 +217,7 @@ export default function Shifts() {
       {tab === "day" && shift && (
         <>
           {/* календарь месяца: подсвечены дни с поставленной сменой */}
-          <div className="card" style={{ marginTop: 12 }}>
+          <div className="card mt-3">
             <div className="cal-head">
               <button
                 className="icon-btn"
@@ -278,10 +274,10 @@ export default function Shifts() {
             </div>
           </div>
 
-          <div className="card hover" style={{ marginTop: 14 }}>
+          <div className="card hover mt-4">
             <div className="between">
-              <div className="stack" style={{ gap: 2 }}>
-                <strong style={{ fontFamily: "Fredoka", fontSize: 17 }}>
+              <div className="stack tight">
+                <strong className="title">
                   {fmtDay(shift.date)}
                 </strong>
                 <span className="muted">
@@ -306,25 +302,17 @@ export default function Shifts() {
             </div>
           </div>
 
-          <div className="grid stats stagger" style={{ marginTop: 14 }}>
+          <div className="grid stats stagger mt-4">
             {stats &&
               stats.map((s) => (
                 <div className="card hover" key={s.label}>
                   <span className="tx-icon">
                     <Icon name={s.icon} size={18} />
                   </span>
-                  <div className="muted" style={{ marginTop: 10 }}>
+                  <div className="muted mt-3">
                     {s.label}
                   </div>
-                  <div
-                    className="num"
-                    style={{
-                      fontFamily: "Fredoka",
-                      fontWeight: 700,
-                      fontSize: 28,
-                      color: "var(--brand)",
-                    }}
-                  >
+                  <div className="stat-value">
                     {s.value}
                   </div>
                 </div>
@@ -336,11 +324,11 @@ export default function Shifts() {
                 <span className="tx-icon">
                   <Icon name="minus" size={18} />
                 </span>
-                <div className="muted" style={{ marginTop: 10 }}>
+                <div className="muted mt-3">
                   Штраф за смену
                 </div>
                 {canEdit && penEdit ? (
-                  <div className="wrap" style={{ gap: 6, marginTop: 8 }}>
+                  <div className="wrap mt-2">
                     <input
                       className="input"
                       inputMode="decimal"
@@ -362,20 +350,12 @@ export default function Shifts() {
                       onClick={() => setPenEdit(false)}
                       aria-label="Отмена"
                     >
-                      <Icon name="minus" size={16} />
+                      <Icon name="close" size={16} />
                     </button>
                   </div>
                 ) : (
                   <div className="between">
-                    <div
-                      className="num"
-                      style={{
-                        fontFamily: "Fredoka",
-                        fontWeight: 700,
-                        fontSize: 28,
-                        color: "var(--brand)",
-                      }}
-                    >
+                    <div className="stat-value">
                       {fmtMoney(shift.manual_penalty)}
                     </div>
                     {canEdit && (
@@ -396,8 +376,8 @@ export default function Shifts() {
             )}
           </div>
 
-          <div className="between" style={{ marginTop: 22 }}>
-            <h2 className="section-title" style={{ margin: 0 }}>
+          <div className="between mt-5">
+            <h2 className="section-title m-0">
               В смене ({shift.members_count})
             </h2>
             {canEdit && !adding && (
@@ -408,7 +388,7 @@ export default function Shifts() {
           </div>
 
           {canEdit && adding && (
-            <div className="card" style={{ marginTop: 10 }}>
+            <div className="card mt-3">
               <div className="wrap">
                 {free.map((s) => (
                   <button
@@ -425,8 +405,7 @@ export default function Shifts() {
                 )}
               </div>
               <button
-                className="btn ghost sm"
-                style={{ marginTop: 12 }}
+                className="btn ghost sm mt-3"
                 onClick={() => setAdding(false)}
               >
                 Отмена
@@ -434,13 +413,13 @@ export default function Shifts() {
             </div>
           )}
 
-          <div className="card" style={{ marginTop: 10 }}>
+          <div className="card mt-3">
             {shift.members.map((m) => (
               <div className="row" key={m.id}>
                 <span className="tx-icon">
                   <Icon name="user" size={17} />
                 </span>
-                <div className="stack" style={{ gap: 2, flex: 1 }}>
+                <div className="row-body">
                   <strong>
                     {m.name}
                     {m.user === user?.id ? " (вы)" : ""}
@@ -469,7 +448,7 @@ export default function Shifts() {
             )}
           </div>
 
-          <p className="muted" style={{ marginTop: 12 }}>
+          <p className="muted mt-3">
             Оплата за день {fmtMoney(shift.daily_rate)} + бонус{" "}
             {fmtMoney(shift.bonus_percent)}% от выручки на всех
             {shift.penalty_table
@@ -482,7 +461,7 @@ export default function Shifts() {
 
       {/* ——— период ——— */}
       {tab !== "day" && (
-        <div className="wrap" style={{ gap: 8, marginTop: 12 }}>
+        <div className="wrap mt-3">
           <input
             className="input"
             style={{ width: 160 }}
@@ -502,11 +481,11 @@ export default function Shifts() {
 
       {/* ——— история смен ——— */}
       {tab === "history" && (
-        <div className="stack" style={{ gap: 12, marginTop: 14 }}>
+        <div className="stack loose mt-4">
           {history.map((s) => (
             <div className="card" key={s.date}>
               <div className="between">
-                <strong style={{ fontFamily: "Fredoka", fontSize: 16 }}>
+                <strong className="title">
                   {fmtDay(s.date)}
                 </strong>
                 {/* выручку дня видит только менеджер/админ */}
@@ -517,14 +496,14 @@ export default function Shifts() {
                   </span>
                 )}
               </div>
-              <div className="wrap" style={{ marginTop: 10 }}>
+              <div className="wrap mt-3">
                 {s.members.map((m) => (
                   <span className="badge open" key={m.id}>
                     {m.name} · {m.role_display}
                   </span>
                 ))}
               </div>
-              <div className="row" style={{ marginTop: 8 }}>
+              <div className="row mt-2">
                 <span className="muted">
                   ставка {fmtMoney(s.daily_rate)} + бонус {fmtMoney(s.bonus_share)}
                   {Number(s.penalty) > 0
@@ -543,13 +522,13 @@ export default function Shifts() {
 
       {/* ——— к выплате ——— */}
       {tab === "payroll" && (
-        <div className="card" style={{ marginTop: 14 }}>
+        <div className="card mt-4">
           {payroll?.rows.map((r) => (
             <div className="row" key={r.user}>
               <span className="tx-icon">
                 <Icon name="user" size={17} />
               </span>
-              <div className="stack" style={{ gap: 2, flex: 1 }}>
+              <div className="row-body">
                 <strong>{r.name}</strong>
                 <span className="muted">
                   {r.role_display} · {fmtDays(r.days)} · ставка {fmtMoney(r.base)} +
@@ -559,10 +538,7 @@ export default function Shifts() {
                     : ""}
                 </span>
               </div>
-              <strong
-                className="num"
-                style={{ fontSize: 18, color: "var(--brand)" }}
-              >
+              <strong className="num lg text-brand">
                 {fmtMoney(r.total)}
               </strong>
             </div>
@@ -573,7 +549,6 @@ export default function Shifts() {
         </div>
       )}
 
-      {toast && <div className="toast ok">{toast}</div>}
     </>
   );
 }

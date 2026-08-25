@@ -26,6 +26,7 @@ class Order(models.Model):
     class Status(models.TextChoices):
         REQUESTED = "requested", "Ждёт официанта"
         OPEN = "open", "Открыт"
+        AWAITING = "awaiting", "К оплате"  # отправлен на терминал, ждём результат
         PAID = "paid", "Закрыт"
         CANCELLED = "cancelled", "Отменён"
 
@@ -80,6 +81,8 @@ class Order(models.Model):
         blank=True, default=PayMethod.CASH,
     )
     total = models.DecimalField("Сумма", max_digits=12, decimal_places=2, default=0)
+    # номер/признак фискального чека (заполняется при оплате через кассу-терминал)
+    fiscal_receipt = models.CharField("Фискальный чек", max_length=64, blank=True, default="")
     created_at = models.DateTimeField("Создан", auto_now_add=True)
     # учёт времени по этапам техпроцесса (проставляются при смене статуса станции)
     food_started_at = models.DateTimeField("Кухня взяла", null=True, blank=True)
@@ -170,10 +173,15 @@ class OrderItem(models.Model):
     class Meta:
         verbose_name = "Позиция заказа"
         verbose_name_plural = "Позиции заказа"
+        # стабильный порядок по добавлению — иначе после правки количества
+        # строка «переезжает» в выборке БД и позиции прыгают в интерфейсе
+        ordering = ["id"]
 
     @property
     def subtotal(self):
-        return self.unit_price * self.quantity
+        # None-safe: у незаполненной позиции (пустая форма-шаблон в админке)
+        # unit_price ещё не задан — считаем сумму нулём, а не падаем.
+        return (self.unit_price or 0) * (self.quantity or 0)
 
     @property
     def station(self):

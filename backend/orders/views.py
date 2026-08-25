@@ -19,6 +19,13 @@ from .serializers import (
     TableSerializer,
 )
 from .services import OrderError, append_items, create_order, create_request
+from payments.models import Payment
+from payments.services import (
+    PaymentError,
+    apply_payment_result,
+    record_manual_payment,
+    start_terminal_payment,
+)
 
 
 class TableViewSet(viewsets.ReadOnlyModelViewSet):
@@ -52,7 +59,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             return [IsCookOrAdmin()]
         if self.action == "drinks_status":
             return [IsBarOrAdmin()]
-        if self.action in ("close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "item_qty", "confirm", "set_comment", "move", "serve"):
+        if self.action in ("close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "item_qty", "confirm", "set_comment", "move", "serve", "pay_terminal", "pay_result"):
             return [IsWaiterOrAdmin()]
         # item_status — право проверяем внутри по станции позиции
         return [IsAuthenticated()]
@@ -62,8 +69,10 @@ class OrderViewSet(viewsets.ModelViewSet):
         params = self.request.query_params
         # активные заказы: открытые + оплаченные сегодня (оплата вперёд — кухня
         # ещё готовит). Историю оплаченных не тянем, чтобы не залить доску.
-        active = Q(status=Order.Status.OPEN) | Q(
-            status=Order.Status.PAID, closed_at__date=timezone.localdate()
+        active = (
+            Q(status=Order.Status.OPEN)
+            | Q(status=Order.Status.AWAITING)  # отправлен на терминал — стол ещё занят
+            | Q(status=Order.Status.PAID, closed_at__date=timezone.localdate())
         )
         # доски кухни/бара: карточка уходит только когда станция ГОТОВА и заказ
         # ЗАКРЫТ. Пока готовится — висит, даже если официант уже закрыл счёт.
@@ -71,10 +80,14 @@ class OrderViewSet(viewsets.ModelViewSet):
         if params.get("station") in ("kitchen", "bar"):
             st = params["station"]
             ready = "food_ready_at" if st == "kitchen" else "drinks_ready_at"
-            board = Q(status=Order.Status.OPEN) | Q(
-                status=Order.Status.PAID,
-                closed_at__date=timezone.localdate(),
-                **{f"{ready}__isnull": True},  # закрыт, но ещё не готов → показываем
+            board = (
+                Q(status=Order.Status.OPEN)
+                | Q(status=Order.Status.AWAITING)
+                | Q(
+                    status=Order.Status.PAID,
+                    closed_at__date=timezone.localdate(),
+                    **{f"{ready}__isnull": True},  # закрыт, но ещё не готов → показываем
+                )
             )
             return qs.filter(
                 board, items__product__category__station=st
@@ -87,7 +100,12 @@ class OrderViewSet(viewsets.ModelViewSet):
                 | Q(drinks_ready_at__isnull=False, drinks_served_at__isnull=True)
             ).distinct()
         if params.get("status"):
-            qs = qs.filter(status=params["status"])
+            st = params["status"]
+            # доска официанта (status=open) включает и отправленные на терминал
+            if st == Order.Status.OPEN:
+                qs = qs.filter(status__in=[Order.Status.OPEN, Order.Status.AWAITING])
+            else:
+                qs = qs.filter(status=st)
         if params.get("table"):
             qs = qs.filter(table=params["table"])
         # закрытые счета — по умолчанию только за сегодня (список у официанта)
@@ -365,6 +383,11 @@ class OrderViewSet(viewsets.ModelViewSet):
             return Response(
                 {"detail": "Позиция не найдена"}, status=status.HTTP_404_NOT_FOUND
             )
+        if self._waiter_locked(request, item):
+            return Response(
+                {"detail": "Кухня/бар уже готовят — позицию убрать нельзя"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         # Если по позиции уже списали склад — возвращаем продукты обратно.
         return_order_item(item, user=request.user)
         item.delete()
@@ -426,6 +449,11 @@ class OrderViewSet(viewsets.ModelViewSet):
                 {"detail": "Количество должно быть положительным"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if qty != item.quantity and self._waiter_locked(request, item):
+            return Response(
+                {"detail": "Кухня/бар уже готовят — количество менять нельзя"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         if item.stock_written_off_at:
             # позиция уже списана со склада — пересписываем на новое количество
             return_order_item(item, user=request.user)
@@ -440,19 +468,72 @@ class OrderViewSet(viewsets.ModelViewSet):
         order.save(update_fields=["total"])
         return Response(OrderSerializer(order).data)
 
+    @staticmethod
+    def _waiter_locked(request, item):
+        """Официанту нельзя убирать/уменьшать позицию, которую станция уже
+        взяла в работу или приготовила (не «новую»). Админа не ограничиваем."""
+        return (
+            request.user.role != User.Role.ADMIN
+            and item.status != Order.StationStatus.NEW
+        )
+
+    @staticmethod
+    def _pay_method(request):
+        """Способ оплаты из запроса; по умолчанию — наличные."""
+        method = str(request.data.get("pay_method", "")).strip()
+        return method if method in Order.PayMethod.values else Order.PayMethod.CASH
+
     @action(detail=True, methods=["post"])
     def close(self, request, pk=None):
-        """Официант закрывает один заказ (не весь стол)."""
+        """Официант закрывает один заказ (не весь стол), фиксируя способ оплаты."""
         order = self.get_object()
         if order.status != Order.Status.OPEN:
             return Response(
                 {"detail": "Закрыть можно только открытый заказ"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        order.status = Order.Status.PAID
-        order.closed_by = request.user
-        order.closed_at = timezone.now()
-        order.save(update_fields=["status", "closed_by", "closed_at"])
+        record_manual_payment(order, self._pay_method(request), request.user)
+        order.refresh_from_db()
+        return Response(OrderSerializer(order).data)
+
+    @action(detail=True, methods=["post"], url_path="pay_terminal")
+    def pay_terminal(self, request, pk=None):
+        """Официант отправляет счёт на кассу-терминал → заказ «к оплате».
+
+        Результат (оплачено/отказ) применяется отдельно: сейчас — дев-ручкой
+        pay_result, в бою — вебхуком провайдера (payments.services.apply_payment_result).
+        """
+        order = self.get_object()
+        method = str(request.data.get("method", Payment.Method.CARD))
+        try:
+            start_terminal_payment(order, method=method)
+        except PaymentError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        order.refresh_from_db()
+        return Response(OrderSerializer(order).data)
+
+    @action(detail=True, methods=["post"], url_path="pay_result")
+    def pay_result(self, request, pk=None):
+        """Применить результат оплаты с терминала (эмуляция / ручное подтверждение).
+
+        В проде это место занимает вебхук провайдера; ручка оставлена для
+        дев-эмуляции и как резервный ручной ввод результата кассиром.
+        """
+        order = self.get_object()
+        payment = (
+            Payment.objects.filter(order=order, status=Payment.Status.PENDING)
+            .order_by("-created_at")
+            .first()
+        )
+        if not payment:
+            return Response(
+                {"detail": "Нет ожидающего оплату платежа"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        success = str(request.data.get("result", "")) == "success"
+        fiscal = str(request.data.get("fiscal_receipt", "")).strip()
+        apply_payment_result(payment, success=success, fiscal_receipt=fiscal, user=request.user)
+        order.refresh_from_db()
         return Response(OrderSerializer(order).data)
 
     @action(detail=False, methods=["post"])
@@ -463,10 +544,9 @@ class OrderViewSet(viewsets.ModelViewSet):
             return Response(
                 {"detail": "Не указан стол"}, status=status.HTTP_400_BAD_REQUEST
             )
-        open_orders = Order.objects.filter(table=table, status=Order.Status.OPEN)
-        count = open_orders.update(
-            status=Order.Status.PAID,
-            closed_by=request.user,
-            closed_at=timezone.now(),
-        )
-        return Response({"table": table, "closed": count})
+        method = self._pay_method(request)
+        # по заказу: закрываем и создаём Payment на каждый (единый реестр платежей)
+        open_orders = list(Order.objects.filter(table=table, status=Order.Status.OPEN))
+        for order in open_orders:
+            record_manual_payment(order, method, request.user)
+        return Response({"table": table, "closed": len(open_orders)})

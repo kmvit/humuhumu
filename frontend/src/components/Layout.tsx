@@ -42,16 +42,43 @@ const NAV: Record<string, { to: string; label: string; icon: IconName }[]> = {
   ],
 };
 
+// Планшетные рабочие роли: у них шапка сжата в тонкую панель, а подвал убран,
+// чтобы доска целиком помещалась на экран планшета.
+const STAFF_ROLES = ["waiter", "cook", "bar", "warehouse"];
+
 export default function Layout() {
   const { user, logout } = useAuth();
   const { theme, toggle } = useTheme();
   const site = useSite();
   const navigate = useNavigate();
-  const links = NAV[user?.role ?? "guest"] ?? [];
+  const staff = !!user && STAFF_ROLES.includes(user.role);
+  // у рабочих ролей в панели только доска и «Смены» — коворкинг убираем
+  const links = (NAV[user?.role ?? "guest"] ?? []).filter(
+    (l) => !staff || l.to !== "/coworking"
+  );
+
+  const themeBtn = (
+    <button
+      className="icon-btn"
+      onClick={toggle}
+      aria-label={theme === "dark" ? "Светлая тема" : "Тёмная тема"}
+    >
+      <Icon name={theme === "dark" ? "sun" : "moon"} size={18} />
+    </button>
+  );
+  const authBtn = user ? (
+    <button className="icon-btn" onClick={logout} aria-label="Выйти">
+      <Icon name="logout" size={18} />
+    </button>
+  ) : (
+    <button className="btn sm" onClick={() => navigate("/login")}>
+      Войти
+    </button>
+  );
 
   return (
     <>
-      <header className="header">
+      <header className={"header" + (staff ? " slim" : "")}>
         <div className="header-inner">
           <nav>
             {links.map((l) => (
@@ -67,13 +94,15 @@ export default function Layout() {
             ))}
           </nav>
 
-          {/* логотип по центру шапки */}
-          <span className="brand">
-            <span className="logo">
-              {site?.logo ? <img src={site.logo} alt="" /> : <Icon name="coffee" size={20} />}
+          {/* логотип по центру — только в полной шапке, не на планшете персонала */}
+          {!staff && (
+            <span className="brand">
+              <span className="logo">
+                {site?.logo ? <img src={site.logo} alt="" /> : <Icon name="coffee" size={20} />}
+              </span>
+              <span className="brand-name hide-sm">{site?.name ?? "Кафе"}</span>
             </span>
-            <span className="brand-name hide-sm">{site?.name ?? "Кафе"}</span>
-          </span>
+          )}
 
           <div className="header-actions">
             {user?.balance !== null && user?.balance !== undefined && (
@@ -83,31 +112,16 @@ export default function Layout() {
               </span>
             )}
 
-            <InstallPWA />
-
-            <button
-              className="icon-btn"
-              onClick={toggle}
-              aria-label={theme === "dark" ? "Светлая тема" : "Тёмная тема"}
-            >
-              <Icon name={theme === "dark" ? "sun" : "moon"} size={18} />
-            </button>
-            {user ? (
-              <button className="icon-btn" onClick={logout} aria-label="Выйти">
-                <Icon name="logout" size={18} />
-              </button>
-            ) : (
-              <button className="btn sm" onClick={() => navigate("/login")}>
-                Войти
-              </button>
-            )}
+            {!staff && <InstallPWA />}
+            {themeBtn}
+            {authBtn}
           </div>
         </div>
       </header>
-      <main className="container">
+      <main className={"container" + (staff ? " staff" : "")}>
         <Outlet />
       </main>
-      <Footer />
+      {!staff && <Footer />}
     </>
   );
 }

@@ -28,6 +28,7 @@ class OrderSerializer(serializers.ModelSerializer):
 
     items = OrderItemSerializer(many=True, read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    pay_method_display = serializers.CharField(source="get_pay_method_display", read_only=True)
     has_food = serializers.BooleanField(read_only=True)
     has_drinks = serializers.BooleanField(read_only=True)
     is_ready = serializers.BooleanField(read_only=True)
@@ -49,6 +50,9 @@ class OrderSerializer(serializers.ModelSerializer):
             "public_token",
             "status",
             "status_display",
+            "pay_method",
+            "pay_method_display",
+            "fiscal_receipt",
             "food_status",
             "drinks_status",
             "food_served",

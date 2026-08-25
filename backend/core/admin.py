@@ -7,6 +7,7 @@ from .models import SiteSettings
 class SiteSettingsAdmin(admin.ModelAdmin):
     fieldsets = (
         ("Основное", {"fields": ("name", "tagline", "logo", "about")}),
+        ("Внешний вид", {"fields": ("theme", "accent_color")}),
         ("Контакты", {"fields": ("phone", "email", "address", "working_hours")}),
         ("Соцсети", {"fields": ("instagram", "telegram")}),
     )

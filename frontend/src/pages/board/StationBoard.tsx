@@ -75,10 +75,10 @@ export default function StationBoard({ station }: { station: Station }) {
         <h1 className="h1">{title}</h1>
         <span className="chip"><Icon name="spark" size={15} /> {orders.length}</span>
       </div>
-      <p className="muted" style={{ marginTop: 4 }}>{subtitle}</p>
+      <p className="muted subtitle">{subtitle}</p>
 
       {orders.length === 0 ? (
-        <p className="muted" style={{ marginTop: 32, textAlign: "center" }}>{empty}</p>
+        <p className="muted center mt-5">{empty}</p>
       ) : (
         <div className="kanban">
           {COLUMNS.map((col) => {
@@ -92,7 +92,7 @@ export default function StationBoard({ station }: { station: Station }) {
                   <span>{col.label}</span>
                   <span className="chip sm">{cards.length}</span>
                 </div>
-                <div className="stack" style={{ gap: 10 }}>
+                <div className="stack loose">
                   {cards.map((o) => {
                     const its = o.items.filter((it) => it.station === station);
                     const notAllReady = its.some((it) => it.status !== "ready");
@@ -108,21 +108,21 @@ export default function StationBoard({ station }: { station: Station }) {
                     return (
                       <div className={"card" + (highlight.has(o.id) ? " new-order" : "")} key={o.id}>
                         <div className="between">
-                          <strong style={{ fontFamily: "Fredoka", fontSize: 17 }}>№{o.id}</strong>
+                          <strong className="title">№{o.id}</strong>
                           {o.table && <span className="badge open">Стол {o.table}</span>}
                         </div>
-                        <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>
+                        <div className="muted sm mt-1">
                           <Icon name="spark" size={12} /> {timing}
                         </div>
                         {o.comment && (
-                          <div className="order-note static" style={{ marginTop: 8 }}>
+                          <div className="order-note static mt-2">
                             <Icon name="edit" size={13} /> {o.comment}
                           </div>
                         )}
-                        <ul className="stack" style={{ gap: 6, margin: "10px 0", listStyle: "none", padding: 0 }}>
+                        <ul className="stack tight list my-3">
                           {its.map((it) => (
-                            <li key={it.id} className="between" style={{ gap: 8 }}>
-                              <span style={{ opacity: it.status === "ready" ? 0.55 : 1, textDecoration: it.status === "ready" ? "line-through" : "none" }}>
+                            <li key={it.id} className="between">
+                              <span className={it.status === "ready" ? "strike" : ""}>
                                 {it.product_name} <span className="num muted">× {it.quantity}</span>
                               </span>
                               {itemControl(o, it)}
@@ -142,7 +142,7 @@ export default function StationBoard({ station }: { station: Station }) {
                     );
                   })}
                   {cards.length === 0 && (
-                    <p className="muted" style={{ fontSize: 13, textAlign: "center", padding: "6px 0" }}>—</p>
+                    <p className="muted sm center" style={{ padding: "6px 0" }}>—</p>
                   )}
                 </div>
               </div>

@@ -12,6 +12,12 @@ class Payment(models.Model):
         PENDING = "pending", "Создан"
         SUCCEEDED = "succeeded", "Оплачен"
         FAILED = "failed", "Ошибка"
+        CANCELLED = "cancelled", "Отменён"
+
+    class Method(models.TextChoices):
+        CASH = "cash", "Наличные"
+        CARD = "card", "Карта"
+        QR = "qr", "QR / СБП"
 
     purpose = models.CharField("Назначение", max_length=16, choices=Purpose.choices)
     status = models.CharField(
@@ -32,11 +38,16 @@ class Payment(models.Model):
         blank=True,
         verbose_name="Пакет токенов",
     )
+    method = models.CharField(
+        "Способ", max_length=8, choices=Method.choices, blank=True, default=""
+    )
     provider = models.CharField("Провайдер", max_length=32, default="yookassa")
     external_id = models.CharField(
         "ID у провайдера", max_length=128, unique=True, null=True, blank=True
     )
+    fiscal_receipt = models.CharField("Фискальный чек", max_length=64, blank=True, default="")
     created_at = models.DateTimeField("Создан", auto_now_add=True)
+    updated_at = models.DateTimeField("Обновлён", auto_now=True)
 
     class Meta:
         verbose_name = "Платёж"
