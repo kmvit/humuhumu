@@ -1,6 +1,7 @@
 from calendar import monthrange
 from datetime import date as date_cls
 from datetime import timedelta
+from decimal import Decimal, InvalidOperation
 
 from django.utils import timezone
 from rest_framework import status, viewsets
@@ -24,7 +25,7 @@ class ShiftViewSet(viewsets.ViewSet):
     permission_classes = [IsStaffRole]
 
     def get_permissions(self):
-        if self.action in ("add_member", "remove_member", "staff"):
+        if self.action in ("add_member", "remove_member", "staff", "set_penalty"):
             return [IsWarehouseOrAdmin()]
         return super().get_permissions()
 
@@ -188,3 +189,33 @@ class ShiftViewSet(viewsets.ViewSet):
     def remove_member(self, request):
         """Убрать работника из смены."""
         return self._member_action(request, add=False)
+
+    @action(detail=False, methods=["post"], url_path="set_penalty")
+    def set_penalty(self, request):
+        """Задать ручной штраф за смену (делится на всех, минус из выплаты)."""
+        day = self._day(request.data)
+        if day is None:
+            return Response(
+                {"detail": "Дата в формате ГГГГ-ММ-ДД"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        shift = Shift.objects.filter(date=day).first()
+        if shift is None:
+            return Response(
+                {"detail": "На этот день смена не поставлена"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            penalty = Decimal(str(request.data.get("penalty", "0")))
+        except (InvalidOperation, TypeError):
+            return Response(
+                {"detail": "Неверная сумма"}, status=status.HTTP_400_BAD_REQUEST
+            )
+        if penalty < 0:
+            return Response(
+                {"detail": "Штраф не может быть отрицательным"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        shift.manual_penalty = penalty
+        shift.save(update_fields=["manual_penalty"])
+        return self._day_response(request, day)

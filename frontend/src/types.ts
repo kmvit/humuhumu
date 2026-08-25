@@ -282,11 +282,14 @@ export interface Shift {
   penalty_table: string;
   revenue: string;
   penalty: string;
+  /** Ручной штраф за смену (задаёт менеджер), делится на всех. */
+  manual_penalty: string;
   bonus_pool: string;
   members_count: number;
   /** Доли на одного человека в смене. */
   bonus_share: string;
   penalty_share: string;
+  manual_penalty_share: string;
   payout: string;
   members: ShiftMember[];
   /** Только в /shifts/day/: я в этой смене. */

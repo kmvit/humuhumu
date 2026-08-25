@@ -52,6 +52,8 @@ export default function Shifts() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [penEdit, setPenEdit] = useState(false); // менеджер правит ручной штраф
+  const [penVal, setPenVal] = useState("");
   const [toast, setToast] = useState<string | null>(null);
 
   // период для истории и сводки — по умолчанию последние 30 дней
@@ -85,6 +87,7 @@ export default function Shifts() {
   }, [from, to]);
 
   useEffect(() => {
+    setPenEdit(false); // при смене дня закрываем правку штрафа
     loadDay(day)
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -143,6 +146,25 @@ export default function Shifts() {
       setAdding(false);
       notify(add ? "Поставлен в смену" : "Убран из смены");
       loadMonth(month).catch(() => {});
+      loadPeriod().catch(() => {});
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Не получилось");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveShiftPenalty() {
+    setBusy(true);
+    try {
+      setShift(
+        await post<Shift>("/shifts/set_penalty/", {
+          date: day,
+          penalty: Number(penVal || 0),
+        })
+      );
+      setPenEdit(false);
+      notify("Штраф за смену сохранён");
       loadPeriod().catch(() => {});
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "Не получилось");
@@ -307,6 +329,71 @@ export default function Shifts() {
                   </div>
                 </div>
               ))}
+
+            {/* ручной штраф за смену: менеджер правит, линейный видит если задан */}
+            {(canEdit || Number(shift.manual_penalty) > 0) && (
+              <div className="card hover">
+                <span className="tx-icon">
+                  <Icon name="minus" size={18} />
+                </span>
+                <div className="muted" style={{ marginTop: 10 }}>
+                  Штраф за смену
+                </div>
+                {canEdit && penEdit ? (
+                  <div className="wrap" style={{ gap: 6, marginTop: 8 }}>
+                    <input
+                      className="input"
+                      inputMode="decimal"
+                      value={penVal}
+                      onChange={(e) => setPenVal(e.target.value)}
+                      style={{ width: 92 }}
+                      autoFocus
+                    />
+                    <button
+                      className="icon-btn"
+                      onClick={saveShiftPenalty}
+                      disabled={busy}
+                      aria-label="Сохранить штраф"
+                    >
+                      <Icon name="check" size={16} />
+                    </button>
+                    <button
+                      className="icon-btn"
+                      onClick={() => setPenEdit(false)}
+                      aria-label="Отмена"
+                    >
+                      <Icon name="minus" size={16} />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="between">
+                    <div
+                      className="num"
+                      style={{
+                        fontFamily: "Fredoka",
+                        fontWeight: 700,
+                        fontSize: 28,
+                        color: "var(--brand)",
+                      }}
+                    >
+                      {fmtMoney(shift.manual_penalty)}
+                    </div>
+                    {canEdit && (
+                      <button
+                        className="icon-btn"
+                        onClick={() => {
+                          setPenVal(String(Number(shift.manual_penalty)));
+                          setPenEdit(true);
+                        }}
+                        aria-label="Изменить штраф"
+                      >
+                        <Icon name="edit" size={15} />
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="between" style={{ marginTop: 22 }}>

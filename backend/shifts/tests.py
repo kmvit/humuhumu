@@ -146,6 +146,53 @@ class ShiftTests(APITestCase):
         data = self.client.get("/api/shifts/day/").data
         self.assertEqual(Decimal(data["daily_rate"]), Decimal("2000.00"))
 
+    # ——— ручной штраф за смену ———
+
+    def test_manager_sets_manual_penalty(self):
+        self.put_in_shift(self.staff["cook"], self.staff["bar"])  # 2 в смене
+        self.auth(self.manager)
+        res = self.client.post(
+            "/api/shifts/set_penalty/", {"penalty": "1000"}, format="json"
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(Decimal(res.data["manual_penalty"]), Decimal("1000.00"))
+        # 1000 делится на двоих → 500 с человека
+        self.assertEqual(Decimal(res.data["manual_penalty_share"]), Decimal("500.00"))
+        # 2000 ставка − 500 штраф (выручки нет → бонус 0)
+        self.assertEqual(Decimal(res.data["payout"]), Decimal("1500.00"))
+
+    def test_manual_penalty_can_exceed_bonus_but_not_below_zero(self):
+        self.put_in_shift(self.staff["cook"])
+        self.auth(self.manager)
+        res = self.client.post(
+            "/api/shifts/set_penalty/", {"penalty": "5000"}, format="json"
+        )
+        # штраф больше ставки+бонуса — выплата не уходит в минус
+        self.assertEqual(Decimal(res.data["payout"]), Decimal("0.00"))
+
+    def test_manual_penalty_in_payroll(self):
+        self.put_in_shift(self.staff["cook"])
+        self.auth(self.manager)
+        self.client.post("/api/shifts/set_penalty/", {"penalty": "800"}, format="json")
+        rows = self.client.get("/api/shifts/payroll/").data["rows"]
+        self.assertEqual(Decimal(rows[0]["penalty"]), Decimal("800.00"))
+        self.assertEqual(Decimal(rows[0]["total"]), Decimal("1200.00"))  # 2000-800
+
+    def test_set_penalty_requires_manager(self):
+        self.put_in_shift(self.staff["cook"])
+        self.auth(self.staff["cook"])
+        res = self.client.post(
+            "/api/shifts/set_penalty/", {"penalty": "100"}, format="json"
+        )
+        self.assertEqual(res.status_code, 403)
+
+    def test_set_penalty_without_shift_is_rejected(self):
+        self.auth(self.manager)
+        res = self.client.post(
+            "/api/shifts/set_penalty/", {"penalty": "100"}, format="json"
+        )
+        self.assertEqual(res.status_code, 400)
+
     # ——— видимость ———
 
     def test_worker_sees_only_own_shifts_manager_sees_all(self):

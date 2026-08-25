@@ -70,6 +70,13 @@ class Shift(models.Model):
         "Штрафной стол", max_length=32, blank=True,
         help_text="Название стола на момент открытия смены.",
     )
+    manual_penalty = models.DecimalField(
+        "Доп. штраф за смену", max_digits=10, decimal_places=2, default=Decimal("0"),
+        help_text=(
+            "Ручное списание с персонала за косяки — делится поровну на всех в "
+            "смене и вычитается из выплаты, помимо штрафного стола."
+        ),
+    )
     created_at = models.DateTimeField("Создана", auto_now_add=True)
 
     class Meta:

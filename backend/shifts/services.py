@@ -96,11 +96,13 @@ def shift_report(shift=None, day=None) -> dict:
         day = shift.date
         rate, percent = shift.daily_rate, shift.bonus_percent
         penalty_table = shift.penalty_table
+        manual_penalty = shift.manual_penalty
         members = list(shift.members.all())
     else:
         cfg = ShiftSettings.load()
         rate, percent = cfg.daily_rate, cfg.bonus_percent
         penalty_table = cfg.penalty_table.name if cfg.penalty_table else ""
+        manual_penalty = Decimal("0")
         members = []
 
     revenue = day_revenue(day, penalty_table)
@@ -111,9 +113,12 @@ def shift_report(shift=None, day=None) -> dict:
     if count:
         bonus_share = money(bonus_pool / count)
         penalty_share = money(penalty / count)
-        payout = max(money(rate + bonus_share - penalty_share), money(0))
+        manual_share = money(manual_penalty / count)
+        payout = max(
+            money(rate + bonus_share - penalty_share - manual_share), money(0)
+        )
     else:
-        bonus_share = penalty_share = payout = money(0)
+        bonus_share = penalty_share = manual_share = payout = money(0)
 
     return {
         "id": shift.id if shift else None,
@@ -123,11 +128,13 @@ def shift_report(shift=None, day=None) -> dict:
         "penalty_table": penalty_table,
         "revenue": str(revenue),
         "penalty": str(penalty),
+        "manual_penalty": str(money(manual_penalty)),
         "bonus_pool": str(bonus_pool),
         "members_count": count,
         # на одного человека в смене
         "bonus_share": str(bonus_share),
         "penalty_share": str(penalty_share),
+        "manual_penalty_share": str(manual_share),
         "payout": str(payout),
         "members": [
             {
@@ -171,7 +178,10 @@ def payroll(shifts, user=None) -> list[dict]:
             row["days"] += 1
             row["base"] += Decimal(report["daily_rate"])
             row["bonus"] += Decimal(report["bonus_share"])
-            row["penalty"] += Decimal(report["penalty_share"])
+            # в «списания» идут и подарки со штрафного стола, и ручной штраф
+            row["penalty"] += Decimal(report["penalty_share"]) + Decimal(
+                report["manual_penalty_share"]
+            )
             row["total"] += Decimal(m["payout"])
     return [
         {**r, **{k: str(money(r[k])) for k in ("base", "bonus", "penalty", "total")}}
