@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { get, post, ApiError } from "../../api";
 import type { Payroll, Shift, StaffUser } from "../../types";
-import Icon from "../../components/Icon";
+import Icon, { type IconName } from "../../components/Icon";
 import { useAuth } from "../../auth";
 
 // «2000.00» → «2 000», «1234.50» → «1 234,5»
@@ -153,16 +153,22 @@ export default function Shifts() {
 
   if (loading) return <p className="muted">Загрузка…</p>;
 
-  const stats = shift && [
-    { icon: "chart", label: "Выручка за день", value: fmtMoney(shift.revenue) },
-    {
-      icon: "spark",
-      label: `Бонус ${fmtMoney(shift.bonus_percent)}% на всех`,
-      value: fmtMoney(shift.bonus_pool),
-    },
-    { icon: "gift", label: "Списания (подарки)", value: fmtMoney(shift.penalty) },
-    { icon: "wallet", label: "К выплате на человека", value: fmtMoney(shift.payout) },
-  ] as const;
+  // Выручку дня видит только менеджер/админ — линейному персоналу оставляем
+  // бонус и его выплату, но не общую выручку заведения.
+  const stats: { icon: IconName; label: string; value: string }[] | null = shift
+    ? [
+        ...(isManager
+          ? [{ icon: "chart" as IconName, label: "Выручка за день", value: fmtMoney(shift.revenue) }]
+          : []),
+        {
+          icon: "spark",
+          label: `Бонус ${fmtMoney(shift.bonus_percent)}% на всех`,
+          value: fmtMoney(shift.bonus_pool),
+        },
+        { icon: "gift", label: "Списания (подарки)", value: fmtMoney(shift.penalty) },
+        { icon: "wallet", label: "К выплате на человека", value: fmtMoney(shift.payout) },
+      ]
+    : null;
 
   return (
     <>
@@ -416,10 +422,13 @@ export default function Shifts() {
                 <strong style={{ fontFamily: "Fredoka", fontSize: 16 }}>
                   {fmtDay(s.date)}
                 </strong>
-                <span className="chip">
-                  <Icon name="chart" size={15} />
-                  <span className="num">{fmtMoney(s.revenue)}</span>
-                </span>
+                {/* выручку дня видит только менеджер/админ */}
+                {isManager && (
+                  <span className="chip">
+                    <Icon name="chart" size={15} />
+                    <span className="num">{fmtMoney(s.revenue)}</span>
+                  </span>
+                )}
               </div>
               <div className="wrap" style={{ marginTop: 10 }}>
                 {s.members.map((m) => (
