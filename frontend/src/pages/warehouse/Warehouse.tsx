@@ -86,6 +86,9 @@ export default function Warehouse() {
 
   // удаление товара (подтверждаем прямо в строке — нативные диалоги в киоске подавлены)
   const [delId, setDelId] = useState<number | null>(null);
+  // подтверждение удаления варианта: он копится сам при распознавании
+  // чеков, случайный тап не должен стирать то, чему система научилась
+  const [delAlias, setDelAlias] = useState<number | null>(null);
 
   async function load() {
     const [c, i, r] = await Promise.all([
@@ -350,6 +353,8 @@ export default function Warehouse() {
     try {
       await del(`/inventory/aliases/${aliasId}/`);
       await load();
+      setDelAlias(null);
+      notify("Вариант убран", "ok");
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "Ошибка", "bad");
     }
@@ -691,20 +696,45 @@ export default function Warehouse() {
                             <> · держать {fmtQty(it.target_quantity ?? Number(it.min_quantity) * 2)} {it.unit_display}</>
                           )}
                         </span>
-                        {/* варианты: как товар называют при закупке и в чеках */}
+                        {/* Варианты — как товар напечатан в чеках поставщиков.
+                            По ним строка чека сопоставляется с товаром при
+                            распознавании по фото, поэтому убираем с подтверждением. */}
                         {it.aliases.length > 0 && (
                           <span className="wrap tight mt-1">
-                            {it.aliases.map((a) => (
-                              <button
-                                key={a.id}
-                                className="chip"
-                                style={{ fontSize: 11 }}
-                                onClick={() => removeVariant(a.id)}
-                                title="Убрать вариант"
-                              >
-                                {a.name} <Icon name="minus" size={11} />
-                              </button>
-                            ))}
+                            <span className="muted sm">в чеках:</span>
+                            {it.aliases.map((a) =>
+                              delAlias === a.id ? (
+                                <span className="wrap tight" key={a.id}>
+                                  <span className="muted sm">убрать «{a.name}»?</span>
+                                  <button
+                                    className="icon-btn sm danger"
+                                    title="Да, убрать"
+                                    aria-label="Да, убрать вариант"
+                                    onClick={() => removeVariant(a.id)}
+                                  >
+                                    <Icon name="check" size={13} />
+                                  </button>
+                                  <button
+                                    className="icon-btn sm"
+                                    title="Отмена"
+                                    aria-label="Отмена"
+                                    onClick={() => setDelAlias(null)}
+                                  >
+                                    <Icon name="close" size={13} />
+                                  </button>
+                                </span>
+                              ) : (
+                                <button
+                                  key={a.id}
+                                  className="chip"
+                                  style={{ fontSize: 11 }}
+                                  onClick={() => setDelAlias(a.id)}
+                                  title="Как товар написан в чеке — нажмите, чтобы убрать"
+                                >
+                                  {a.name} <Icon name="minus" size={11} />
+                                </button>
+                              )
+                            )}
                           </span>
                         )}
                       </div>
