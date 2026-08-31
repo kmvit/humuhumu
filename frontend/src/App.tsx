@@ -12,6 +12,7 @@ import Bar from "./pages/bar/Bar";
 import Admin from "./pages/admin/Admin";
 import Warehouse from "./pages/warehouse/Warehouse";
 import Shifts from "./pages/shifts/Shifts";
+import Finance from "./pages/finance/Finance";
 import Offer from "./pages/legal/Offer";
 import Privacy from "./pages/legal/Privacy";
 import Payment from "./pages/legal/Payment";
@@ -70,6 +71,10 @@ export default function App() {
         {/* смены — всем сотрудникам, клиентам не нужно */}
         {user && user.role !== "client" && (
           <Route path="/shifts" element={<Shifts />} />
+        )}
+        {/* финансы — управленческий раздел: ведомость и деньги заведения */}
+        {(user?.role === "warehouse" || user?.role === "admin") && (
+          <Route path="/finance" element={<Finance />} />
         )}
         <Route path="*" element={<Navigate to={home} replace />} />
       </Route>

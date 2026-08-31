@@ -25,10 +25,12 @@ const NAV: Record<string, { to: string; label: string; icon: IconName }[]> = {
   warehouse: [
     { to: "/warehouse", label: "Склад", icon: "box" },
     { to: "/shifts", label: "Смены", icon: "user" },
+    { to: "/finance", label: "Финансы", icon: "wallet" },
   ],
   admin: [
     { to: "/admin", label: "Админ", icon: "chart" },
     { to: "/shifts", label: "Смены", icon: "user" },
+    { to: "/finance", label: "Финансы", icon: "wallet" },
   ],
   guest: [
     { to: "/", label: "Меню", icon: "coffee" },

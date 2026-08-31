@@ -344,6 +344,44 @@ export interface Payroll {
   rows: PayrollRow[];
 }
 
+// ——— Финансы: ведомость по зарплате за месяц ———
+
+/** Строка ведомости: начислено из смен, выплачено — из журнала выплат. */
+export interface StatementRow extends PayrollRow {
+  accrued: string;
+  paid: string;
+  left: string;
+  settled: boolean;
+}
+
+export interface StatementTotals {
+  accrued: string;
+  paid: string;
+  left: string;
+  people: number;
+  shifts: number;
+}
+
+export interface Statement {
+  period: string;
+  from: string;
+  to: string;
+  rows: StatementRow[];
+  totals: StatementTotals;
+}
+
+/** Расшифровка: из чего сложилась сумма работника в конкретный день. */
+export interface StatementDay {
+  date: string;
+  revenue: string;
+  members_count: number;
+  daily_rate: string;
+  bonus_share: string;
+  penalty_share: string;
+  manual_penalty_share: string;
+  payout: string;
+}
+
 export interface TokenPackage {
   id: number;
   pay_amount: string;
