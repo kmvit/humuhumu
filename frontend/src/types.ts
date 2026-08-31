@@ -370,6 +370,32 @@ export interface Statement {
   totals: StatementTotals;
 }
 
+/** Статья расходов заведения: аренда, коммуналка и прочее. */
+export interface ExpenseCategory {
+  id: number;
+  name: string;
+  sort_order: number;
+  is_active: boolean;
+}
+
+export interface Expense {
+  id: number;
+  date: string;
+  category: number;
+  category_name: string;
+  amount: string;
+  comment: string;
+}
+
+export interface Expenses {
+  period: string;
+  from: string;
+  to: string;
+  rows: Expense[];
+  by_category: { category: number; name: string; total: string }[];
+  total: string;
+}
+
 /** Расшифровка: из чего сложилась сумма работника в конкретный день. */
 export interface StatementDay {
   date: string;

@@ -46,3 +46,60 @@ class PayrollPayout(models.Model):
 
     def __str__(self):
         return f"{self.user} · {self.period:%m.%Y} · {self.amount} ₽"
+
+
+class ExpenseCategory(models.Model):
+    """Статья расходов: аренда, коммуналка, реклама и т. п.
+
+    Справочник, а не enum: у каждого заведения свой набор статей.
+    """
+
+    name = models.CharField("Название", max_length=80, unique=True)
+    sort_order = models.PositiveIntegerField("Порядок", default=0)
+    is_active = models.BooleanField("Активна", default=True)
+
+    class Meta:
+        verbose_name = "Статья расходов"
+        verbose_name_plural = "Статьи расходов"
+        ordering = ("sort_order", "name")
+
+    def __str__(self):
+        return self.name
+
+
+class Expense(models.Model):
+    """Прочий расход заведения — всё, что не зарплата и не закуп продуктов.
+
+    Зарплата считается из смен, закуп — из приходов на склад; здесь аренда,
+    коммуналка, налоги, реклама и прочее, без чего не сойдётся прибыль.
+    """
+
+    date = models.DateField("Дата")
+    category = models.ForeignKey(
+        ExpenseCategory,
+        on_delete=models.PROTECT,
+        related_name="expenses",
+        verbose_name="Статья",
+    )
+    amount = models.DecimalField(
+        "Сумма", max_digits=12, decimal_places=2, default=Decimal("0"),
+    )
+    comment = models.CharField("Комментарий", max_length=200, blank=True)
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="expenses_created",
+        verbose_name="Кто внёс",
+    )
+    created_at = models.DateTimeField("Создан", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Расход"
+        verbose_name_plural = "Расходы"
+        ordering = ("-date", "-id")
+        indexes = [models.Index(fields=["date"])]
+
+    def __str__(self):
+        return f"{self.date} · {self.category} · {self.amount} ₽"

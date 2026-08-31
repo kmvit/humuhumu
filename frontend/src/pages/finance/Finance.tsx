@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { get, post, ApiError } from "../../api";
-import type { Statement, StatementDay, StatementRow } from "../../types";
+import { get, post, del, ApiError } from "../../api";
+import type {
+  Expense,
+  ExpenseCategory,
+  Expenses,
+  Statement,
+  StatementDay,
+  StatementRow,
+} from "../../types";
 import Icon from "../../components/Icon";
 import { useToast } from "../../components/ui/Toast";
 
@@ -47,8 +54,14 @@ export default function Finance() {
   const toast = useToast();
   const thisMonth = useMemo(() => monthKey(new Date()), []);
   const [month, setMonth] = useState(thisMonth);
+  const [tab, setTab] = useState<"payroll" | "expenses">("payroll");
   const [data, setData] = useState<Statement | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // расходы: список за месяц, справочник статей и форма добавления
+  const [expenses, setExpenses] = useState<Expenses | null>(null);
+  const [cats, setCats] = useState<ExpenseCategory[]>([]);
+  const [form, setForm] = useState({ category: "", amount: "", comment: "" });
 
   // раскрытая расшифровка по дням + черновик суммы выплаты
   const [openUser, setOpenUser] = useState<number | null>(null);
@@ -60,7 +73,12 @@ export default function Finance() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setData(await get<Statement>(`/finance/payroll/?month=${month}`));
+      const [st, ex] = await Promise.all([
+        get<Statement>(`/finance/payroll/?month=${month}`),
+        get<Expenses>(`/finance/expenses/?month=${month}`),
+      ]);
+      setData(st);
+      setExpenses(ex);
     } finally {
       setLoading(false);
     }
@@ -71,6 +89,49 @@ export default function Finance() {
     setOpenUser(null);
     setPayFor(null);
   }, [load]);
+
+  useEffect(() => {
+    get<ExpenseCategory[]>("/finance/expense-categories/")
+      .then((list) => {
+        const active = list.filter((c) => c.is_active);
+        setCats(active);
+        setForm((f) => (f.category ? f : { ...f, category: String(active[0]?.id ?? "") }));
+      })
+      .catch(() => {});
+  }, []);
+
+  async function addExpense() {
+    if (!form.category || Number(form.amount) <= 0) return;
+    setBusy(true);
+    try {
+      await post<Expense>("/finance/expenses/", {
+        date: new Date().toISOString().slice(0, 10),
+        category: Number(form.category),
+        amount: form.amount,
+        comment: form.comment,
+      });
+      setForm((f) => ({ ...f, amount: "", comment: "" }));
+      setExpenses(await get<Expenses>(`/finance/expenses/?month=${month}`));
+      toast("Расход добавлен");
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : "Не удалось добавить расход");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeExpense(id: number) {
+    setBusy(true);
+    try {
+      await del(`/finance/expenses/${id}/`);
+      setExpenses(await get<Expenses>(`/finance/expenses/?month=${month}`));
+      toast("Расход удалён");
+    } catch {
+      toast("Не удалось удалить");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function toggleDays(row: StatementRow) {
     if (openUser === row.user) {
@@ -124,15 +185,27 @@ export default function Finance() {
 
   return (
     <>
-      <div className="between">
-        <h1 className="h1">Финансы</h1>
-        <span className="chip">
-          <Icon name="wallet" size={15} /> Ведомость
-        </span>
-      </div>
+      <h1 className="h1">Финансы</h1>
       <p className="muted subtitle">
-        Начисления считаются по сменам, здесь — сколько выплачено и сколько осталось.
+        {tab === "payroll"
+          ? "Начисления считаются по сменам, здесь — сколько выплачено и сколько осталось."
+          : "Аренда, коммуналка и прочее — всё, что не зарплата и не закуп продуктов."}
       </p>
+
+      <div className="tabs">
+        <button
+          className={"navlink" + (tab === "payroll" ? " active" : "")}
+          onClick={() => setTab("payroll")}
+        >
+          <Icon name="wallet" size={16} /> Ведомость
+        </button>
+        <button
+          className={"navlink" + (tab === "expenses" ? " active" : "")}
+          onClick={() => setTab("expenses")}
+        >
+          <Icon name="receipt" size={16} /> Расходы
+        </button>
+      </div>
 
       {/* ——— выбор месяца ——— */}
       <div className="card mt-3">
@@ -157,7 +230,7 @@ export default function Finance() {
       </div>
 
       {/* ——— итог по заведению ——— */}
-      {totals && (
+      {tab === "payroll" && totals && (
         <div className="card mt-3">
           <div className="row">
             <span className="tx-icon"><Icon name="chart" size={17} /></span>
@@ -183,6 +256,7 @@ export default function Finance() {
       )}
 
       {/* ——— строки по людям ——— */}
+      {tab === "payroll" && (
       <div className="stack loose mt-4">
         {data?.rows.map((r) => (
           <div className="card" key={r.user}>
@@ -278,6 +352,111 @@ export default function Finance() {
           <p className="muted center mt-5">В этом месяце смен не было.</p>
         )}
       </div>
+      )}
+
+      {/* ——— расходы ——— */}
+      {tab === "expenses" && (
+        <>
+          <div className="card mt-3">
+            <div className="row">
+              <span className="tx-icon"><Icon name="receipt" size={17} /></span>
+              <div className="row-body">
+                <strong>Расходов за месяц</strong>
+                <span className="muted">
+                  {expenses?.by_category.length
+                    ? expenses.by_category
+                        .map((c) => `${c.name} ${fmtMoney(c.total)}`)
+                        .join(" · ")
+                    : "пока ничего не внесено"}
+                </span>
+              </div>
+              <strong className="num lg">{fmtMoney(expenses?.total)} ₽</strong>
+            </div>
+          </div>
+
+          {/* добавление: статья, сумма, комментарий */}
+          <div className="card mt-3">
+            <div className="wrap">
+              <select
+                className="input"
+                style={{ minWidth: 180 }}
+                value={form.category}
+                onChange={(e) => setForm({ ...form, category: e.target.value })}
+                aria-label="Статья расходов"
+              >
+                {cats.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                className="input"
+                style={{ width: 130 }}
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="Сумма"
+                value={form.amount}
+                onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                aria-label="Сумма расхода"
+              />
+              <input
+                className="input"
+                style={{ flex: 1, minWidth: 160 }}
+                type="text"
+                maxLength={200}
+                placeholder="Комментарий, напр. «август»"
+                value={form.comment}
+                onChange={(e) => setForm({ ...form, comment: e.target.value })}
+                aria-label="Комментарий"
+              />
+              <button
+                className="btn"
+                disabled={busy || !form.category || Number(form.amount) <= 0}
+                onClick={addExpense}
+              >
+                <Icon name="plus" size={16} /> Добавить
+              </button>
+            </div>
+            {cats.length === 0 && (
+              <p className="muted sm mt-2">
+                Статьи расходов заводятся в админке — там же их можно переименовать.
+              </p>
+            )}
+          </div>
+
+          <div className="stack loose mt-3">
+            {expenses?.rows.map((e) => (
+              <div className="card" key={e.id}>
+                <div className="row">
+                  <span className="tx-icon"><Icon name="receipt" size={17} /></span>
+                  <div className="row-body">
+                    <strong>{e.category_name}</strong>
+                    <span className="muted">
+                      {fmtDay(e.date)}
+                      {e.comment ? ` · ${e.comment}` : ""}
+                    </span>
+                  </div>
+                  <strong className="num">{fmtMoney(e.amount)} ₽</strong>
+                  <button
+                    className="icon-btn sm"
+                    title="Удалить расход"
+                    aria-label="Удалить расход"
+                    disabled={busy}
+                    onClick={() => removeExpense(e.id)}
+                  >
+                    <Icon name="trash" size={15} />
+                  </button>
+                </div>
+              </div>
+            ))}
+            {!loading && !expenses?.rows.length && (
+              <p className="muted center mt-5">В этом месяце расходов пока нет.</p>
+            )}
+          </div>
+        </>
+      )}
     </>
   );
 }

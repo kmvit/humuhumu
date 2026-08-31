@@ -36,10 +36,11 @@ def parse_month(raw: str | None, today: date_cls) -> date_cls:
     return today.replace(day=1)
 
 
-def statement(period: date_cls, user=None) -> dict:
-    """Ведомость за месяц.
+def statement(period: date_cls) -> dict:
+    """Ведомость за месяц по всей команде.
 
-    user — ограничить одной строкой (работник видит только себя).
+    Раздел управленческий, поэтому без фильтра по работнику: сюда попадают
+    только менеджер и админ (см. finance/views.py).
     """
     first, last = month_bounds(period)
 
@@ -48,15 +49,10 @@ def statement(period: date_cls, user=None) -> dict:
         .prefetch_related("members__user")
         .order_by("date")
     )
-    if user is not None:
-        shifts = shifts.filter(members__user=user).distinct()
-
-    rows = payroll(shifts, user=user)
+    rows = payroll(shifts)
 
     # Выплаты за этот месяц — одним запросом, а не по строке на человека
     paid_qs = PayrollPayout.objects.filter(period=first)
-    if user is not None:
-        paid_qs = paid_qs.filter(user=user)
     paid_by_user = {
         r["user"]: r["total"]
         for r in paid_qs.values("user").annotate(total=Sum("amount"))

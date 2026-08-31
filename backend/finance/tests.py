@@ -1,3 +1,4 @@
+from datetime import timedelta
 from decimal import Decimal
 
 from django.utils import timezone
@@ -7,7 +8,7 @@ from orders.models import Order, Table
 from shifts.models import ShiftSettings
 from users.models import User
 
-from .models import PayrollPayout
+from .models import Expense, ExpenseCategory, PayrollPayout
 
 
 class PayrollStatementTests(APITestCase):
@@ -136,13 +137,14 @@ class PayrollStatementTests(APITestCase):
 
     # ——— права ———
 
-    def test_worker_sees_only_own_row_and_no_totals_of_others(self):
+    def test_worker_has_no_access_to_section(self):
+        """«Финансы» — управленческий раздел: работника не пускаем вовсе."""
         self.sale("10000")
         self.put_in_shift(self.cook, self.waiter)
         self.auth(self.cook)
-        data = self.statement()
-        self.assertEqual(len(data["rows"]), 1)
-        self.assertEqual(data["rows"][0]["user"], self.cook.id)
+        self.assertEqual(
+            self.client.get(f"/api/finance/payroll/?month={self.month}").status_code, 403
+        )
 
     def test_worker_cannot_mark_payment(self):
         self.put_in_shift(self.cook)
@@ -154,7 +156,7 @@ class PayrollStatementTests(APITestCase):
         )
         self.assertEqual(res.status_code, 403)
 
-    def test_worker_cannot_read_someone_elses_days(self):
+    def test_worker_cannot_read_days(self):
         self.put_in_shift(self.cook, self.waiter)
         self.auth(self.cook)
         res = self.client.get(
@@ -175,3 +177,84 @@ class PayrollStatementTests(APITestCase):
         self.assertEqual(days[0]["daily_rate"], "2000.00")
         self.assertEqual(days[0]["bonus_share"], "1000.00")
         self.assertEqual(days[0]["payout"], "3000.00")
+
+
+class ExpenseTests(APITestCase):
+    """Прочие расходы: аренда и всё, что не зарплата и не закуп."""
+
+    def setUp(self):
+        self.manager = User.objects.create_user(
+            username="manager", password="demo12345", role=User.Role.WAREHOUSE
+        )
+        self.cook = User.objects.create_user(
+            username="cook", password="demo12345", role=User.Role.COOK
+        )
+        self.today = timezone.localdate()
+        self.month = self.today.strftime("%Y-%m")
+        # «Аренда» уже засеяна миграцией стартовых статей — берём её
+        self.rent, _ = ExpenseCategory.objects.get_or_create(
+            name="Аренда", defaults={"sort_order": 10}
+        )
+        self.utils, _ = ExpenseCategory.objects.get_or_create(
+            name="Коммуналка", defaults={"sort_order": 20}
+        )
+
+    def auth(self, user):
+        res = self.client.post(
+            "/api/auth/token/",
+            {"username": user.username, "password": "demo12345"},
+            format="json",
+        )
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {res.data['access']}")
+
+    def add(self, category, amount, comment=""):
+        return self.client.post(
+            "/api/finance/expenses/",
+            {
+                "date": self.today.isoformat(),
+                "category": category.id,
+                "amount": amount,
+                "comment": comment,
+            },
+            format="json",
+        )
+
+    def test_month_total_and_breakdown_by_category(self):
+        self.auth(self.manager)
+        self.add(self.rent, "80000", "август")
+        self.add(self.utils, "12000")
+        self.add(self.utils, "3000")
+
+        data = self.client.get(f"/api/finance/expenses/?month={self.month}").data
+        self.assertEqual(data["total"], "95000.00")
+        self.assertEqual(len(data["rows"]), 3)
+        by_cat = {c["name"]: c["total"] for c in data["by_category"]}
+        self.assertEqual(by_cat["Аренда"], "80000.00")
+        self.assertEqual(by_cat["Коммуналка"], "15000.00")
+
+    def test_other_month_is_not_counted(self):
+        self.auth(self.manager)
+        self.add(self.rent, "80000")
+        other = (self.today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+        data = self.client.get(f"/api/finance/expenses/?month={other}").data
+        self.assertEqual(data["total"], "0.00")
+        self.assertEqual(data["rows"], [])
+
+    def test_zero_amount_rejected(self):
+        self.auth(self.manager)
+        res = self.add(self.rent, "0")
+        self.assertEqual(res.status_code, 400)
+
+    def test_expense_can_be_deleted(self):
+        self.auth(self.manager)
+        created = self.add(self.rent, "5000").data
+        res = self.client.delete(f"/api/finance/expenses/{created['id']}/")
+        self.assertEqual(res.status_code, 204)
+        self.assertEqual(Expense.objects.count(), 0)
+
+    def test_worker_has_no_access(self):
+        self.auth(self.cook)
+        self.assertEqual(
+            self.client.get(f"/api/finance/expenses/?month={self.month}").status_code, 403
+        )
+        self.assertEqual(self.add(self.rent, "1000").status_code, 403)

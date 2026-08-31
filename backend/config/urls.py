@@ -8,7 +8,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from catalog.views import CategoryViewSet, ProductViewSet
 from core.branding import app_icon, manifest
-from finance.views import PayrollViewSet
+from finance.views import ExpenseCategoryViewSet, ExpenseViewSet, PayrollViewSet
 from core.views import SiteSettingsView
 from inventory.views import (
     PurchaseLineViewSet,
@@ -38,6 +38,12 @@ router.register("orders", OrderViewSet, basename="order")
 router.register("tables", TableViewSet, basename="table")
 router.register("shifts", ShiftViewSet, basename="shift")
 router.register("finance/payroll", PayrollViewSet, basename="finance-payroll")
+router.register("finance/expenses", ExpenseViewSet, basename="finance-expense")
+router.register(
+    "finance/expense-categories",
+    ExpenseCategoryViewSet,
+    basename="finance-expense-category",
+)
 router.register("inventory/categories", StockCategoryViewSet, basename="stock-category")
 router.register("inventory/items", StockItemViewSet, basename="stock-item")
 router.register("inventory/aliases", StockItemAliasViewSet, basename="stock-alias")
