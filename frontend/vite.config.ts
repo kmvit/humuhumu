@@ -12,36 +12,25 @@ export default defineConfig({
     VitePWA({
       // Новый SW применяется сам при следующем заходе — как деплой index.html сейчас.
       registerType: "autoUpdate",
-      // Иконки/фавикон кладём в precache, чтобы приложение ставилось и работало офлайн.
-      includeAssets: ["favicon.svg", "favicon-64.png", "apple-touch-icon.png"],
-      manifest: {
-        name: "ХУМУ — кафе",
-        short_name: "ХУМУ",
-        description: "Меню и заказы кафе ХУМУ",
-        lang: "ru",
-        start_url: "/",
-        scope: "/",
-        display: "standalone",
-        theme_color: "#fb6e3c", // цвет верхней плашки — как у шапки сайта
-        background_color: "#8ea3e6", // фон сплэш-экрана — под логотип
-        icons: [
-          { src: "pwa-192x192.png", sizes: "192x192", type: "image/png" },
-          { src: "pwa-512x512.png", sizes: "512x512", type: "image/png" },
-          {
-            src: "pwa-maskable-512x512.png",
-            sizes: "512x512",
-            type: "image/png",
-            purpose: "maskable",
-          },
-        ],
-      },
+      // Манифест НЕ генерируем: его отдаёт бэкенд из настроек заведения
+      // (см. backend/core/branding.py). Ссылка на него — в index.html.
+      // Иначе у всех кафе приложение установилось бы под одним именем.
+      manifest: false,
       workbox: {
         // Оболочка приложения (хешированные js/css/html + иконки/шрифты) — в precache.
         globPatterns: ["**/*.{js,css,html,svg,png,ico,woff,woff2}"],
         // SPA-роутинг офлайн: любые переходы отдаём из index.html…
         navigateFallback: "/index.html",
         // …кроме бэкенда и файлов — их SW не перехватывает.
-        navigateFallbackDenylist: [/^\/api/, /^\/admin/, /^\/media/, /^\/static/],
+        navigateFallbackDenylist: [
+          /^\/api/,
+          /^\/admin/,
+          /^\/media/,
+          /^\/static/,
+          // манифест и иконки заведения приходят с бэкенда, а не из оболочки
+          /^\/manifest\.webmanifest$/,
+          /^\/app-icon-/,
+        ],
         cleanupOutdatedCaches: true,
         clientsClaim: true,
         skipWaiting: true,

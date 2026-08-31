@@ -1,7 +1,9 @@
-import { MERCHANT, ACQUIRER } from "../../legal";
+import { useAcquirer, useMerchant } from "../../legal";
 import LegalPage from "./LegalPage";
 
 export default function Offer() {
+  const merchant = useMerchant();
+  const acquirer = useAcquirer();
   return (
     <LegalPage
       title="Публичная оферта"
@@ -9,7 +11,7 @@ export default function Offer() {
     >
       <p>
         Настоящий документ является официальным предложением (публичной офертой)
-        {" "}{MERCHANT.name} (ИНН {MERCHANT.inn}, ОГРНИП {MERCHANT.ogrnip}), далее —
+        {" "}{merchant.name} (ИНН {merchant.inn}, ОГРНИП {merchant.ogrnip}), далее —
         «Продавец», и содержит все существенные условия договора купли-продажи товаров.
       </p>
 
@@ -56,7 +58,7 @@ export default function Offer() {
       <h2>5. Цена и порядок оплаты</h2>
       <p>
         Цена Товара указывается на сайте в рублях РФ. Оплата производится онлайн банковской
-        картой через систему интернет-эквайринга {ACQUIRER}. Обязательства по оплате
+        картой через систему интернет-эквайринга {acquirer}. Обязательства по оплате
         считаются исполненными с момента подтверждения платежа банком. После оплаты
         Покупателю направляется кассовый чек в соответствии с Федеральным законом № 54-ФЗ.
       </p>
@@ -93,17 +95,17 @@ export default function Offer() {
 
       <h2>10. Реквизиты Продавца</h2>
       <p style={{ margin: 0 }}>
-        {MERCHANT.name}
+        {merchant.name}
         <br />
-        Юридический адрес: {MERCHANT.address}
+        Юридический адрес: {merchant.address}
         <br />
-        ИНН: {MERCHANT.inn}
+        ИНН: {merchant.inn}
         <br />
-        ОГРНИП: {MERCHANT.ogrnip}
+        ОГРНИП: {merchant.ogrnip}
         <br />
-        Расчётный счёт: {MERCHANT.account}
+        Расчётный счёт: {merchant.account}
         <br />
-        Банк: {MERCHANT.bank}, БИК {MERCHANT.bik}, корр. счёт {MERCHANT.corrAccount}
+        Банк: {merchant.bank}, БИК {merchant.bik}, корр. счёт {merchant.corrAccount}
       </p>
     </LegalPage>
   );

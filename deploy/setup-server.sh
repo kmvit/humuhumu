@@ -45,8 +45,9 @@ cat <<'EOF'
 ==> Готово. Дальше — создать администратора:
     cd /opt/humu
     docker compose -f docker-compose.prod.yml exec backend python manage.py createsuperuser
-    docker compose -f docker-compose.prod.yml exec backend python manage.py load_menu
 
-Сайт: https://humuhumunukunukuapua.ru
-Админка: https://humuhumunukunukuapua.ru/admin/
+Затем в админке заполнить настройки заведения (название, логотип, цвет,
+реквизиты), завести столы и меню — всё это данные, а не код.
+
+Сайт и админка — на домене из DJANGO_ALLOWED_HOSTS в .env
 EOF

@@ -10,7 +10,7 @@ const THEMES: { key: AppTheme; name: string; accent: string }[] = [
   { key: "neutral", name: "Нейтраль", accent: "#3557c7" },
   { key: "warm", name: "Тёплая", accent: "#9c5a1e" },
   { key: "strict", name: "Строгая", accent: "#0d7a52" },
-  { key: "humu", name: "хуму", accent: "#1f58a6" },
+  { key: "island", name: "Островная", accent: "#1f58a6" },
 ];
 
 // Готовые акценты «цвета заведения»; свой цвет — через пипетку рядом.

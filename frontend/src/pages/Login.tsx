@@ -55,9 +55,11 @@ export default function Login() {
             {site?.logo ? <img src={site.logo} alt="" /> : <Icon name="coffee" size={30} />}
           </span>
           <h1 className="h1">{site?.name ?? "Добро пожаловать"}</h1>
-          <p className="script" style={{ fontSize: 22, color: "var(--brand-2)", margin: "2px 0 0" }}>
-            {site?.tagline ?? "островной вайб · кофе · токены"}
-          </p>
+          {site?.tagline && (
+            <p className="script" style={{ fontSize: 22, color: "var(--brand-2)", margin: "2px 0 0" }}>
+              {site.tagline}
+            </p>
+          )}
           <Link to="/" className="navlink" style={{ marginTop: 12 }}>
             <Icon name="coffee" size={16} /> Посмотреть меню
           </Link>

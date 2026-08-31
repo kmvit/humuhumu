@@ -90,7 +90,7 @@
 }
 
 /* «хуму» — авторская тема первого кафе: гравюра синим по кремовой бумаге */
-:root[data-app-theme="humu"] {
+:root[data-app-theme="island"] {
   --font-display: "Jost", sans-serif;
   --font-body: "Manrope", system-ui, sans-serif;
   --w-display: 400;
@@ -165,7 +165,7 @@
   --rule: rgba(237, 239, 239, 0.24);
 }
 
-:root[data-app-theme="humu"][data-theme="dark"] {
+:root[data-app-theme="island"][data-theme="dark"] {
   --accent: #8ab8ea;
   --on-brand: #f2eadb;
   --brand-2: #a8cbf2;

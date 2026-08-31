@@ -1,11 +1,11 @@
-# Засеваем текущие столы 1..10, чтобы они не пропали при переходе на реестр.
+# Историческая миграция: когда-то засевала столы 1..10 первому кафе.
+# Продукт ставится разным заведениям, поэтому сид отключён — столы заводит
+# само заведение. Файл оставлен, чтобы не рвать историю миграций.
 from django.db import migrations
 
 
 def seed(apps, schema_editor):
-    Table = apps.get_model("orders", "Table")
-    for i in range(1, 11):
-        Table.objects.get_or_create(name=str(i), defaults={"sort_order": i})
+    pass
 
 
 def unseed(apps, schema_editor):

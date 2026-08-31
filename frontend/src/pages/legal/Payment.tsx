@@ -1,7 +1,8 @@
-import { ACQUIRER } from "../../legal";
+import { useAcquirer } from "../../legal";
 import LegalPage from "./LegalPage";
 
 export default function Payment() {
+  const acquirer = useAcquirer();
   return (
     <LegalPage
       title="Оплата, получение и возврат"
@@ -11,7 +12,7 @@ export default function Payment() {
       <p>
         Оплата заказа производится онлайн на сайте банковской картой платёжных систем
         Visa, Mastercard и «Мир». Приём платежей осуществляется через систему интернет-
-        эквайринга {ACQUIRER}.
+        эквайринга {acquirer}.
       </p>
 
       <h2>2. Безопасность платежей</h2>

@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { useSite } from "../site";
-import { MERCHANT } from "../legal";
+import { useMerchant } from "../legal";
 import Icon, { type IconName } from "./Icon";
 
 const DOCS = [
@@ -12,6 +12,7 @@ const DOCS = [
 
 export default function Footer() {
   const site = useSite();
+  const merchant = useMerchant();
   if (!site) return null;
 
   const contacts: { icon: IconName; text: string; href?: string }[] = [
@@ -69,7 +70,10 @@ export default function Footer() {
       </div>
 
       <p className="muted footer-copy">
-        © {site.name} · {MERCHANT.shortName} · ИНН {MERCHANT.inn} · ОГРНИП {MERCHANT.ogrnip}
+        © {site.name}
+        {merchant.shortName && ` · ${merchant.shortName}`}
+        {merchant.inn && ` · ИНН ${merchant.inn}`}
+        {merchant.ogrnip && ` · ОГРНИП ${merchant.ogrnip}`}
       </p>
     </footer>
   );

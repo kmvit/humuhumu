@@ -33,3 +33,6 @@ dist/
 
 # Локальные настройки Claude Code
 .claude/settings.local.json
+
+# Лэндинг продукта «Подача» — переедет в отдельный сайт
+/landing/

@@ -9,36 +9,29 @@ import InstallPWA from "./InstallPWA";
 const NAV: Record<string, { to: string; label: string; icon: IconName }[]> = {
   client: [
     { to: "/client", label: "Меню", icon: "coffee" },
-    { to: "/coworking", label: "Коворкинг", icon: "laptop" },
   ],
   waiter: [
     { to: "/waiter", label: "Столы", icon: "store" },
     { to: "/shifts", label: "Смены", icon: "user" },
-    { to: "/coworking", label: "Коворкинг", icon: "laptop" },
   ],
   cook: [
     { to: "/kitchen", label: "Кухня", icon: "sandwich" },
     { to: "/shifts", label: "Смены", icon: "user" },
-    { to: "/coworking", label: "Коворкинг", icon: "laptop" },
   ],
   bar: [
     { to: "/bar", label: "Бар", icon: "coffee" },
     { to: "/shifts", label: "Смены", icon: "user" },
-    { to: "/coworking", label: "Коворкинг", icon: "laptop" },
   ],
   warehouse: [
     { to: "/warehouse", label: "Склад", icon: "box" },
     { to: "/shifts", label: "Смены", icon: "user" },
-    { to: "/coworking", label: "Коворкинг", icon: "laptop" },
   ],
   admin: [
     { to: "/admin", label: "Админ", icon: "chart" },
     { to: "/shifts", label: "Смены", icon: "user" },
-    { to: "/coworking", label: "Коворкинг", icon: "laptop" },
   ],
   guest: [
     { to: "/", label: "Меню", icon: "coffee" },
-    { to: "/coworking", label: "Коворкинг", icon: "laptop" },
   ],
 };
 
@@ -52,10 +45,7 @@ export default function Layout() {
   const site = useSite();
   const navigate = useNavigate();
   const staff = !!user && STAFF_ROLES.includes(user.role);
-  // у рабочих ролей в панели только доска и «Смены» — коворкинг убираем
-  const links = (NAV[user?.role ?? "guest"] ?? []).filter(
-    (l) => !staff || l.to !== "/coworking"
-  );
+  const links = NAV[user?.role ?? "guest"] ?? [];
 
   const themeBtn = (
     <button

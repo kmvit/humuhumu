@@ -4,7 +4,6 @@ import { useAppearance } from "./site";
 import Layout from "./components/Layout";
 import { PaperBackdrop } from "./components/Ornaments";
 import Login from "./pages/Login";
-import Coworking from "./pages/Coworking";
 import Menu from "./pages/client/Menu";
 import MenuReels from "./pages/client/MenuReels";
 import Waiter from "./pages/waiter/Waiter";
@@ -32,8 +31,8 @@ export default function App() {
   const { user, loading } = useAuth();
   const { theme } = useAppearance();
 
-  // фирменный декор (штриховка, пальмы) — только в авторской теме «хуму»
-  const orbs = theme === "humu" ? <PaperBackdrop /> : null;
+  // фирменный декор (штриховка, пальмы) — только в «Островной» теме
+  const orbs = theme === "island" ? <PaperBackdrop /> : null;
 
   if (loading)
     return (
@@ -56,8 +55,6 @@ export default function App() {
       {/* экспериментальное меню Reels — полноэкранное, без общего Layout */}
       <Route path="/reels" element={<MenuReels />} />
       <Route element={<Layout />}>
-        {/* коворкинг — информационная страница, открыта всем */}
-        <Route path="/coworking" element={<Coworking />} />
         {/* юридические страницы — открыты всем */}
         <Route path="/offer" element={<Offer />} />
         <Route path="/privacy" element={<Privacy />} />

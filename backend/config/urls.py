@@ -7,6 +7,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from catalog.views import CategoryViewSet, ProductViewSet
+from core.branding import app_icon, manifest
 from core.views import SiteSettingsView
 from inventory.views import (
     PurchaseLineViewSet,
@@ -66,6 +67,15 @@ api_patterns = [
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/", include(api_patterns)),
+    # PWA: имя и иконка приложения — из настроек заведения, а не из сборки фронта.
+    path("manifest.webmanifest", manifest, name="manifest"),
+    path("app-icon-<int:size>.png", app_icon, name="app-icon"),
+    path(
+        "app-icon-<int:size>-maskable.png",
+        app_icon,
+        {"maskable": True},
+        name="app-icon-maskable",
+    ),
 ]
 
 if settings.DEBUG:

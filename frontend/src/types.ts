@@ -1,8 +1,9 @@
-export type AppTheme = "neutral" | "warm" | "strict" | "humu";
+export type AppTheme = "neutral" | "warm" | "strict" | "island";
 
 export interface Site {
   name: string;
   tagline: string;
+  app_short_name: string;
   logo: string | null;
   phone: string;
   email: string;
@@ -13,6 +14,21 @@ export interface Site {
   about: string;
   theme: AppTheme;
   accent_color: string;
+  // Реквизиты продавца — подставляются в оферту, оплату и контакты.
+  merchant_type: string;
+  merchant_name: string;
+  merchant_short: string;
+  merchant_address: string;
+  merchant_inn: string;
+  merchant_ogrn: string;
+  merchant_account: string;
+  merchant_bank: string;
+  merchant_bank_inn: string;
+  merchant_bik: string;
+  merchant_corr_account: string;
+  merchant_bank_address: string;
+  acquirer: string;
+  legal_updated: string;
 }
 
 export type Role = "client" | "waiter" | "cook" | "bar" | "warehouse" | "admin";

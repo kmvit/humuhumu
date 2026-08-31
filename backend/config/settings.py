@@ -88,8 +88,9 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
-LANGUAGE_CODE = "ru-ru"
-TIME_ZONE = "Europe/Moscow"
+LANGUAGE_CODE = os.getenv("DJANGO_LANGUAGE_CODE", "ru-ru")
+# Часовой пояс заведения: от него зависят границы смены и выручка дня.
+TIME_ZONE = os.getenv("DJANGO_TIME_ZONE", "Europe/Moscow")
 USE_I18N = True
 USE_TZ = True
 

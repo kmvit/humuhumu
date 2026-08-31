@@ -46,6 +46,16 @@ export function applyAppearance(theme: AppTheme, accent: string) {
   }
 }
 
+/** Название заведения — в заголовок вкладки и в подпись иконки на iOS.
+ *  В index.html эти значения нейтральные: конкретное имя знает только API. */
+function applyIdentity(site: Site) {
+  const name = (site.name || "").trim();
+  if (!name) return;
+  document.title = name;
+  const apple = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+  if (apple) apple.setAttribute("content", name);
+}
+
 type Appearance = {
   theme: AppTheme;
   accent: string;
@@ -82,6 +92,7 @@ export function SiteProvider({ children }: { children: ReactNode }) {
       .then((s) => {
         setSite(s);
         set(s.theme, s.accent_color);
+        applyIdentity(s);
       })
       .catch(() => {});
   }, [set]);

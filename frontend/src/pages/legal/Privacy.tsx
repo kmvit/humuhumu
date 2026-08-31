@@ -1,8 +1,10 @@
 import { useSite } from "../../site";
-import { MERCHANT, ACQUIRER } from "../../legal";
+import { useAcquirer, useMerchant } from "../../legal";
 import LegalPage from "./LegalPage";
 
 export default function Privacy() {
+  const merchant = useMerchant();
+  const acquirer = useAcquirer();
   const site = useSite();
   const contact = [site?.email, site?.phone].filter(Boolean).join(", ");
 
@@ -13,8 +15,8 @@ export default function Privacy() {
     >
       <h2>1. Общие положения</h2>
       <p>
-        Оператором персональных данных является {MERCHANT.name} (ИНН {MERCHANT.inn},
-        ОГРНИП {MERCHANT.ogrnip}), далее — «Оператор». Настоящая Политика определяет
+        Оператором персональных данных является {merchant.name} (ИНН {merchant.inn},
+        ОГРНИП {merchant.ogrnip}), далее — «Оператор». Настоящая Политика определяет
         порядок обработки и защиты персональных данных пользователей сайта.
       </p>
       <p>
@@ -31,7 +33,7 @@ export default function Privacy() {
       </ul>
       <p>
         Данные банковской карты Оператором не собираются и не хранятся — они вводятся на
-        защищённой странице банка-эквайера {ACQUIRER} и обрабатываются банком.
+        защищённой странице банка-эквайера {acquirer} и обрабатываются банком.
       </p>
 
       <h2>3. Цели обработки</h2>
@@ -51,7 +53,7 @@ export default function Privacy() {
 
       <h2>5. Передача третьим лицам</h2>
       <p>
-        Персональные данные могут передаваться банку-эквайеру {ACQUIRER} для проведения
+        Персональные данные могут передаваться банку-эквайеру {acquirer} для проведения
         платежа и оператору фискальных данных для формирования кассового чека. В иных
         случаях данные третьим лицам не передаются, за исключением случаев, предусмотренных
         законодательством РФ.
@@ -82,7 +84,7 @@ export default function Privacy() {
       <p>
         По вопросам обработки персональных данных обращайтесь к Оператору
         {contact ? <>: {contact}</> : <> по контактам, указанным в разделе «Реквизиты и контакты»</>}.
-        Адрес: {MERCHANT.address}.
+        Адрес: {merchant.address}.
       </p>
     </LegalPage>
   );
