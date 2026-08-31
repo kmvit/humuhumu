@@ -251,8 +251,11 @@ export default function Finance() {
                 <div className="row-body">
                   <strong>Прибыль показана как оценка сверху</strong>
                   <span className="muted">
-                    Себестоимость известна по {report.cost_coverage}% выручки. Чтобы
-                    цифра стала точной, нужны тех. карты блюд и цены закупа товаров.
+                    {report.cost_coverage > 0
+                      ? `Себестоимость известна по ${report.cost_coverage}% выручки.`
+                      : "Себестоимость продуктов не учтена совсем."}{" "}
+                    Чтобы цифра стала точной, нужны тех. карты блюд и цены закупа
+                    товаров.
                   </span>
                 </div>
               </div>
@@ -276,7 +279,11 @@ export default function Finance() {
               <span className="tx-icon"><Icon name="box" size={17} /></span>
               <div className="row-body">
                 <strong>Себестоимость проданного</strong>
-                <span className="muted">по тех. картам, {report.cost_coverage}% выручки</span>
+                <span className="muted">
+                  {report.cost_coverage > 0
+                    ? `по тех. картам, ${report.cost_coverage}% выручки`
+                    : "нет ни одной тех. карты с ценами закупа"}
+                </span>
               </div>
               <strong className="num">−{fmtMoney(report.cogs)} ₽</strong>
             </div>
@@ -285,7 +292,11 @@ export default function Finance() {
               <span className="tx-icon"><Icon name="spark" size={17} /></span>
               <div className="row-body">
                 <strong>Валовая прибыль</strong>
-                <span className="muted">наценка {report.margin}%</span>
+                <span className="muted">
+                  {report.cost_coverage > 0
+                    ? `наценка ${report.margin}%`
+                    : "наценку не посчитать — себестоимость неизвестна"}
+                </span>
               </div>
               <strong className="num lg">{fmtMoney(report.gross)} ₽</strong>
             </div>
