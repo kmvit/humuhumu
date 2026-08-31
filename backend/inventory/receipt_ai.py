@@ -41,7 +41,9 @@ _SYSTEM_PROMPT = (
     "На фото — чек. Извлеки КАЖДУЮ товарную позицию строкой. "
     "Для каждой позиции верни: name (наименование как в чеке), quantity (число), "
     "unit (единица как в чеке: кг, г, л, мл, шт, уп и т.п.), unit_cost (цена за "
-    "единицу в рублях, число, или null если не видно). Также supplier (поставщик/"
+    "единицу в рублях, число, или null если не видно), line_total (сумма по "
+    "строке в рублях — итоговая, со скидкой, или null если не видно). "
+    "Также supplier (поставщик/"
     "магазин), date (дата чека в ISO или null), total (итог по чеку или null). "
     "Не выдумывай позиции, которых нет. Числа — с точкой, без пробелов и валюты."
 )
@@ -61,8 +63,9 @@ _SCHEMA = {
                     "quantity": {"type": "number"},
                     "unit": {"type": "string"},
                     "unit_cost": {"type": ["number", "null"]},
+                    "line_total": {"type": ["number", "null"]},
                 },
-                "required": ["name", "quantity", "unit", "unit_cost"],
+                "required": ["name", "quantity", "unit", "unit_cost", "line_total"],
                 "additionalProperties": False,
             },
         },
@@ -125,21 +128,37 @@ def recognize_receipt(image_bytes: bytes, mime: str = "image/jpeg") -> dict:
 def _convert_to_base(quantity, unit: str, item_unit: str):
     """Привести количество из чека к базовой единице позиции.
 
-    Возвращает (base_quantity, ok): ok=False, если семейство единиц не совпало
-    (например в чеке «кг», а позиция штучная) — тогда base_quantity=сырое число
-    и строку нужно проверить вручную.
+    Возвращает (base_quantity, ok, factor): ok=False, если семейство единиц не
+    совпало (например в чеке «кг», а позиция штучная) — тогда
+    base_quantity=сырое число и строку нужно проверить вручную.
+    factor нужен ещё и для цены: «180 ₽ за кг» — это 0.18 ₽ за грамм.
     """
     fam_factor = _UNIT_MAP.get(_normalize(unit))
     try:
         qty = float(quantity)
     except (TypeError, ValueError):
-        return None, False
+        return None, False, 1.0
     if not fam_factor:
-        return qty, False
+        return qty, False, 1.0
     family, factor = fam_factor
     if family != item_unit:
-        return qty, False
-    return qty * factor, True
+        return qty, False, 1.0
+    return qty * factor, True, factor
+
+
+def _line_cost(line_total, unit_cost, base_qty, factor: float):
+    """Цена за базовую единицу: из суммы по строке или из цены за единицу чека."""
+    try:
+        if line_total is not None and base_qty:
+            return round(float(line_total) / float(base_qty), 4)
+    except (TypeError, ValueError, ZeroDivisionError):
+        pass
+    try:
+        if unit_cost is not None and factor:
+            return round(float(unit_cost) / float(factor), 4)
+    except (TypeError, ValueError, ZeroDivisionError):
+        pass
+    return None
 
 
 def _item_names(item) -> list[str]:
@@ -185,17 +204,26 @@ def build_draft(raw: dict) -> dict:
         match, score = _best_match(name, items, aliases)
         matched = match if score >= MATCH_THRESHOLD else None
 
-        base_qty, unit_ok = (None, False)
+        base_qty, unit_ok, factor = (None, False, 1.0)
         if matched is not None:
-            base_qty, unit_ok = _convert_to_base(
+            base_qty, unit_ok, factor = _convert_to_base(
                 row.get("quantity"), row.get("unit") or "", matched.unit
             )
+
+        # Цена — за базовую единицу. Сумма по строке надёжнее цены за единицу:
+        # она есть в любом чеке и уже учитывает скидку. Если суммы нет, берём
+        # цену из чека и делим на тот же коэффициент, что и количество, иначе
+        # «180 ₽ за кг» превратились бы в 180 ₽ за грамм.
+        base_cost = _line_cost(
+            row.get("line_total"), row.get("unit_cost"), base_qty, factor
+        )
 
         lines.append({
             "raw_name": name,
             "raw_quantity": row.get("quantity"),
             "raw_unit": (row.get("unit") or "").strip(),
-            "unit_cost": row.get("unit_cost"),
+            "line_total": row.get("line_total"),
+            "unit_cost": base_cost,
             "matched_item_id": matched.id if matched else None,
             "matched_item_name": matched.name if matched else None,
             "matched_item_unit": matched.unit if matched else None,

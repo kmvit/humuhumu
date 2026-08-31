@@ -20,6 +20,8 @@ const UNITS: { value: StockUnit; label: string }[] = [
   { value: "pcs", label: "шт" },
 ];
 
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
 // «5500.000» → «5 500», «1.500» → «1,5»
 function fmtQty(q: string | number | null): string {
   if (q === null || q === "") return "0";
@@ -29,7 +31,9 @@ function fmtQty(q: string | number | null): string {
 type Line = {
   item: number | "";
   quantity: string;
-  unit_cost: string;
+  /** Сумма по строке, как в чеке. Цену за базовую единицу считаем сами:
+   *  никто не знает цену за грамм, зато сумма напечатана в любом чеке. */
+  amount: string;
   // подсказки от распознавания чека (только для черновика по фото)
   hint?: string; // как позиция называется в чеке
   rawName?: string; // название из чека — запомнится вариантом товара
@@ -108,7 +112,7 @@ export default function Warehouse() {
 
   // ——— приход ———
   function addLine() {
-    setLines((l) => [...l, { item: items[0]?.id ?? "", quantity: "", unit_cost: "" }]);
+    setLines((l) => [...l, { item: items[0]?.id ?? "", quantity: "", amount: "" }]);
   }
   function setLine(idx: number, patch: Partial<Line>) {
     setLines((l) => l.map((x, i) => (i === idx ? { ...x, ...patch } : x)));
@@ -122,7 +126,7 @@ export default function Warehouse() {
     setEditReceiptId(null);
     setSupplier("");
     setComment("");
-    setLines(items.length ? [{ item: items[0].id, quantity: "", unit_cost: "" }] : []);
+    setLines(items.length ? [{ item: items[0].id, quantity: "", amount: "" }] : []);
     setReceiptOpen(true);
   }
 
@@ -133,7 +137,7 @@ export default function Warehouse() {
     setSupplier("");
     setComment("");
     setLines(
-      preset.map((p) => ({ item: p.item, quantity: String(p.quantity), unit_cost: "" }))
+      preset.map((p) => ({ item: p.item, quantity: String(p.quantity), amount: "" }))
     );
     setReceiptOpen(true);
   }
@@ -155,7 +159,10 @@ export default function Warehouse() {
         return {
           item: matched ? (l.matched_item_id as number) : "",
           quantity: qty != null ? String(qty) : "",
-          unit_cost: l.unit_cost != null ? String(l.unit_cost) : "",
+          amount:
+            l.unit_cost != null && qty != null
+              ? String(round2(Number(l.unit_cost) * Number(qty)))
+              : "",
           hint: `${l.raw_name}${l.raw_quantity != null ? ` · ${l.raw_quantity} ${l.raw_unit}` : ""}`,
           rawName: l.raw_name,
           warn: !matched || !l.unit_ok,
@@ -207,7 +214,10 @@ export default function Warehouse() {
       .map((l) => ({
         item: l.item,
         quantity: Number(l.quantity),
-        ...(l.unit_cost.trim() ? { unit_cost: Number(l.unit_cost) } : {}),
+        // Сумма делится на количество — так цена всегда за базовую единицу.
+        ...(l.amount.trim() && Number(l.quantity) > 0
+          ? { unit_cost: Number(l.amount) / Number(l.quantity) }
+          : {}),
         // Название из чека — чтобы в следующий раз строка сопоставилась сама.
         ...(l.rawName ? { raw_name: l.rawName } : {}),
       }));
@@ -259,7 +269,10 @@ export default function Warehouse() {
       r.items.map((li) => ({
         item: li.item,
         quantity: String(Number(li.quantity)),
-        unit_cost: li.unit_cost != null ? String(Number(li.unit_cost)) : "",
+        amount:
+          li.unit_cost != null
+            ? String(round2(Number(li.unit_cost) * Number(li.quantity)))
+            : "",
       }))
     );
     setReceiptOpen(true);
@@ -488,8 +501,8 @@ export default function Warehouse() {
           {editReceiptId != null && (
             <p className="muted sm subtitle">
               <Icon name="edit" size={14} /> Правка пересоздаёт приход: остатки
-              старого откатятся, применится новый. Цена — за 1 базовую единицу
-              (г/мл/шт): для товара в граммах это цена за грамм, а не за кг.
+              старого откатятся, применится новый. Сумма — как в чеке, за всю
+              строку; цену за грамм система посчитает сама.
             </p>
           )}
           {scanId != null && (
@@ -544,16 +557,25 @@ export default function Warehouse() {
                   <input
                     className="input"
                     inputMode="decimal"
-                    value={l.unit_cost}
-                    onChange={(e) => setLine(idx, { unit_cost: e.target.value })}
-                    // Цена именно за базовую единицу: из неё считается
-                    // себестоимость блюда по тех карте.
-                    placeholder={it ? `₽ за 1 ${it.unit_display}` : "цена/ед, ₽"}
+                    value={l.amount}
+                    onChange={(e) => setLine(idx, { amount: e.target.value })}
+                    // Сумма по строке — то, что напечатано в чеке. Цену за
+                    // грамм считаем сами, из неё берётся себестоимость блюда.
+                    placeholder="сумма, ₽"
+                    title="Сумма по строке из чека"
                   />
                   <button className="icon-btn danger" onClick={() => removeLine(idx)} aria-label="Убрать строку">
                     <Icon name="trash" size={16} />
                   </button>
                   </div>
+                  {it && Number(l.amount) > 0 && Number(l.quantity) > 0 && (
+                    <span className="muted sm">
+                      ≈ {(Number(l.amount) / Number(l.quantity)).toLocaleString("ru", {
+                        maximumFractionDigits: 4,
+                      })}{" "}
+                      ₽ за 1 {it.unit_display}
+                    </span>
+                  )}
                 </div>
               );
             })}

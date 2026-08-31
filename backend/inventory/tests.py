@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from django.test import TestCase
 from rest_framework.test import APITestCase
 
 from catalog.models import Category, Product
@@ -139,3 +140,67 @@ class ReceiptDeleteTests(APITestCase):
             403,
         )
         self.assertTrue(Receipt.objects.filter(id=receipt.id).exists())
+
+
+class ReceiptScanUnitsTests(TestCase):
+    """Распознавание чека: цена должна приводиться к базовой единице.
+
+    Это была ошибка в тысячу раз: количество из килограммов переводилось в
+    граммы, а цена «180 ₽ за кг» переносилась как 180 ₽ за грамм.
+    """
+
+    def setUp(self):
+        self.cat = StockCategory.objects.create(name="Продукты")
+        self.tomato = StockItem.objects.create(
+            name="Помидоры", unit="g", category=self.cat
+        )
+        self.milk = StockItem.objects.create(name="Молоко", unit="ml", category=self.cat)
+        self.cup = StockItem.objects.create(name="Стакан", unit="pcs", category=self.cat)
+
+    def draft(self, lines):
+        from inventory.receipt_ai import build_draft
+
+        return build_draft({"supplier": "МЕТРО", "date": None, "total": None, "lines": lines})
+
+    def test_price_per_kg_becomes_price_per_gram(self):
+        d = self.draft([
+            {"name": "Помидоры", "quantity": 2.73, "unit": "кг",
+             "unit_cost": 180, "line_total": None}
+        ])
+        line = d["lines"][0]
+        self.assertEqual(line["base_quantity"], 2730)
+        self.assertAlmostEqual(line["unit_cost"], 0.18, places=4)
+
+    def test_line_total_wins_over_unit_price(self):
+        """Сумма по строке точнее: она уже со скидкой."""
+        d = self.draft([
+            {"name": "Помидоры", "quantity": 2.0, "unit": "кг",
+             "unit_cost": 200, "line_total": 300}
+        ])
+        # 300 ₽ за 2000 г = 0.15, а не 0.20 из цены за кг
+        self.assertAlmostEqual(d["lines"][0]["unit_cost"], 0.15, places=4)
+
+    def test_litres_convert_to_millilitres(self):
+        d = self.draft([
+            {"name": "Молоко", "quantity": 1.5, "unit": "л",
+             "unit_cost": 90, "line_total": None}
+        ])
+        line = d["lines"][0]
+        self.assertEqual(line["base_quantity"], 1500)
+        self.assertAlmostEqual(line["unit_cost"], 0.09, places=4)
+
+    def test_pieces_keep_price_as_is(self):
+        d = self.draft([
+            {"name": "Стакан", "quantity": 100, "unit": "шт",
+             "unit_cost": 7, "line_total": None}
+        ])
+        line = d["lines"][0]
+        self.assertEqual(line["base_quantity"], 100)
+        self.assertAlmostEqual(line["unit_cost"], 7, places=4)
+
+    def test_missing_price_stays_empty(self):
+        d = self.draft([
+            {"name": "Помидоры", "quantity": 1, "unit": "кг",
+             "unit_cost": None, "line_total": None}
+        ])
+        self.assertIsNone(d["lines"][0]["unit_cost"])
