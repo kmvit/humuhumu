@@ -370,6 +370,30 @@ export interface Statement {
   totals: StatementTotals;
 }
 
+/** Отчёт о прибыли за месяц. */
+export interface ProfitReport {
+  period: string;
+  from: string;
+  to: string;
+  revenue: string;
+  checks: number;
+  avg_check: string;
+  cash: string;
+  card: string;
+  cogs: string;
+  gross: string;
+  margin: number;
+  payroll: string;
+  expenses: string;
+  profit: string;
+  /** Закуп продуктов — справочно, в прибыли не участвует. */
+  purchases: string;
+  /** Доля выручки, у которой известна себестоимость, %. */
+  cost_coverage: number;
+  /** Пока себестоимость неполная, прибыль — оценка сверху, а не факт. */
+  is_estimate: boolean;
+}
+
 /** Статья расходов заведения: аренда, коммуналка и прочее. */
 export interface ExpenseCategory {
   id: number;

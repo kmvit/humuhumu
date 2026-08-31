@@ -13,7 +13,7 @@ from django.db.models import Sum
 from shifts.models import Shift
 from shifts.services import money, payroll
 
-from .models import PayrollPayout
+from .models import Expense, PayrollPayout
 
 
 def month_bounds(period: date_cls) -> tuple[date_cls, date_cls]:
@@ -112,3 +112,132 @@ def user_days(period: date_cls, user_id: int) -> list[dict]:
             }
         )
     return out
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Отчёт о прибыли за месяц
+# ─────────────────────────────────────────────────────────────────────────
+
+def _cost_per_portion(product_ids) -> tuple[dict[int, Decimal], set[int]]:
+    """Себестоимость порции по тех. карте и множество блюд с полной картой.
+
+    Блюдо считается покрытым, только если у него есть тех. карта И у всех её
+    товаров известна цена закупа. Иначе себестоимость занижена, и говорить
+    о прибыли как о факте нельзя.
+    """
+    from inventory.models import RecipeItem
+    from inventory.services import last_unit_costs
+
+    rows = list(
+        RecipeItem.objects.filter(product_id__in=list(product_ids))
+        .values("product_id", "item_id", "quantity")
+    )
+    costs = last_unit_costs({r["item_id"] for r in rows})
+
+    per_product: dict[int, Decimal] = {}
+    complete: dict[int, bool] = {}
+    for r in rows:
+        unit = costs.get(r["item_id"])
+        per_product[r["product_id"]] = per_product.get(
+            r["product_id"], Decimal("0")
+        ) + (r["quantity"] * (unit or Decimal("0")))
+        complete[r["product_id"]] = complete.get(r["product_id"], True) and unit is not None
+
+    covered = {pid for pid, ok in complete.items() if ok}
+    return per_product, covered
+
+
+def report(period: date_cls) -> dict:
+    """Отчёт о прибыли за месяц: выручка → себестоимость → ФОТ → расходы.
+
+    Закуп продуктов НЕ вычитается: расход периода — себестоимость проданного,
+    а закуп это движение денег. Иначе получился бы двойной счёт, поэтому он
+    идёт отдельной справочной строкой.
+    """
+    from django.db.models import Count, F, Sum
+    from decimal import Decimal as D
+
+    from inventory.models import Receipt, ReceiptItem
+    from orders.models import Order, OrderItem
+    from shifts.models import ShiftSettings
+
+    first, last = month_bounds(period)
+    cfg = ShiftSettings.load()
+    penalty_table = cfg.penalty_table.name if cfg.penalty_table else ""
+
+    orders = Order.objects.filter(
+        status=Order.Status.PAID, closed_at__date__range=(first, last)
+    )
+    if penalty_table:
+        orders = orders.exclude(table=penalty_table)
+
+    agg = orders.aggregate(total=Sum("total"), checks=Count("id"))
+    revenue = money(agg["total"])
+    checks = agg["checks"] or 0
+    avg_check = money(revenue / checks) if checks else money(0)
+
+    by_method = {
+        row["pay_method"]: money(row["s"])
+        for row in orders.values("pay_method").annotate(s=Sum("total"))
+    }
+
+    # ——— себестоимость проданного ———
+    sold = list(
+        OrderItem.objects.filter(order__in=orders)
+        .values("product_id")
+        .annotate(qty=Sum("quantity"), sum=Sum(F("unit_price") * F("quantity")))
+    )
+    per_portion, covered_ids = _cost_per_portion([s["product_id"] for s in sold])
+
+    cogs = money(0)
+    covered_revenue = money(0)
+    for s in sold:
+        pid = s["product_id"]
+        if pid in covered_ids:
+            cogs += per_portion.get(pid, D("0")) * s["qty"]
+            covered_revenue += money(s["sum"])
+    cogs = money(cogs)
+
+    # доля выручки, у которой известна себестоимость, — мера честности отчёта
+    coverage = (
+        float(covered_revenue / revenue) if revenue else 0.0
+    )
+
+    gross = money(revenue - cogs)
+    margin = round(float(gross / revenue) * 100, 1) if revenue else 0.0
+
+    fot = money(D(statement(period)["totals"]["accrued"]))
+    other = money(
+        Expense.objects.filter(date__range=(first, last)).aggregate(s=Sum("amount"))["s"]
+    )
+    profit = money(gross - fot - other)
+
+    # справочно: сколько закупили продуктов (движение денег, не расход периода)
+    purchases = money(
+        ReceiptItem.objects.filter(
+            receipt__in=Receipt.objects.filter(created_at__date__range=(first, last)),
+            unit_cost__isnull=False,
+        ).aggregate(s=Sum(F("quantity") * F("unit_cost")))["s"]
+    )
+
+    return {
+        "period": first.isoformat(),
+        "from": first.isoformat(),
+        "to": last.isoformat(),
+        "revenue": str(revenue),
+        "checks": checks,
+        "avg_check": str(avg_check),
+        "cash": str(by_method.get("cash", money(0))),
+        "card": str(by_method.get("card", money(0))),
+        "cogs": str(cogs),
+        "gross": str(gross),
+        "margin": margin,
+        "payroll": str(fot),
+        "expenses": str(other),
+        "profit": str(profit),
+        "purchases": str(purchases),
+        # честность: пока себестоимость известна не по всей выручке,
+        # прибыль — оценка сверху, а не факт
+        "cost_coverage": round(coverage * 100, 1),
+        "is_estimate": coverage < 0.995,
+    }

@@ -258,3 +258,151 @@ class ExpenseTests(APITestCase):
             self.client.get(f"/api/finance/expenses/?month={self.month}").status_code, 403
         )
         self.assertEqual(self.add(self.rent, "1000").status_code, 403)
+
+
+class ProfitReportTests(APITestCase):
+    """Отчёт о прибыли: выручка − себестоимость − ФОТ − прочие расходы."""
+
+    def setUp(self):
+        from catalog.models import Category, Product
+        from inventory.models import (
+            Receipt,
+            ReceiptItem,
+            RecipeItem,
+            StockCategory,
+            StockItem,
+        )
+
+        self.manager = User.objects.create_user(
+            username="manager", password="demo12345", role=User.Role.WAREHOUSE
+        )
+        self.today = timezone.localdate()
+        self.month = self.today.strftime("%Y-%m")
+
+        cat = Category.objects.create(name="Кухня", station="kitchen")
+        self.burger = Product.objects.create(
+            category=cat, name="Бургер", price=Decimal("500")
+        )
+        self.salad = Product.objects.create(
+            category=cat, name="Салат", price=Decimal("300")
+        )
+
+        # у бургера тех. карта и известная цена закупа, у салата — ничего
+        stock_cat = StockCategory.objects.create(name="Продукты")
+        self.meat = StockItem.objects.create(
+            name="Мясо", unit="g", category=stock_cat
+        )
+        RecipeItem.objects.create(
+            product=self.burger, item=self.meat, quantity=Decimal("100")
+        )
+        receipt = Receipt.objects.create()
+        ReceiptItem.objects.create(
+            receipt=receipt, item=self.meat,
+            quantity=Decimal("1000"), unit_cost=Decimal("1.50"),
+        )
+
+    def auth(self, user):
+        res = self.client.post(
+            "/api/auth/token/",
+            {"username": user.username, "password": "demo12345"},
+            format="json",
+        )
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {res.data['access']}")
+
+    def sell(self, product, qty, method="cash"):
+        from orders.models import Order, OrderItem
+
+        order = Order.objects.create(
+            table="1", status=Order.Status.PAID,
+            closed_at=timezone.now(), pay_method=method,
+        )
+        OrderItem.objects.create(
+            order=order, product=product, quantity=qty, unit_price=product.price
+        )
+        order.total = product.price * qty
+        order.save(update_fields=["total"])
+        return order
+
+    def report(self):
+        return self.client.get(f"/api/finance/payroll/report/?month={self.month}").data
+
+    def test_revenue_checks_and_payment_split(self):
+        self.auth(self.manager)
+        self.sell(self.burger, 2, "cash")   # 1000
+        self.sell(self.salad, 1, "card")    # 300
+        r = self.report()
+        self.assertEqual(r["revenue"], "1300.00")
+        self.assertEqual(r["checks"], 2)
+        self.assertEqual(r["avg_check"], "650.00")
+        self.assertEqual(r["cash"], "1000.00")
+        self.assertEqual(r["card"], "300.00")
+
+    def test_cogs_counts_only_dishes_with_full_recipe(self):
+        """Салат без тех. карты в себестоимость не попадает — и это видно."""
+        self.auth(self.manager)
+        self.sell(self.burger, 2)   # 100 г × 1.50 = 150 ₽ за порцию → 300
+        self.sell(self.salad, 1)
+        r = self.report()
+        self.assertEqual(r["cogs"], "300.00")
+        self.assertEqual(r["gross"], "1000.00")
+        # себестоимость известна только по выручке бургера: 1000 из 1300
+        self.assertAlmostEqual(r["cost_coverage"], 76.9, places=1)
+        self.assertTrue(r["is_estimate"])
+
+    def test_full_coverage_marks_report_as_fact(self):
+        self.auth(self.manager)
+        self.sell(self.burger, 1)
+        r = self.report()
+        self.assertEqual(r["cost_coverage"], 100.0)
+        self.assertFalse(r["is_estimate"])
+
+    def test_profit_subtracts_payroll_and_expenses(self):
+        from shifts.models import Shift, ShiftMember
+
+        self.auth(self.manager)
+        self.sell(self.burger, 10)  # выручка 5000, себестоимость 1500
+
+        cfg = ShiftSettings.load()
+        cfg.daily_rate = Decimal("2000")
+        cfg.bonus_percent = Decimal("0")
+        cfg.save()
+        shift = Shift.objects.create(
+            date=self.today, daily_rate=Decimal("2000"), bonus_percent=Decimal("0")
+        )
+        ShiftMember.objects.create(shift=shift, user=self.manager, role="warehouse")
+
+        cat, _ = ExpenseCategory.objects.get_or_create(name="Аренда")
+        Expense.objects.create(date=self.today, category=cat, amount=Decimal("500"))
+
+        r = self.report()
+        self.assertEqual(r["revenue"], "5000.00")
+        self.assertEqual(r["cogs"], "1500.00")
+        self.assertEqual(r["gross"], "3500.00")
+        self.assertEqual(r["payroll"], "2000.00")
+        self.assertEqual(r["expenses"], "500.00")
+        self.assertEqual(r["profit"], "1000.00")
+
+    def test_purchases_are_informational_not_subtracted(self):
+        """Закуп показывается справочно и не участвует в прибыли."""
+        self.auth(self.manager)
+        self.sell(self.burger, 1)
+        r = self.report()
+        self.assertEqual(r["purchases"], "1500.00")   # 1000 г × 1.50
+        # прибыль = 500 − 150 − 0 − 0, закуп не вычитается
+        self.assertEqual(r["profit"], "350.00")
+
+    def test_empty_month_does_not_divide_by_zero(self):
+        self.auth(self.manager)
+        r = self.report()
+        self.assertEqual(r["revenue"], "0.00")
+        self.assertEqual(r["avg_check"], "0.00")
+        self.assertEqual(r["margin"], 0.0)
+        self.assertEqual(r["profit"], "0.00")
+
+    def test_worker_has_no_access_to_report(self):
+        cook = User.objects.create_user(
+            username="cook2", password="demo12345", role=User.Role.COOK
+        )
+        self.auth(cook)
+        res = self.client.get(f"/api/finance/payroll/report/?month={self.month}")
+        self.assertEqual(res.status_code, 403)

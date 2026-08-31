@@ -4,6 +4,7 @@ import type {
   Expense,
   ExpenseCategory,
   Expenses,
+  ProfitReport,
   Statement,
   StatementDay,
   StatementRow,
@@ -54,11 +55,12 @@ export default function Finance() {
   const toast = useToast();
   const thisMonth = useMemo(() => monthKey(new Date()), []);
   const [month, setMonth] = useState(thisMonth);
-  const [tab, setTab] = useState<"payroll" | "expenses">("payroll");
+  const [tab, setTab] = useState<"report" | "payroll" | "expenses">("report");
   const [data, setData] = useState<Statement | null>(null);
   const [loading, setLoading] = useState(true);
 
   // расходы: список за месяц, справочник статей и форма добавления
+  const [report, setReport] = useState<ProfitReport | null>(null);
   const [expenses, setExpenses] = useState<Expenses | null>(null);
   const [cats, setCats] = useState<ExpenseCategory[]>([]);
   const [form, setForm] = useState({ category: "", amount: "", comment: "" });
@@ -73,12 +75,14 @@ export default function Finance() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [st, ex] = await Promise.all([
+      const [st, ex, rep] = await Promise.all([
         get<Statement>(`/finance/payroll/?month=${month}`),
         get<Expenses>(`/finance/expenses/?month=${month}`),
+        get<ProfitReport>(`/finance/payroll/report/?month=${month}`),
       ]);
       setData(st);
       setExpenses(ex);
+      setReport(rep);
     } finally {
       setLoading(false);
     }
@@ -187,12 +191,20 @@ export default function Finance() {
     <>
       <h1 className="h1">Финансы</h1>
       <p className="muted subtitle">
-        {tab === "payroll"
+        {tab === "report"
+          ? "Что заработало заведение за месяц: от выручки до прибыли."
+          : tab === "payroll"
           ? "Начисления считаются по сменам, здесь — сколько выплачено и сколько осталось."
           : "Аренда, коммуналка и прочее — всё, что не зарплата и не закуп продуктов."}
       </p>
 
       <div className="tabs">
+        <button
+          className={"navlink" + (tab === "report" ? " active" : "")}
+          onClick={() => setTab("report")}
+        >
+          <Icon name="chart" size={16} /> Отчёт
+        </button>
         <button
           className={"navlink" + (tab === "payroll" ? " active" : "")}
           onClick={() => setTab("payroll")}
@@ -228,6 +240,99 @@ export default function Finance() {
           </button>
         </div>
       </div>
+
+      {/* ——— отчёт о прибыли ——— */}
+      {tab === "report" && report && (
+        <>
+          {report.is_estimate && (
+            <div className="card mt-3 note-warn">
+              <div className="row">
+                <span className="tx-icon"><Icon name="spark" size={17} /></span>
+                <div className="row-body">
+                  <strong>Прибыль показана как оценка сверху</strong>
+                  <span className="muted">
+                    Себестоимость известна по {report.cost_coverage}% выручки. Чтобы
+                    цифра стала точной, нужны тех. карты блюд и цены закупа товаров.
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="card mt-3">
+            <div className="row">
+              <span className="tx-icon"><Icon name="chart" size={17} /></span>
+              <div className="row-body">
+                <strong>Выручка</strong>
+                <span className="muted">
+                  {report.checks} чек. · средний {fmtMoney(report.avg_check)} ₽ ·
+                  наличные {fmtMoney(report.cash)} · карта {fmtMoney(report.card)}
+                </span>
+              </div>
+              <strong className="num lg">{fmtMoney(report.revenue)} ₽</strong>
+            </div>
+
+            <div className="row">
+              <span className="tx-icon"><Icon name="box" size={17} /></span>
+              <div className="row-body">
+                <strong>Себестоимость проданного</strong>
+                <span className="muted">по тех. картам, {report.cost_coverage}% выручки</span>
+              </div>
+              <strong className="num">−{fmtMoney(report.cogs)} ₽</strong>
+            </div>
+
+            <div className="row">
+              <span className="tx-icon"><Icon name="spark" size={17} /></span>
+              <div className="row-body">
+                <strong>Валовая прибыль</strong>
+                <span className="muted">наценка {report.margin}%</span>
+              </div>
+              <strong className="num lg">{fmtMoney(report.gross)} ₽</strong>
+            </div>
+
+            <div className="row">
+              <span className="tx-icon"><Icon name="user" size={17} /></span>
+              <div className="row-body"><strong>Зарплата</strong></div>
+              <strong className="num">−{fmtMoney(report.payroll)} ₽</strong>
+            </div>
+
+            <div className="row">
+              <span className="tx-icon"><Icon name="receipt" size={17} /></span>
+              <div className="row-body"><strong>Прочие расходы</strong></div>
+              <strong className="num">−{fmtMoney(report.expenses)} ₽</strong>
+            </div>
+
+            <div className="row">
+              <span className="tx-icon"><Icon name="wallet" size={17} /></span>
+              <div className="row-body">
+                <strong>Прибыль</strong>
+                {report.is_estimate && <span className="muted">оценка сверху</span>}
+              </div>
+              <strong
+                className="num lg"
+                style={{ color: Number(report.profit) < 0 ? "var(--danger)" : "var(--brand)" }}
+              >
+                {fmtMoney(report.profit)} ₽
+              </strong>
+            </div>
+          </div>
+
+          {/* закуп — движение денег, а не расход периода: не вычитается */}
+          <div className="card mt-3">
+            <div className="row">
+              <span className="tx-icon"><Icon name="truck" size={17} /></span>
+              <div className="row-body">
+                <strong>Закуплено продуктов</strong>
+                <span className="muted">
+                  справочно — в прибыли не участвует, расход считается по
+                  себестоимости проданного
+                </span>
+              </div>
+              <strong className="num">{fmtMoney(report.purchases)} ₽</strong>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* ——— итог по заведению ——— */}
       {tab === "payroll" && totals && (

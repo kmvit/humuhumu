@@ -325,6 +325,8 @@ h1, h2, h3 { font-family: var(--font-display); color: var(--fg); margin: 0; font
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); }
 .card.hover { transition: transform 0.22s var(--ease), box-shadow 0.22s var(--ease), border-color 0.22s var(--ease); }
 .card.hover:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); border-color: var(--rule); }
+/* предупреждение в карточке: цифра посчитана на неполных данных */
+.card.note-warn { border-left: 3px solid var(--danger); }
 
 /* подсветка только что прилетевшего заказа на доске кухни/кассы */
 @keyframes newOrderPulse {

@@ -13,7 +13,7 @@ from users.permissions import IsWarehouseOrAdmin
 
 from .models import Expense, ExpenseCategory, PayrollPayout
 from .serializers import ExpenseCategorySerializer, ExpenseSerializer
-from .services import money, month_bounds, parse_month, statement, user_days
+from .services import money, month_bounds, parse_month, report, statement, user_days
 
 
 class PayrollViewSet(ViewSet):
@@ -41,6 +41,11 @@ class PayrollViewSet(ViewSet):
         return Response(
             {"user": user_id, "days": user_days(self._period(request), user_id)}
         )
+
+    @action(detail=False, methods=["get"])
+    def report(self, request):
+        """Отчёт о прибыли за месяц: выручка → себестоимость → ФОТ → расходы."""
+        return Response(report(self._period(request)))
 
     @action(detail=False, methods=["post"])
     def pay(self, request):
