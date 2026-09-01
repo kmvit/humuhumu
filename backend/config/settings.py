@@ -140,6 +140,11 @@ OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
 OPENAI_PROXY_URL = os.getenv("OPENAI_PROXY_URL", "")
 OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL", "")
 OPENROUTER_APP_NAME = os.getenv("OPENROUTER_APP_NAME", "humu")
+
+# Демо-стенд: витрина продукта с выдуманным кафе. Включается только на
+# отдельной установке — команда наполнения демо-данными стирает базу и
+# без этого флага работать отказывается.
+DEMO_STAND = os.getenv("DEMO_STAND", "") == "1"
 # Vision-модель для распознавания чеков (меняется без деплоя).
 OPENAI_RECEIPT_MODEL = os.getenv("OPENAI_RECEIPT_MODEL", "google/gemini-2.5-flash")
 OPENAI_RECEIPT_TIMEOUT = float(os.getenv("OPENAI_RECEIPT_TIMEOUT", "60"))

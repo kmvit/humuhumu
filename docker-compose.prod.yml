@@ -81,8 +81,11 @@ services:
     build:
       context: .
       dockerfile: deploy/Dockerfile.web
+    # По умолчанию контейнер сам держит 80 — так работает одиночная установка.
+    # Когда на сервере несколько заведений, порт уводят на localhost
+    # (WEB_BIND=127.0.0.1:8080), а домены разводит nginx хоста.
     ports:
-      - "80:80"
+      - "${WEB_BIND:-0.0.0.0:80}:80"
     volumes:
       - static:/app/staticfiles:ro
       - media:/app/media:ro
