@@ -56,8 +56,6 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
             "instagram",
             "telegram",
             "about",
-            "service_mode",
-            "dark_by_default",
             "merchant_type",
             "merchant_name",
             "merchant_short",
