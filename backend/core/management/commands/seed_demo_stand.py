@@ -259,7 +259,28 @@ class Command(BaseCommand):
                 Order.objects.filter(pk=order.pk).update(total=total)
 
     def _expenses(self):
-        first = timezone.localdate().replace(day=1)
+        """Постоянные расходы за прошлый месяц и за текущий.
+
+        В текущем месяце берём долю по прошедшим дням: иначе первого числа
+        отчёт покажет один день выручки против аренды за весь месяц, и
+        витрина встретит гостя убытком в сотню тысяч.
+        """
+        from calendar import monthrange
+
+        today = timezone.localdate()
+        this_first = today.replace(day=1)
+        prev_last = this_first - timedelta(days=1)
+        days_in_month = monthrange(today.year, today.month)[1]
+        share = Decimal(today.day) / Decimal(days_in_month)
+
         for name, amount in EXPENSES:
             cat, _ = ExpenseCategory.objects.get_or_create(name=name)
-            Expense.objects.create(date=first, category=cat, amount=Decimal(amount))
+            full = Decimal(amount)
+            # прошлый месяц — полностью
+            Expense.objects.create(
+                date=prev_last.replace(day=1), category=cat, amount=full
+            )
+            # текущий — по прошедшим дням, округляя до сотни рублей
+            part = (full * share / 100).quantize(Decimal("1")) * 100
+            if part > 0:
+                Expense.objects.create(date=this_first, category=cat, amount=part)
