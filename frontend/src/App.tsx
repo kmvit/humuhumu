@@ -1,12 +1,13 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./auth";
-import { useAppearance } from "./site";
+import { useAppearance, useSite } from "./site";
 import Layout from "./components/Layout";
 import { PaperBackdrop } from "./components/Ornaments";
 import Login from "./pages/Login";
 import Menu from "./pages/client/Menu";
 import MenuReels from "./pages/client/MenuReels";
 import Waiter from "./pages/waiter/Waiter";
+import Counter from "./pages/counter/Counter";
 import Kitchen from "./pages/kitchen/Kitchen";
 import Bar from "./pages/bar/Bar";
 import Admin from "./pages/admin/Admin";
@@ -31,6 +32,9 @@ const HOME_BY_ROLE: Record<Role, string> = {
 export default function App() {
   const { user, loading } = useAuth();
   const { theme } = useAppearance();
+  // Формат заведения: в «стойке» нет столов и официанта — заказ собирает
+  // и выдаёт один человек, поэтому у роли официанта другой экран.
+  const counter = useSite()?.service_mode === "counter";
 
   // фирменный декор (штриховка, пальмы) — только в «Островной» теме
   const orbs = theme === "island" ? <PaperBackdrop /> : null;
@@ -63,7 +67,9 @@ export default function App() {
         <Route path="/contacts" element={<Contacts />} />
         {!user && <Route path="/" element={<Menu />} />}
         {user?.role === "client" && <Route path="/client" element={<Menu />} />}
-        {user?.role === "waiter" && <Route path="/waiter" element={<Waiter />} />}
+        {user?.role === "waiter" && (
+          <Route path="/waiter" element={counter ? <Counter /> : <Waiter />} />
+        )}
         {user?.role === "cook" && <Route path="/kitchen" element={<Kitchen />} />}
         {user?.role === "bar" && <Route path="/bar" element={<Bar />} />}
         {user?.role === "warehouse" && <Route path="/warehouse" element={<Warehouse />} />}

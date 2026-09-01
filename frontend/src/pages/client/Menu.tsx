@@ -7,7 +7,7 @@ import { SceneBanner, WaveRule } from "../../components/Ornaments";
 import Lightbox from "../../components/Lightbox";
 import { useToast } from "../../components/ui/Toast";
 import Stepper from "../../components/ui/Stepper";
-import { useAppearance } from "../../site";
+import { useAppearance, useSite } from "../../site";
 import { initTable } from "../../table";
 
 const TOKEN_KEY = "humu_order_token";
@@ -26,6 +26,8 @@ export default function Menu() {
   const [cartOpen, setCartOpen] = useState(false);
   const notify = useToast();
   const { theme } = useAppearance();
+  // Стойка: без столов и официанта, заказ забирают по номеру в окне.
+  const counter = useSite()?.service_mode === "counter";
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [tracked, setTracked] = useState<Order | null>(null);
   const [table] = useState<string | null>(initTable);
@@ -165,12 +167,22 @@ export default function Menu() {
       : "Заказ отменён";
     const note =
       st === "requested" ? `Подойдите к стойке и назовите имя «${tracked.customer_name}» — официант оформит заказ.`
-      : st === "open" ? (tracked.is_ready ? "Ваш заказ готов, можно забирать." : `Заказ готовится${tracked.table ? `, стол ${tracked.table}` : ""}.`)
+      : st === "open"
+        ? tracked.is_ready
+          ? counter ? "Готово — подойдите к окну и назовите свой номер." : "Ваш заказ готов, можно забирать."
+          : counter ? "Готовим. Следите за номером — здесь появится «готово»." : `Заказ готовится${tracked.table ? `, стол ${tracked.table}` : ""}.`
       : st === "paid" ? "Спасибо, что были у нас!"
       : "Заказ отменён.";
     return (
       <>
         <h1 className="h1">Ваш заказ</h1>
+        {/* На стойке номер — единственный способ забрать заказ, поэтому крупно. */}
+        {counter && tracked.daily_number != null && st !== "cancelled" && (
+          <div className="pickup-no mt-4">
+            <span className="muted">Ваш номер</span>
+            <strong>{tracked.daily_number}</strong>
+          </div>
+        )}
         <div className="card enter mt-4">
           <div className="between">
             <strong className="title lg">{head}</strong>
@@ -221,14 +233,16 @@ export default function Menu() {
     <>
       <div className="between" style={{ alignItems: "center", flexWrap: "wrap", gap: 10 }}>
         <h1 className="h1">Меню</h1>
-        {table && (
+        {table && !counter && (
           <span className="chip" style={{ fontSize: 15 }}>
             <Icon name="store" size={16} /> Ваш стол №{table}
           </span>
         )}
       </div>
       <p className="muted subtitle">
-        {table
+        {counter
+          ? "Соберите заказ и отправьте — заберёте в окне по своему номеру"
+          : table
           ? "Соберите заказ — он придёт официанту с вашим столом"
           : "Соберите заказ и отправьте — потом подойдите к стойке"}
       </p>

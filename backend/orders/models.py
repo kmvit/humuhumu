@@ -64,6 +64,9 @@ class Order(models.Model):
         verbose_name="Закрыл счёт",
     )
     table = models.CharField("Стол", max_length=32, blank=True)
+    # Номер для выдачи: сквозной id уже четырёхзначный, его не выкрикнешь
+    # в окно. Считается при создании и обнуляется каждый день.
+    daily_number = models.PositiveIntegerField("Номер за день", null=True, blank=True)
     comment = models.CharField(
         "Комментарий официанта", max_length=300, blank=True,
         help_text="Пожелания к заказу: «без лука», «аллергия», «стол у окна» и т.п.",

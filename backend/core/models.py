@@ -33,6 +33,20 @@ class SiteSettings(models.Model):
         choices=Theme.choices,
         default=Theme.NEUTRAL,
     )
+    class ServiceMode(models.TextChoices):
+        HALL = "hall", "Зал с официантами"
+        COUNTER = "counter", "Стойка / окно выдачи"
+
+    service_mode = models.CharField(
+        "Формат обслуживания",
+        max_length=16,
+        choices=ServiceMode.choices,
+        default=ServiceMode.HALL,
+        help_text=(
+            "«Стойка» — для точек без зала: гость заказывает по QR, забирает "
+            "по номеру. Столов и официанта нет, заказ сразу уходит в работу."
+        ),
+    )
     dark_by_default = models.BooleanField(
         "Тёмная тема по умолчанию", default=False,
         help_text="Какой режим видит гость, пока сам не переключил",

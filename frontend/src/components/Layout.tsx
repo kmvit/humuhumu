@@ -47,7 +47,11 @@ export default function Layout() {
   const site = useSite();
   const navigate = useNavigate();
   const staff = !!user && STAFF_ROLES.includes(user.role);
-  const links = NAV[user?.role ?? "guest"] ?? [];
+  const counter = site?.service_mode === "counter";
+  const links = (NAV[user?.role ?? "guest"] ?? []).map((l) =>
+    // в режиме стойки у официанта не столы, а очередь заказов
+    counter && l.to === "/waiter" ? { ...l, label: "Стойка", icon: "receipt" as const } : l
+  );
 
   const themeBtn = (
     <button

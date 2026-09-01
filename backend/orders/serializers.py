@@ -45,6 +45,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "waiter",
             "closed_by",
             "table",
+            "daily_number",
             "comment",
             "customer_name",
             "public_token",

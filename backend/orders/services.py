@@ -49,7 +49,6 @@ def create_order(*, waiter, items: list[dict], table: str = "", comment: str = "
 
 
 @transaction.atomic
-@transaction.atomic
 def append_items(*, order: Order, items: list[dict]) -> Order:
     """Дописать позиции в уже открытый заказ (официант досчитывает по ходу)."""
     if not items:
@@ -63,20 +62,39 @@ def append_items(*, order: Order, items: list[dict]) -> Order:
     return order
 
 
-def create_request(*, customer_name: str, items: list[dict], table: str = "", comment: str = "") -> Order:
-    """Заявка от клиента без авторизации (статус «Ждёт официанта»).
+def next_daily_number() -> int:
+    """Следующий номер заказа за сегодня. Обнуляется каждый день."""
+    from django.db.models import Max
+    from django.utils import timezone
 
-    Стол приходит из QR-кода на столе (если клиент отсканировал). Официант
-    подтверждает заявку — стол уже проставлен, выбирать вручную не нужно.
+    today = timezone.localdate()
+    last = (
+        Order.objects.filter(created_at__date=today)
+        .aggregate(n=Max("daily_number"))["n"]
+    )
+    return (last or 0) + 1
+
+
+def create_request(*, customer_name: str, items: list[dict], table: str = "", comment: str = "") -> Order:
+    """Заказ от гостя без авторизации.
+
+    В зале это заявка: официант подтверждает её на стол, который пришёл из
+    QR-кода. На стойке подтверждать некому и стола нет — заказ сразу уходит
+    в работу, а гость ждёт свой номер.
     """
+    from core.models import SiteSettings
+
     if not items:
         raise OrderError("Пустой заказ")
+
+    counter = SiteSettings.load().service_mode == SiteSettings.ServiceMode.COUNTER
     order = Order.objects.create(
-        status=Order.Status.REQUESTED,
+        status=Order.Status.OPEN if counter else Order.Status.REQUESTED,
         customer_name=customer_name,
-        table=table,
+        table="" if counter else table,
         comment=comment,
         public_token=uuid.uuid4(),
+        daily_number=next_daily_number(),
     )
     _add_items(order, items)
     order.recalc_total()

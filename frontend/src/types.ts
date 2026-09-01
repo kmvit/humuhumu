@@ -12,6 +12,8 @@ export interface Site {
   instagram: string;
   telegram: string;
   about: string;
+  /** Зал с официантами или стойка с выдачей по номеру. */
+  service_mode: "hall" | "counter";
   theme: AppTheme;
   /** Какой режим видит гость, пока сам не переключил. */
   dark_by_default: boolean;
@@ -97,6 +99,8 @@ export type PayMethod = "cash" | "card";
 
 export interface Order {
   id: number;
+  /** Номер для выдачи, обнуляется каждый день. */
+  daily_number: number | null;
   client: number | null;
   waiter: number | null;
   closed_by: number | null;

@@ -302,6 +302,29 @@ class OrderViewSet(viewsets.ModelViewSet):
         return self._reload_and_respond(order.pk, station)
 
     @action(detail=True, methods=["patch"])
+    def work_status(self, request, pk=None):
+        """Стойка: перевести ВЕСЬ заказ в new/in_progress/ready.
+
+        В режиме стойки один человек собирает и еду, и напитки, поэтому
+        делить очередь по станциям незачем — статус ставится на весь заказ.
+        """
+        order = self.get_object()
+        value = request.data.get("status")
+        if not self._valid_status(value):
+            return Response({"detail": "Неверный статус"}, status=status.HTTP_400_BAD_REQUEST)
+        items = list(order.items.all())
+        for it in items:
+            it.status = value
+        if items:
+            OrderItem.objects.bulk_update(items, ["status"])
+        if value == Order.StationStatus.READY:
+            for it in items:
+                write_off_order_item(it, user=request.user)
+        return self._reload_and_respond(
+            order.pk, Category.Station.KITCHEN, Category.Station.BAR
+        )
+
+    @action(detail=True, methods=["patch"])
     def food_status(self, request, pk=None):
         """Повар: перевести всю еду заказа в статус new/in_progress/ready."""
         return self._bulk_station(request, Category.Station.KITCHEN)
