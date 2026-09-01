@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { get, post, ApiError } from "../../api";
 import type { Category, Order, Product } from "../../types";
 import Icon, { categoryIcon } from "../../components/Icon";
@@ -220,11 +221,18 @@ export default function Menu() {
     <>
       <div className="between" style={{ alignItems: "center", flexWrap: "wrap", gap: 10 }}>
         <h1 className="h1">Меню</h1>
-        {table && (
-          <span className="chip" style={{ fontSize: 15 }}>
-            <Icon name="store" size={16} /> Ваш стол №{table}
-          </span>
-        )}
+        <span className="wrap tight">
+          {table && (
+            <span className="chip" style={{ fontSize: 15 }}>
+              <Icon name="store" size={16} /> Ваш стол №{table}
+            </span>
+          )}
+          {/* Второй вид меню — лента во весь экран. Раньше на него можно было
+              попасть только по прямому адресу, и его никто не находил. */}
+          <Link className="btn sm ghost" to="/reels">
+            <Icon name="spark" size={16} /> Листать с фото
+          </Link>
+        </span>
       </div>
       <p className="muted subtitle">
         {table

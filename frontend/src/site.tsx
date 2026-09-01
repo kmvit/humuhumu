@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { get } from "./api";
+import { applySiteDefault } from "./theme";
 import type { AppTheme, Site } from "./types";
 
 // Ключи совпадают с анти-FOUC скриптом в index.html: он ставит тему
@@ -93,6 +94,7 @@ export function SiteProvider({ children }: { children: ReactNode }) {
         setSite(s);
         set(s.theme, s.accent_color);
         applyIdentity(s);
+        applySiteDefault(s.dark_by_default);
       })
       .catch(() => {});
   }, [set]);

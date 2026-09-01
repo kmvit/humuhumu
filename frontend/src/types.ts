@@ -13,6 +13,8 @@ export interface Site {
   telegram: string;
   about: string;
   theme: AppTheme;
+  /** Какой режим видит гость, пока сам не переключил. */
+  dark_by_default: boolean;
   accent_color: string;
   // Реквизиты продавца — подставляются в оферту, оплату и контакты.
   merchant_type: string;

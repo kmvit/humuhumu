@@ -33,6 +33,10 @@ class SiteSettings(models.Model):
         choices=Theme.choices,
         default=Theme.NEUTRAL,
     )
+    dark_by_default = models.BooleanField(
+        "Тёмная тема по умолчанию", default=False,
+        help_text="Какой режим видит гость, пока сам не переключил",
+    )
     accent_color = models.CharField(
         "Акцентный цвет",
         max_length=7,
