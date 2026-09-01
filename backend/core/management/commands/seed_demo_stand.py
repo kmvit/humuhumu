@@ -39,7 +39,10 @@ from users.models import User
 PASSWORD = "demo12345"
 DAYS = 21  # столько дней истории показываем в отчётах
 
+# Доступы показываем прямо на стенде — человек должен зайти каждой ролью
+# и увидеть, что экраны разные. Это главный аргумент продукта.
 STAFF = [
+    ("demo_admin", User.Role.ADMIN, "Сергей", "владелец"),
     ("demo_manager", User.Role.WAREHOUSE, "Ирина", "менеджер"),
     ("demo_waiter", User.Role.WAITER, "Аня", "официант"),
     ("demo_waiter2", User.Role.WAITER, "Максим", "официант"),
@@ -142,7 +145,15 @@ class Command(BaseCommand):
         site.working_hours = "Пн–Вс · 8:00–22:00"
         site.theme = SiteSettings.Theme.NEUTRAL
         site.accent_color = "#1f58a6"
-        site.about = "Это демонстрационный стенд «Падачи». Всё, что вы здесь измените, вернётся к исходному состоянию ночью."
+        logins = "\n".join(
+            f"{u} / {PASSWORD} — {title}" for u, _, _, title in STAFF if u != "demo_waiter2"
+        )
+        site.about = (
+            "Демонстрационный стенд «Падачи» — вымышленное кафе с настоящими "
+            "данными за три недели. Заходите любой ролью, экраны у всех разные:\n\n"
+            f"{logins}\n\n"
+            "Меняйте что угодно: это витрина, боевых данных здесь нет."
+        )
         site.save()
 
         for i in range(1, 9):
@@ -158,6 +169,8 @@ class Command(BaseCommand):
     def _staff(self):
         out = {}
         for username, role, first, _ in STAFF:
+            # Роль «админ» даёт панель продукта, но НЕ доступ в Django-админку:
+            # стенд публичный, суперпользователей на нём быть не должно.
             u = User.objects.create_user(
                 username=username, password=PASSWORD, role=role, first_name=first
             )
