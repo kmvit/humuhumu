@@ -221,24 +221,35 @@ export default function Menu() {
     <>
       <div className="between" style={{ alignItems: "center", flexWrap: "wrap", gap: 10 }}>
         <h1 className="h1">Меню</h1>
-        <span className="wrap tight">
-          {table && (
-            <span className="chip" style={{ fontSize: 15 }}>
-              <Icon name="store" size={16} /> Ваш стол №{table}
-            </span>
-          )}
-          {/* Второй вид меню — лента во весь экран. Раньше на него можно было
-              попасть только по прямому адресу, и его никто не находил. */}
-          <Link className="btn sm ghost" to="/reels">
-            <Icon name="spark" size={16} /> Листать с фото
-          </Link>
-        </span>
+        {table && (
+          <span className="chip" style={{ fontSize: 15 }}>
+            <Icon name="store" size={16} /> Ваш стол №{table}
+          </span>
+        )}
       </div>
       <p className="muted subtitle">
         {table
           ? "Соберите заказ — он придёт официанту с вашим столом"
           : "Соберите заказ и отправьте — потом подойдите к стойке"}
       </p>
+
+      {/* Два вида меню. Лента жила только по прямому адресу, и гости о ней
+          не знали — поэтому выбор вынесен на видное место крупными плитками. */}
+      <div className="menu-modes">
+        <span className="menu-modes-label">Варианты меню</span>
+        <div className="grid cols-2">
+          <div className="card mode-tile active">
+            <Icon name="receipt" size={26} />
+            <strong>Списком</strong>
+            <span className="muted">Все блюда с ценами — быстро собрать заказ</span>
+          </div>
+          <Link className="card hover mode-tile" to="/reels">
+            <Icon name="spark" size={26} />
+            <strong>Лентой с фото</strong>
+            <span className="muted">Листать во весь экран, как в соцсетях</span>
+          </Link>
+        </div>
+      </div>
 
       {/* сцена с пальмами — только в «Островной» теме */}
       {theme === "island" && (
