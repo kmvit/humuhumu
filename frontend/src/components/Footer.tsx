@@ -35,7 +35,11 @@ export default function Footer() {
           {site.tagline && (
             <span className="script" style={{ fontSize: 19, color: "var(--brand-2)" }}>{site.tagline}</span>
           )}
-          {site.about && <p className="muted" style={{ margin: 0, maxWidth: 360 }}>{site.about}</p>}
+          {site.about && (
+            <p className="muted" style={{ margin: 0, maxWidth: 360, whiteSpace: "pre-line" }}>
+              {site.about}
+            </p>
+          )}
         </div>
 
         <div className="stack" style={{ gap: 10 }}>
