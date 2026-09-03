@@ -6,22 +6,25 @@ import Lightbox from "../../components/Lightbox";
 import { useToast } from "../../components/ui/Toast";
 import Stepper from "../../components/ui/Stepper";
 
-// Сбор заказа для стола. Позиции можно писать на гостя (Общий / Гость 1, 2, …)
-// для раздельного счёта — либо оставить всё общим.
+// Сбор заказа. В зале — для стола: позиции можно писать на гостя
+// (Общий / Гость 1, 2, …) для раздельного счёта либо оставить всё общим.
+// На стойке стола нет: заказ принимают на словах, гость получает номер,
+// и разбивка по гостям там ни к чему.
 export default function Compose({
-  table,
+  table = "",
   orderId,
   initialGuests = 0,
   onCreated,
   onCancel,
 }: {
-  table: string;
+  table?: string; // пусто — формат «стойка»: столов нет, заказ зовут по номеру
   orderId?: number; // если задан — дописываем позиции в этот заказ, а не создаём новый
   initialGuests?: number; // сколько именованных гостей уже есть в заказе
   onCreated: () => void;
   onCancel: () => void;
 }) {
   const adding = orderId != null;
+  const atTable = table !== "";
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [activeCat, setActiveCat] = useState<number | null>(null);
@@ -98,16 +101,21 @@ export default function Compose({
   return (
     <>
       <div className="between">
-        <h1 className="h1">{adding ? `Заказ №${orderId}` : `Стол ${table}`}</h1>
+        <h1 className="h1">
+          {adding ? `Заказ №${orderId}` : atTable ? `Стол ${table}` : "Новый заказ"}
+        </h1>
         <button className="btn sm ghost" onClick={onCancel}>Назад</button>
       </div>
       <p className="muted subtitle">
         {adding
-          ? `Добавляем позиции в заказ · стол ${table}`
-          : "Выберите гостя и добавляйте позиции · можно оставить общим"}
+          ? `Добавляем позиции в заказ${atTable ? ` · стол ${table}` : ""}`
+          : atTable
+            ? "Выберите гостя и добавляйте позиции · можно оставить общим"
+            : "Наберите то, что попросил гость — номер он получит при отправке"}
       </p>
 
-      {/* выбор гостя, на которого пишутся позиции */}
+      {/* выбор гостя, на которого пишутся позиции; на стойке не нужен */}
+      {atTable && (
       <div className="scroll-x mt-3">
         {guestList.map((g) => (
           <button
@@ -130,6 +138,7 @@ export default function Compose({
           <Icon name="plus" size={15} /> гость
         </button>
       </div>
+      )}
 
       {!adding && (
         <label className="field mt-3">
@@ -244,7 +253,10 @@ export default function Compose({
       {count > 0 && (
         <div className="cartbar">
           <div className="stack" style={{ gap: 0 }}>
-            <span className="muted">{count} поз. · стол {table}{guests > 0 ? ` · пишем на: ${guestLabel(activeGuest)}` : ""}</span>
+            <span className="muted">
+              {count} поз.{atTable ? ` · стол ${table}` : ""}
+              {guests > 0 ? ` · пишем на: ${guestLabel(activeGuest)}` : ""}
+            </span>
             <span className="total num">{total.toLocaleString("ru")} ₽</span>
           </div>
           <button className="btn" onClick={submit} disabled={busy}>

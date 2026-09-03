@@ -36,11 +36,23 @@ def _add_items(order: Order, items: list[dict]) -> None:
 
 @transaction.atomic
 def create_order(*, waiter, items: list[dict], table: str = "", comment: str = "") -> Order:
-    """Заказ, созданный официантом сразу на столе (статус «Открыт»)."""
+    """Заказ, заведённый сотрудником сразу в работу (статус «Открыт»).
+
+    В зале это заказ на стол. На стойке столов нет: гость называет позиции
+    у окна, и заказ должен получить номер — иначе его нечем выкрикнуть,
+    а гостю нечего ждать.
+    """
+    from core.models import SiteSettings
+
     if not items:
         raise OrderError("Пустой заказ")
+    counter = SiteSettings.load().service_mode == SiteSettings.ServiceMode.COUNTER
     order = Order.objects.create(
-        waiter=waiter, table=table, comment=comment, status=Order.Status.OPEN
+        waiter=waiter,
+        table="" if counter else table,
+        comment=comment,
+        status=Order.Status.OPEN,
+        daily_number=next_daily_number() if counter else None,
     )
     _add_items(order, items)
     order.recalc_total()

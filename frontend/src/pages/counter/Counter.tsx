@@ -3,6 +3,7 @@ import { patch, post, ApiError } from "../../api";
 import type { Order, PayMethod } from "../../types";
 import Icon from "../../components/Icon";
 import { useLiveOrders } from "../../useLiveOrders";
+import Compose from "../waiter/Compose";
 import { useToast } from "../../components/ui/Toast";
 import { fmtDuration, minutesBetween } from "../../time";
 
@@ -26,9 +27,12 @@ const COLUMNS: { key: "new" | "in_progress" | "ready"; label: string }[] = [
 
 export default function Counter() {
   const toast = useToast();
-  const { orders, setOrders, highlight } = useLiveOrders("/orders/?status=open");
+  const { orders, setOrders, highlight, reload } = useLiveOrders("/orders/?status=open");
   const [busy, setBusy] = useState<number | null>(null);
   const [payFor, setPayFor] = useState<number | null>(null);
+  // Заказ на словах: гость подошёл к окну и назвал позиции. Столов на стойке
+  // нет, поэтому Compose открываем без стола — он выдаст номер.
+  const [composing, setComposing] = useState(false);
 
   const apply = useCallback(
     (updated: Order) => setOrders((os) => os.map((o) => (o.id === updated.id ? updated : o))),
@@ -70,16 +74,33 @@ export default function Counter() {
     return map;
   }, [orders]);
 
+  if (composing) {
+    return (
+      <Compose
+        onCreated={() => {
+          setComposing(false);
+          reload();
+        }}
+        onCancel={() => setComposing(false)}
+      />
+    );
+  }
+
   return (
     <>
       <div className="between">
         <h1 className="h1">Стойка</h1>
-        <span className="chip">
-          <Icon name="spark" size={15} /> {orders.length}
-        </span>
+        <div className="inline tight">
+          <span className="chip">
+            <Icon name="spark" size={15} /> {orders.length}
+          </span>
+          <button className="btn sm" onClick={() => setComposing(true)}>
+            <Icon name="plus" size={16} /> Новый заказ
+          </button>
+        </div>
       </div>
       <p className="muted subtitle">
-        Заказы приходят из меню по QR — соберите и выдайте по номеру
+        Гость заказывает по QR или на словах — соберите и выдайте по номеру
       </p>
 
       {orders.length === 0 ? (
