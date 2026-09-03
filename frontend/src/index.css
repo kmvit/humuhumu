@@ -1,8 +1,9 @@
 /* ============ Шрифты ============
    Кириллические пары для тем: Onest (Нейтраль), Golos Text + Lora (Тёплая),
-   Manrope + Oswald (Строгая), Manrope + Jost (хуму). Файлы шрифтов браузер
+   Manrope + Oswald (Строгая), Manrope + Jost (хуму),
+   Unbounded + IBM Plex Sans (Падача). Файлы шрифтов браузер
    грузит только для реально используемой темы. */
-@import url("https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Jost:wght@300;400;500;600&family=Lora:wght@500;600&family=Manrope:wght@400;500;600;700&family=Onest:wght@400;500;600;700&family=Oswald:wght@400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Jost:wght@300;400;500;600&family=Lora:wght@500;600&family=Manrope:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=Onest:wght@400;500;600;700&family=Oswald:wght@400;500;600&family=Unbounded:wght@500;700;800&display=swap");
 
 /* ============ Дизайн-токены ============
    Базовые значения — тема «Нейтраль» (дефолт продукта). Темы заведений
@@ -120,6 +121,32 @@
   --radius-sm: 10px;
 }
 
+/* «Падача» — фирменная тема продукта: тёплая бумага, оранжевый акцент,
+   плотные заголовки. Палитра совпадает с промо-сайтом и роликом. */
+:root[data-app-theme="padacha"] {
+  --font-display: "Unbounded", sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, sans-serif;
+  --w-display: 700;
+  --w-display-xl: 800;
+  --brand-case: uppercase;
+  --accent: #d2570a;
+  --on-brand: #fff7f0;
+  --bg: #efebe2;
+  --bg-2: #e4dfd3;
+  --surface: #f8f5ee;
+  --surface-solid: #fffcf4;
+  --fg: #17130e;
+  --muted: #5e5648;
+  --border: rgba(23, 19, 14, 0.14);
+  --rule: rgba(23, 19, 14, 0.24);
+  --shadow: 0 12px 34px -20px rgba(60, 45, 25, 0.4);
+  --shadow-lg: 0 24px 54px -28px rgba(60, 45, 25, 0.45);
+  --success: #167d4e;
+  --danger: #b3402f;
+  --radius: 10px;
+  --radius-sm: 6px;
+}
+
 /* ============ Тёмный режим ============
    Идёт после светлых тем: перекрывает их базовые токены, а блоки
    [data-app-theme][data-theme="dark"] ниже уточняют тёмные палитры тем. */
@@ -184,6 +211,25 @@
   --muted: #a3b8cf;
   --border: rgba(242, 234, 219, 0.16);
   --rule: rgba(242, 234, 219, 0.26);
+}
+
+:root[data-app-theme="padacha"][data-theme="dark"] {
+  --accent: #ff7a18;
+  /* на оранжевой заливке текст тёмный, поэтому градиент держим ярким:
+     стандартный тёмный --grad увёл бы его в нечитаемую глубину */
+  --grad: linear-gradient(135deg, #ff8a32 0%, #e56a0e 100%);
+  --on-brand: #17110a;
+  --band: #f6f0e4;
+  --bg: #14110d;
+  --bg-2: #0c0a07;
+  --surface: #1e1a14;
+  --surface-solid: #1e1a14;
+  --fg: #f6f0e4;
+  --muted: #a99c87;
+  --border: rgba(246, 240, 228, 0.14);
+  --rule: rgba(246, 240, 228, 0.24);
+  --success: #4fd290;
+  --danger: #e2694f;
 }
 
 * { box-sizing: border-box; }

@@ -9,6 +9,7 @@ class SiteSettings(models.Model):
         WARM = "warm", "Тёплая"
         STRICT = "strict", "Строгая"
         ISLAND = "island", "Островная"
+        PADACHA = "padacha", "Падача"
 
     name = models.CharField("Название", max_length=120, default="Кафе")
     tagline = models.CharField("Слоган", max_length=200, blank=True)

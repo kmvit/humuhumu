@@ -32,6 +32,7 @@ const THEMES: { key: AppTheme; name: string; accent: string }[] = [
   { key: "warm", name: "Тёплая", accent: "#9c5a1e" },
   { key: "strict", name: "Строгая", accent: "#0d7a52" },
   { key: "island", name: "Островная", accent: "#1f58a6" },
+  { key: "padacha", name: "Падача", accent: "#d2570a" },
 ];
 
 // Готовые акценты «цвета заведения»; свой цвет — через пипетку рядом.

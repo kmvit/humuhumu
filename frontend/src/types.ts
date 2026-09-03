@@ -1,4 +1,4 @@
-export type AppTheme = "neutral" | "warm" | "strict" | "island";
+export type AppTheme = "neutral" | "warm" | "strict" | "island" | "padacha";
 
 export interface Site {
   name: string;
