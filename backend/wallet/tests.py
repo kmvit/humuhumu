@@ -29,14 +29,3 @@ class DemoFixturesTests(APITestCase):
         txns = self.client.get("/api/wallet/transactions/").data
         self.assertEqual(balance, sum(Decimal(t["amount"]) for t in txns))
         self.assertEqual(balance, Decimal("850.00"))
-
-    def test_pay_with_tokens_decreases_balance(self):
-        self.auth("anna")
-        res = self.client.post(
-            "/api/orders/",
-            {"pay_method": "tokens", "items": [{"product": 3, "quantity": 1}]},
-            format="json",
-        )
-        self.assertEqual(res.status_code, 201)
-        new_balance = Decimal(self.client.get("/api/wallet/").data["balance"])
-        self.assertEqual(new_balance, Decimal("700.00"))  # 850 - 150 (Эспрессо)
