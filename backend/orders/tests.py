@@ -6,7 +6,7 @@ from catalog.models import Category, Product
 from core.models import SiteSettings
 from users.models import User
 
-from .models import Order
+from .models import Order, OrderItem
 
 
 class OrderFlowBase(APITestCase):
@@ -231,3 +231,81 @@ class MoveItemsTests(OrderFlowBase):
         order = self.create_order("5")
         res = self.move(order, "7", [other.items.first().id])
         self.assertEqual(res.status_code, 404)
+
+
+class RemoveItemCodeTests(OrderFlowBase):
+    """Позицию, которую кухня/бар уже готовят, официант убирает только по
+    коду из настроек (SiteSettings.item_remove_code). Новую позицию —
+    как раньше, свободно.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.set_mode("hall")
+        self.auth(self.waiter)
+
+    def create_order(self):
+        res = self.client.post(
+            "/api/orders/",
+            {"table": "5", "items": [{"product": self.latte.id, "quantity": 1}]},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 201)
+        return Order.objects.get(pk=res.data["id"])
+
+    def start_item(self, order):
+        item = order.items.first()
+        item.status = Order.StationStatus.IN_PROGRESS
+        item.save(update_fields=["status"])
+        return item
+
+    def remove(self, order, item, code=None):
+        payload = {"item_id": item.id}
+        if code is not None:
+            payload["code"] = code
+        return self.client.post(f"/api/orders/{order.id}/remove_item/", payload, format="json")
+
+    def test_new_item_removed_without_code(self):
+        order = self.create_order()
+        item = order.items.first()
+        res = self.remove(order, item)
+        self.assertEqual(res.status_code, 200)
+
+    def test_in_progress_item_needs_code_when_none_configured(self):
+        """Код не задан в настройках — удаление позиции в работе запрещено всем."""
+        order = self.create_order()
+        item = self.start_item(order)
+        res = self.remove(order, item, code="0000")
+        self.assertEqual(res.status_code, 403)
+        self.assertTrue(OrderItem.objects.filter(pk=item.pk).exists())
+
+    def test_in_progress_item_rejects_wrong_code(self):
+        SiteSettings.load()
+        site = SiteSettings.objects.get(pk=1)
+        site.item_remove_code = "4321"
+        site.save()
+        order = self.create_order()
+        item = self.start_item(order)
+        res = self.remove(order, item, code="0000")
+        self.assertEqual(res.status_code, 403)
+        self.assertTrue(OrderItem.objects.filter(pk=item.pk).exists())
+
+    def test_in_progress_item_removed_with_correct_code(self):
+        site = SiteSettings.load()
+        site.item_remove_code = "4321"
+        site.save()
+        order = self.create_order()
+        item = self.start_item(order)
+        res = self.remove(order, item, code="4321")
+        self.assertEqual(res.status_code, 200)
+        self.assertFalse(OrderItem.objects.filter(pk=item.pk).exists())
+
+    def test_admin_removes_in_progress_item_without_code(self):
+        admin = User.objects.create_user(
+            username="boss", password="demo12345", role=User.Role.ADMIN
+        )
+        order = self.create_order()
+        item = self.start_item(order)
+        self.auth(admin)
+        res = self.remove(order, item)
+        self.assertEqual(res.status_code, 200)

@@ -10,6 +10,7 @@ class SiteSettingsAdmin(admin.ModelAdmin):
         ("Внешний вид", {"fields": ("theme", "accent_color")}),
         ("Контакты", {"fields": ("phone", "email", "address", "working_hours")}),
         ("Соцсети", {"fields": ("instagram", "telegram")}),
+        ("Официанты", {"fields": ("item_remove_code",)}),
     )
 
     def has_add_permission(self, request):

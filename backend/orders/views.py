@@ -470,10 +470,12 @@ class OrderViewSet(viewsets.ModelViewSet):
                 {"detail": "Позиция не найдена"}, status=status.HTTP_404_NOT_FOUND
             )
         if self._waiter_locked(request, item):
-            return Response(
-                {"detail": "Кухня/бар уже готовят — позицию убрать нельзя"},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+            code = str(request.data.get("code", "")).strip()
+            if not self._check_remove_code(code):
+                return Response(
+                    {"detail": "Кухня/бар уже готовят — нужен код на удаление"},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
         # Если по позиции уже списали склад — возвращаем продукты обратно.
         return_order_item(item, user=request.user)
         item.delete()
@@ -562,6 +564,15 @@ class OrderViewSet(viewsets.ModelViewSet):
             request.user.role != User.Role.ADMIN
             and item.status != Order.StationStatus.NEW
         )
+
+    @staticmethod
+    def _check_remove_code(code):
+        """Код на удаление позиции, которую станция уже готовит. Задаётся в
+        админке (SiteSettings); пусто — удаление такой позиции запрещено."""
+        from core.models import SiteSettings
+
+        configured = SiteSettings.load().item_remove_code
+        return bool(configured) and code == configured
 
     @staticmethod
     def _pay_method(request):

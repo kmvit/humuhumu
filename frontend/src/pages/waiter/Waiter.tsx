@@ -38,6 +38,9 @@ export default function Waiter() {
   const [closing, setClosing] = useState(false);
   const [busyItem, setBusyItem] = useState<number | null>(null);
   const [confirmId, setConfirmId] = useState<number | null>(null);
+  // код на удаление позиции, которую кухня/бар уже готовят (см. настройки заведения)
+  const [codeFor, setCodeFor] = useState<number | null>(null);
+  const [codeText, setCodeText] = useState("");
   const [view, setView] = useState<"open" | "closed">("open");
   const [closed, setClosed] = useState<Order[]>([]);
   const [splitN, setSplitN] = useState(2);
@@ -83,13 +86,19 @@ export default function Waiter() {
   }, [selected]);
 
   // подтверждение прямо в UI — нативный confirm() в киоск/встроенных браузерах подавляется
-  async function removeItem(order: Order, item: OrderItem) {
+  async function removeItem(order: Order, item: OrderItem, code?: string) {
     setBusyItem(item.id);
     try {
-      await post(`/orders/${order.id}/remove_item/`, { item_id: item.id });
+      await post(`/orders/${order.id}/remove_item/`, {
+        item_id: item.id,
+        ...(code ? { code } : {}),
+      });
       setConfirmId(null);
+      setCodeFor(null);
+      setCodeText("");
       await reload();
     } catch (e) {
+      // код неверный/не задан — оставляем панель открытой, чтобы попробовать ещё раз
       notify(e instanceof ApiError ? e.message : "Не удалось убрать позицию", "bad");
     } finally {
       setBusyItem(null);
@@ -613,13 +622,50 @@ export default function Waiter() {
                               <Icon name="close" size={16} />
                             </button>
                           </span>
+                        ) : codeFor === it.id ? (
+                          // позиция уже в работе — убрать можно, только назвав код из настроек
+                          <span className="inline tight">
+                            <input
+                              className="input"
+                              style={{ width: 80, minHeight: "auto", padding: "8px 10px" }}
+                              value={codeText}
+                              onChange={(e) => setCodeText(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && codeText.trim()) removeItem(o, it, codeText.trim());
+                              }}
+                              placeholder="код"
+                              maxLength={20}
+                              autoFocus
+                            />
+                            <button
+                              className="icon-btn danger"
+                              title="Убрать по коду"
+                              disabled={busyItem === it.id || !codeText.trim()}
+                              onClick={() => removeItem(o, it, codeText.trim())}
+                            >
+                              <Icon name="check" size={16} />
+                            </button>
+                            <button
+                              className="icon-btn"
+                              title="Отмена"
+                              onClick={() => { setCodeFor(null); setCodeText(""); }}
+                            >
+                              <Icon name="close" size={16} />
+                            </button>
+                          </span>
+                        ) : it.status !== "new" ? (
+                          <button
+                            className="icon-btn"
+                            title="Кухня/бар уже готовят — убрать можно только по коду"
+                            onClick={() => { setCodeFor(it.id); setCodeText(""); }}
+                          >
+                            <Icon name="lock" size={16} />
+                          </button>
                         ) : (
                           <Stepper
                             value={"× " + it.quantity}
                             width={112}
-                            // кухня/бар уже взяли позицию — менять её нельзя (ни +, ни −);
-                            // добавить ещё можно только новой позицией через «Позиция»
-                            disabled={busyItem === it.id || it.status !== "new"}
+                            disabled={busyItem === it.id}
                             decDanger={it.quantity === 1}
                             decIcon={it.quantity === 1 ? "trash" : "minus"}
                             ariaDec={it.quantity === 1 ? "Убрать позицию" : "На одну меньше"}
