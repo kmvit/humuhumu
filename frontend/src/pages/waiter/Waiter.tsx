@@ -48,6 +48,8 @@ export default function Waiter() {
   const [tables, setTables] = useState<string[]>([]);
   const [busyReq, setBusyReq] = useState<number | null>(null);
   const [moveFor, setMoveFor] = useState<number | null>(null);
+  // выбранные для переноса позиции; пусто = переносим заказ целиком
+  const [moveSel, setMoveSel] = useState<Set<number>>(new Set());
   const [busyMove, setBusyMove] = useState<number | null>(null);
   const [busyClose, setBusyClose] = useState<number | null>(null);
   // какой счёт сейчас на выборе способа оплаты: id заказа или "table" (весь стол)
@@ -272,10 +274,36 @@ export default function Waiter() {
       setMoveFor(null);
       setSelected(table);
       await reload();
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Не удалось перенести заказ", "bad");
     } finally {
       setBusyMove(null);
     }
   }
+
+  // перенос только выбранных позиций: уходят в открытый заказ целевого стола
+  // (или в новый), остальное остаётся на месте
+  async function moveItems(order: Order, table: string) {
+    setBusyMove(order.id);
+    try {
+      await post(`/orders/${order.id}/move_items/`, { table, item_ids: [...moveSel] });
+      setMoveFor(null);
+      setMoveSel(new Set());
+      setSelected(table);
+      await reload();
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Не удалось перенести позиции", "bad");
+    } finally {
+      setBusyMove(null);
+    }
+  }
+
+  const toggleMoveSel = (id: number) =>
+    setMoveSel((s) => {
+      const n = new Set(s);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
 
   // официант подтверждает заявку клиента, назначая стол
   async function confirmRequest(order: Order, table: string) {
@@ -628,16 +656,45 @@ export default function Waiter() {
                     </button>
                   ) : null}
 
-                  {/* инлайн-перенос на другой стол */}
+                  {/* инлайн-перенос на другой стол: весь заказ или отмеченные позиции */}
                   {moveFor === o.id && (
                     <div className="mt-3">
                       <div className="between">
-                        <span className="muted sm">Перенести на стол:</span>
-                        <button className="icon-btn" onClick={() => setMoveFor(null)} aria-label="Отмена"><Icon name="close" size={16} /></button>
+                        <span className="muted sm">
+                          {moveSel.size
+                            ? `Перенести ${moveSel.size} поз. на стол:`
+                            : "Перенести весь заказ на стол:"}
+                        </span>
+                        <button className="icon-btn" onClick={() => { setMoveFor(null); setMoveSel(new Set()); }} aria-label="Отмена"><Icon name="close" size={16} /></button>
                       </div>
+                      {o.items.length > 1 && (
+                        <>
+                          <div className="wrap tight mt-2">
+                            {o.items.map((it) => (
+                              <button
+                                key={it.id}
+                                className={"badge guest-chip" + (moveSel.has(it.id) ? " open" : "")}
+                                onClick={() => toggleMoveSel(it.id)}
+                              >
+                                {it.product_name} × {it.quantity}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="muted sm mt-1">
+                            Отметьте позиции, чтобы перенести только их
+                          </div>
+                        </>
+                      )}
                       <div className="scroll-x mt-2">
                         {tables.filter((t) => t !== o.table).map((t) => (
-                          <button key={t} className="navlink" disabled={busyMove === o.id} onClick={() => moveOrder(o, t)}>{t}</button>
+                          <button
+                            key={t}
+                            className="navlink"
+                            disabled={busyMove === o.id}
+                            onClick={() => (moveSel.size ? moveItems(o, t) : moveOrder(o, t))}
+                          >
+                            {t}
+                          </button>
                         ))}
                       </div>
                     </div>
@@ -654,7 +711,7 @@ export default function Waiter() {
                           <Icon name="edit" size={15} /> Комментарий
                         </button>
                       )}
-                      <button className="btn sm ghost" disabled={busyMove === o.id} onClick={() => setMoveFor(o.id)}>
+                      <button className="btn sm ghost" disabled={busyMove === o.id} onClick={() => { setMoveFor(o.id); setMoveSel(new Set()); }}>
                         <Icon name="store" size={15} /> Перенести
                       </button>
                     </div>

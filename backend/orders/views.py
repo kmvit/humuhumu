@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status, viewsets
@@ -59,7 +60,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             return [IsCookOrAdmin()]
         if self.action == "drinks_status":
             return [IsBarOrAdmin()]
-        if self.action in ("close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "item_qty", "confirm", "set_comment", "move", "serve", "pay_terminal", "pay_result"):
+        if self.action in ("close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "item_qty", "confirm", "set_comment", "move", "move_items", "serve", "pay_terminal", "pay_result"):
             return [IsWaiterOrAdmin()]
         # item_status — право проверяем внутри по станции позиции
         return [IsAuthenticated()]
@@ -226,6 +227,68 @@ class OrderViewSet(viewsets.ModelViewSet):
             )
         order.table = table
         order.save(update_fields=["table"])
+        return Response(OrderSerializer(order).data)
+
+    @action(detail=True, methods=["post"], url_path="move_items")
+    def move_items(self, request, pk=None):
+        """Официант переносит отдельные позиции на другой стол (пересела часть
+        компании). Позиции уходят в самый ранний открытый заказ целевого стола,
+        а если его нет — в новый. Выбраны все позиции — заказ просто меняет
+        стол, как move: не плодим пустых отменённых заказов.
+        """
+        order = self.get_object()
+        if order.status != Order.Status.OPEN:
+            return Response(
+                {"detail": "Переносить можно только из открытого заказа"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        table = str(request.data.get("table", "")).strip()
+        if not table:
+            return Response(
+                {"detail": "Не указан стол"}, status=status.HTTP_400_BAD_REQUEST
+            )
+        if table == order.table:
+            return Response(
+                {"detail": "Заказ уже на этом столе"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        ids = request.data.get("item_ids") or []
+        if not ids:
+            return Response(
+                {"detail": "Не выбраны позиции"}, status=status.HTTP_400_BAD_REQUEST
+            )
+        items = list(order.items.filter(id__in=ids))
+        if len(items) < len(set(ids)):
+            return Response(
+                {"detail": "Позиция не найдена"}, status=status.HTTP_404_NOT_FOUND
+            )
+        with transaction.atomic():
+            if len(items) == len(order.items.all()):
+                order.table = table
+                order.save(update_fields=["table"])
+                return Response(OrderSerializer(order).data)
+            target = (
+                Order.objects.filter(table=table, status=Order.Status.OPEN)
+                .order_by("created_at")
+                .first()
+            )
+            if target is None:
+                target = Order.objects.create(
+                    waiter=order.waiter or request.user,
+                    table=table,
+                    status=Order.Status.OPEN,
+                )
+            for it in items:
+                it.order = target
+            OrderItem.objects.bulk_update(items, ["order"])
+            # у обоих заказов изменился состав — заново суммы и таймстемпы станций
+            for pk_ in (order.pk, target.pk):
+                o = Order.objects.prefetch_related("items__product__category").get(pk=pk_)
+                o.recalc_total()
+                o.save(update_fields=["total"])
+                self._sync_times(o, Category.Station.KITCHEN)
+                self._sync_times(o, Category.Station.BAR)
+        order = Order.objects.prefetch_related("items__product__category").get(pk=order.pk)
         return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["patch"])

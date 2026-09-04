@@ -156,3 +156,78 @@ class StaffOrderTests(OrderFlowBase):
         order = Order.objects.get()
         self.assertEqual(order.table, "7")
         self.assertIsNone(order.daily_number)
+
+
+class MoveItemsTests(OrderFlowBase):
+    """Перенос отдельных позиций на другой стол: пересела часть компании.
+
+    Позиции уходят в открытый заказ целевого стола, а без него — в новый.
+    Суммы обоих заказов пересчитываются; выбор всех позиций — обычный move.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.set_mode("hall")
+        self.auth(self.waiter)
+
+    def create_order(self, table, lines=2):
+        res = self.client.post(
+            "/api/orders/",
+            {"table": table,
+             "items": [{"product": self.latte.id, "quantity": 1}] * lines},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 201)
+        return Order.objects.get(pk=res.data["id"])
+
+    def move(self, order, table, item_ids):
+        return self.client.post(
+            f"/api/orders/{order.id}/move_items/",
+            {"table": table, "item_ids": item_ids},
+            format="json",
+        )
+
+    def test_subset_moves_to_new_order_on_free_table(self):
+        order = self.create_order("5")
+        moved, kept = order.items.all()
+        res = self.move(order, "7", [moved.id])
+        self.assertEqual(res.status_code, 200)
+        target = Order.objects.exclude(pk=order.pk).get()
+        self.assertEqual(target.table, "7")
+        self.assertEqual(target.status, Order.Status.OPEN)
+        self.assertEqual(target.waiter, self.waiter)
+        self.assertEqual(list(target.items.all()), [moved])
+        order.refresh_from_db()
+        self.assertEqual(list(order.items.all()), [kept])
+        self.assertEqual(order.total, Decimal("240"))
+        self.assertEqual(target.total, Decimal("240"))
+
+    def test_subset_merges_into_open_order_of_target_table(self):
+        target = self.create_order("7", lines=1)
+        order = self.create_order("5")
+        moved = order.items.first()
+        res = self.move(order, "7", [moved.id])
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(Order.objects.count(), 2)  # новый заказ не создан
+        target.refresh_from_db()
+        self.assertEqual(target.items.count(), 2)
+        self.assertEqual(target.total, Decimal("480"))
+
+    def test_all_items_just_retable_the_order(self):
+        order = self.create_order("5")
+        res = self.move(order, "7", [i.id for i in order.items.all()])
+        self.assertEqual(res.status_code, 200)
+        order.refresh_from_db()
+        self.assertEqual(order.table, "7")
+        self.assertEqual(Order.objects.count(), 1)
+
+    def test_rejects_same_table_and_empty_selection(self):
+        order = self.create_order("5")
+        self.assertEqual(self.move(order, "5", [order.items.first().id]).status_code, 400)
+        self.assertEqual(self.move(order, "7", []).status_code, 400)
+
+    def test_rejects_foreign_item(self):
+        other = self.create_order("9", lines=1)
+        order = self.create_order("5")
+        res = self.move(order, "7", [other.items.first().id])
+        self.assertEqual(res.status_code, 404)
