@@ -33,7 +33,10 @@ const NAV: Record<string, { to: string; label: string; icon: IconName }[]> = {
     { to: "/finance", label: "Финансы", icon: "wallet" },
   ],
   guest: [
-    { to: "/", label: "Меню", icon: "coffee" },
+    // "/" — это лента во весь экран, она живёт без шапки; в шапке (юридические
+    // страницы, меню списком) ведём на список, иначе ссылка «Меню» уводила бы
+    // из Layout и никогда не подсвечивалась активной.
+    { to: "/menu", label: "Меню", icon: "coffee" },
   ],
 };
 

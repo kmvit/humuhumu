@@ -57,15 +57,19 @@ export default function App() {
         path="/login"
         element={user ? <Navigate to={home} replace /> : <Login />}
       />
-      {/* экспериментальное меню Reels — полноэкранное, без общего Layout */}
+      {/* Меню лентой — полноэкранное, без общего Layout. Оно же главная для
+          гостя: лента с фото продаёт блюда лучше списка, а список остаётся
+          на /menu и доступен из ленты в один тап. Именно Route, а не редирект
+          с "/" — иначе потеряется ?table из QR-кода на столе. */}
       <Route path="/reels" element={<MenuReels />} />
+      {!user && <Route path="/" element={<MenuReels />} />}
       <Route element={<Layout />}>
         {/* юридические страницы — открыты всем */}
         <Route path="/offer" element={<Offer />} />
         <Route path="/privacy" element={<Privacy />} />
         <Route path="/payment" element={<Payment />} />
         <Route path="/contacts" element={<Contacts />} />
-        {!user && <Route path="/" element={<Menu />} />}
+        {!user && <Route path="/menu" element={<Menu />} />}
         {user?.role === "client" && <Route path="/client" element={<Menu />} />}
         {user?.role === "waiter" && (
           <Route path="/waiter" element={counter ? <Counter /> : <Waiter />} />

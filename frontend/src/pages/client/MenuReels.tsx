@@ -174,7 +174,7 @@ export default function MenuReels() {
       <div className="reels">
         <div className="reels-loading">
           Нет доступных позиций
-          <Link className="btn sm ghost mt-4" to="/">На обычное меню</Link>
+          <Link className="btn sm ghost mt-4" to="/menu">На обычное меню</Link>
         </div>
       </div>
     );
@@ -184,7 +184,7 @@ export default function MenuReels() {
     <div className={"reels" + (count > 0 ? " has-cart" : "")}>
       {/* верхняя лента категорий */}
       <div className="reels-top">
-        <Link className="reels-back" to="/" aria-label="Обычное меню">
+        <Link className="reels-back" to="/menu" aria-label="Обычное меню">
           <span className="rot-90">
             <Icon name="arrowDown" size={18} />
           </span>
