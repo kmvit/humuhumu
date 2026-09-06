@@ -85,6 +85,10 @@ class Product(models.Model):
         buf = BytesIO()
         img.save(buf, format="WEBP", quality=70, method=6)
         base = os.path.splitext(os.path.basename(self.image.name))[0]
+        # старое превью — производный файл, его не жалко: иначе при каждой
+        # смене картинки в products/thumbs/ копится мусор
+        if self.thumbnail:
+            self.thumbnail.delete(save=False)
         self.thumbnail.save(f"{base}.webp", ContentFile(buf.getvalue()), save=False)
 
     def save(self, *args, **kwargs):
