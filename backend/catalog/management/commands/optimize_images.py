@@ -84,8 +84,11 @@ class Command(BaseCommand):
 
         already_webp = (img.format or "").upper() == "WEBP"
         fits = max(img.size) <= max_side
-        if not opts["force"] and already_webp and fits and before <= opts["min_kb"] * 1024:
-            return 0, None
+        if not opts["force"] and fits:
+            # уже WebP нужного размера — повторно жать нечего: выигрыш будет
+            # в проценты, а файл каждый раз получал бы новое имя
+            if already_webp or before <= opts["min_kb"] * 1024:
+                return 0, None
 
         img = ImageOps.exif_transpose(img)
         if img.mode not in ("RGB", "RGBA"):
