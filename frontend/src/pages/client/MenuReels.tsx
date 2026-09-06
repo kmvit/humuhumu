@@ -97,7 +97,10 @@ export default function MenuReels() {
       .filter((s) => s.items.length > 0);
     const top = products
       .filter((p) => p.is_available && (p.likes ?? 0) > 0)
-      .sort((a, b) => (b.likes ?? 0) - (a.likes ?? 0))
+      // при равных лайках вперёд идёт то, что добавили позже: у новинки лайков
+      // ещё мало, и без этого она вечно оказывалась бы в хвосте хитов.
+      // Отдельной даты у товара нет, но id автоинкрементный — больше = новее.
+      .sort((a, b) => (b.likes ?? 0) - (a.likes ?? 0) || b.id - a.id)
       .slice(0, 12);
     const topPage = top.length
       ? [{ key: "top", label: "Хиты", icon: "heart" as IconName, items: top }]
