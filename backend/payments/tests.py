@@ -7,6 +7,8 @@
 from decimal import Decimal
 from unittest import mock
 
+import httpx
+
 from django.test import TestCase
 from rest_framework.test import APITestCase
 
@@ -14,7 +16,7 @@ from catalog.models import Category, Product
 from core.models import SiteSettings
 from orders.models import Order
 
-from .acquiring import SberAcquirer, TBankAcquirer, get_acquirer
+from .acquiring import AcquiringError, SberAcquirer, TBankAcquirer, YooKassaAcquirer, get_acquirer
 from .models import Payment
 from .services import apply_payment_result
 
@@ -122,6 +124,76 @@ class SberCallbackTests(TestCase):
         self.assertTrue(result.success)
 
 
+class YooKassaTests(TestCase):
+    """ЮKassa: сумма в рублях, ключ идемпотентности, уведомление без подписи."""
+
+    def setUp(self):
+        patcher = mock.patch.dict(
+            "os.environ", {"YOOKASSA_SHOP_ID": "shop-1", "YOOKASSA_SECRET_KEY": "secret"}
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.acq = YooKassaAcquirer()
+
+    def payment(self, amount="240"):
+        return Payment.objects.create(
+            purpose=Payment.Purpose.ORDER,
+            status=Payment.Status.PENDING,
+            amount=Decimal(amount),
+            method=Payment.Method.CARD,
+            provider="yookassa",
+        )
+
+    def test_amount_goes_in_roubles_not_kopecks(self):
+        """Копейки, отправленные как рубли, — это счёт в сто раз больше."""
+        payment = self.payment("240")
+        answer = {"id": "2c-abc", "confirmation": {"confirmation_url": "https://yoo/x"}}
+        with mock.patch.object(self.acq, "_post", return_value=answer) as post:
+            url = self.acq.create(payment, return_url="https://cafe/ok")
+
+        self.assertEqual(url, "https://yoo/x")
+        self.assertEqual(post.call_args[0][1]["amount"], {"value": "240.00", "currency": "RUB"})
+        payment.refresh_from_db()
+        self.assertEqual(payment.external_id, "2c-abc")
+
+    def test_idempotence_key_is_stable_per_payment(self):
+        """Повтор запроса не должен выставлять гостю второй счёт."""
+        one, two = self.payment(), self.payment()
+        self.assertEqual(self.acq._key(one), self.acq._key(one))
+        self.assertNotEqual(self.acq._key(one), self.acq._key(two))
+
+    def test_callback_does_not_trust_payload(self):
+        """Уведомление ЮKassa не подписывает — верим только ответу банка."""
+        with mock.patch.object(self.acq, "_get", return_value={"status": "canceled"}) as get:
+            result = self.acq.read_callback(
+                {"event": "payment.succeeded", "object": {"id": "2c-abc", "status": "succeeded"}}, {}
+            )
+        self.assertFalse(result.success)
+        self.assertFalse(result.pending)
+        self.assertIn("/payments/2c-abc", get.call_args[0][0])
+
+    def test_paid_status_recognised(self):
+        with mock.patch.object(self.acq, "_get", return_value={"status": "succeeded"}):
+            result = self.acq.read_callback({"object": {"id": "2c-abc"}}, {})
+        self.assertTrue(result.success)
+
+    def test_held_money_is_not_paid_yet(self):
+        with mock.patch.object(self.acq, "_get", return_value={"status": "waiting_for_capture"}):
+            result = self.acq.read_callback({"object": {"id": "2c-abc"}}, {})
+        self.assertFalse(result.success)
+        self.assertTrue(result.pending)
+
+    def test_notification_without_payment_id_ignored(self):
+        self.assertIsNone(self.acq.read_callback({"event": "payment.succeeded"}, {}))
+
+    def test_bank_error_text_reaches_staff(self):
+        """Причину отказа банк пишет в тело; сотруднику нужна она, а не «400»."""
+        response = httpx.Response(400, json={"description": "Сумма меньше минимальной"})
+        with self.assertRaises(AcquiringError) as cm:
+            self.acq._read(response)
+        self.assertIn("минимальной", str(cm.exception))
+
+
 class CallbackEndpointTests(APITestCase):
     """Ручка уведомлений: заказ закрывается, повтор ничего не ломает."""
 
@@ -218,7 +290,7 @@ class ManualPaymentUnaffectedTests(TestCase):
         self.assertEqual(order.pay_method, Order.PayMethod.CASH)
 
     def test_default_provider_is_manual(self):
-        """Умолчание больше не врёт про несуществующую ЮKassa."""
+        """Платёж у кассы не должен приписываться банку."""
         payment = Payment.objects.create(
             purpose=Payment.Purpose.ORDER,
             status=Payment.Status.PENDING,

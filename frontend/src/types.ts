@@ -22,6 +22,8 @@ export interface Site {
   theme: AppTheme;
   /** Какой режим видит гость, пока сам не переключил. */
   dark_by_default: boolean;
+  /** Заведение принимает оплату картой онлайн (выбран банк и заданы доступы). */
+  online_payment: boolean;
   accent_color: string;
   // Реквизиты продавца — подставляются в оферту, оплату и контакты.
   merchant_type: string;

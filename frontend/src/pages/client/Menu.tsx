@@ -28,6 +28,10 @@ export default function Menu() {
   const { theme } = useAppearance();
   // Стойка: без столов и официанта, заказ забирают по номеру в окне.
   const counter = useSite()?.service_mode === "counter";
+  // Онлайн-оплата: показываем кнопку, только если заведение её подключило,
+  // иначе гость нажмёт и упрётся в ошибку банка.
+  const canPayOnline = useSite()?.online_payment === true;
+  const [paying, setPaying] = useState(false);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [tracked, setTracked] = useState<Order | null>(null);
   const [table] = useState<string | null>(initTable);
@@ -158,6 +162,23 @@ export default function Menu() {
   }
 
   // --- экран статуса своего заказа ---
+  /** Уводим гостя на страницу банка. Заказ пометит оплаченным вебхук,
+   *  поэтому здесь ничего не меняем — вернувшись, гость увидит новый статус. */
+  async function payOnline() {
+    if (!token) return;
+    setPaying(true);
+    try {
+      const { payment_url } = await post<{ payment_url: string }>(
+        "/orders/pay_online/",
+        { token },
+      );
+      window.location.href = payment_url;
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Не удалось начать оплату", "bad");
+      setPaying(false);
+    }
+  }
+
   if (tracked) {
     const st = tracked.status;
     const head =
@@ -206,6 +227,12 @@ export default function Menu() {
             <strong className="num">{Number(tracked.total).toLocaleString("ru")} ₽</strong>
           </div>
         </div>
+        {canPayOnline && st !== "paid" && st !== "cancelled" && (
+          <button className="btn block mt-4" disabled={paying} onClick={payOnline}>
+            <Icon name="card" size={18} /> Оплатить картой ·{" "}
+            {Number(tracked.total).toLocaleString("ru")} ₽
+          </button>
+        )}
         {st === "requested" ? (
           confirmCancel ? (
             <div className="wrap mt-4" style={{ justifyContent: "center" }}>

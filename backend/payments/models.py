@@ -48,8 +48,8 @@ class Payment(models.Model):
         "Способ", max_length=8, choices=Method.choices, blank=True, default=""
     )
     # Умолчание — «наличными на кассе»: платёж без явного провайдера
-    # создаётся только там. Прежнее "yookassa" врало — провайдера с таким
-    # именем в коде нет, и запись в реестре ссылалась бы на несуществующий банк.
+    # создаётся только там. Прежнее "yookassa" в умолчании врало: платёж
+    # у кассы приписывался банку, через который не проходил.
     provider = models.CharField("Провайдер", max_length=32, default="manual")
     external_id = models.CharField(
         "ID у провайдера", max_length=128, unique=True, null=True, blank=True

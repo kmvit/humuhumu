@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import uuid
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -54,6 +55,16 @@ def _env(name: str) -> str:
 def _kopecks(amount: Decimal) -> int:
     """Банки принимают сумму в копейках целым числом."""
     return int((Decimal(amount) * 100).quantize(Decimal("1")))
+
+
+def _rubles(amount: Decimal) -> str:
+    """ЮKassa — исключение: ей сумма нужна строкой в рублях, «240.00»."""
+    return str(Decimal(amount).quantize(Decimal("0.01")))
+
+
+def _description(payment) -> str:
+    """Назначение платежа — то, что гость увидит в выписке."""
+    return f"Заказ №{payment.order_id}" if payment.order_id else "Оплата"
 
 
 class BaseAcquirer:
@@ -137,7 +148,7 @@ class TBankAcquirer(BaseAcquirer):
             # а не заказа: по одному заказу может быть вторая попытка оплаты
             # после отказа, и повтор OrderId банк отклонит.
             "OrderId": str(payment.pk),
-            "Description": f"Заказ №{payment.order_id}" if payment.order_id else "Оплата",
+            "Description": _description(payment),
             "SuccessURL": return_url,
             "FailURL": return_url,
         }
@@ -222,7 +233,7 @@ class SberAcquirer(BaseAcquirer):
             "amount": _kopecks(payment.amount),
             "returnUrl": return_url,
             "failUrl": return_url,
-            "description": f"Заказ №{payment.order_id}" if payment.order_id else "Оплата",
+            "description": _description(payment),
         })
         if data.get("errorCode") and str(data["errorCode"]) != "0":
             raise AcquiringError(data.get("errorMessage") or "Банк отклонил платёж")
@@ -266,7 +277,133 @@ class SberAcquirer(BaseAcquirer):
             raise AcquiringError(f"Сбербанк недоступен: {e}") from e
 
 
-_ACQUIRERS = {a.name: a for a in (NoAcquirer, TBankAcquirer, SberAcquirer)}
+class YooKassaAcquirer(BaseAcquirer):
+    """ЮKassa (принадлежит Сберу; для мелкого бизнеса он ведёт именно сюда).
+
+    От двух других драйверов отличается тремя вещами.
+
+    Сумма — строкой в рублях («240.00»), а не целым числом копеек.
+
+    Повторный запрос защищён ключом идемпотентности, и ключ мы берём не
+    случайный, а выведенный из id платежа. Если банк успел создать платёж,
+    а ответ до нас не дошёл, повтор вернёт тот же платёж, а не выставит
+    гостю второй счёт на ту же сумму.
+
+    Уведомления ЮKassa не подписывает — проверять подлинность нечем.
+    Поэтому поступаем как со Сбером: из уведомления берём только номер
+    платежа, а статус спрашиваем у банка сами.
+
+    Чек по 54-ФЗ здесь НЕ формируется: для него нужен блок receipt с
+    позициями, ставкой НДС, системой налогообложения и контактом гостя —
+    ничего этого мы пока не храним. Если в кабинете ЮKassa включены чеки,
+    платёж без receipt банк отклонит: сначала заводим эти данные.
+    """
+
+    name = "yookassa"
+    title = "ЮKassa"
+    api = "https://api.yookassa.ru/v3"
+
+    def __init__(self) -> None:
+        self.shop_id = _env("YOOKASSA_SHOP_ID")
+        self.secret = _env("YOOKASSA_SECRET_KEY")
+
+    def configured(self) -> bool:
+        return bool(self.shop_id and self.secret)
+
+    def _key(self, payment) -> str:
+        """Ключ идемпотентности: один и тот же для повторов одного платежа."""
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, f"https://padacha.ru/payments/{payment.pk}"))
+
+    def create(self, payment, *, return_url: str) -> str:
+        if not self.configured():
+            raise AcquiringError("Не заданы YOOKASSA_SHOP_ID и YOOKASSA_SECRET_KEY")
+
+        data = self._post(f"{self.api}/payments", {
+            "amount": {"value": _rubles(payment.amount), "currency": "RUB"},
+            # capture — списываем сразу, без холда: заказ уже собран,
+            # держать деньги и подтверждать вторым запросом незачем.
+            "capture": True,
+            "confirmation": {"type": "redirect", "return_url": return_url},
+            "description": _description(payment),
+            # Чтобы платёж в кабинете банка можно было сопоставить с нашим
+            # реестром при сверке.
+            "metadata": {"payment_id": str(payment.pk)},
+        }, idempotence_key=self._key(payment))
+
+        confirmation = data.get("confirmation") or {}
+        url = confirmation.get("confirmation_url")
+        if not data.get("id") or not url:
+            raise AcquiringError("ЮKassa не вернула ссылку на оплату")
+
+        payment.external_id = str(data["id"])
+        payment.save(update_fields=["external_id", "updated_at"])
+        return url
+
+    def read_callback(self, payload: dict, headers: dict) -> Result | None:
+        obj = payload.get("object")
+        external_id = str(obj.get("id") or "") if isinstance(obj, dict) else ""
+        if not external_id:
+            return None
+        return self.status(external_id)
+
+    def status(self, external_id: str) -> Result | None:
+        """Спросить банк, что с платежом. Ошибку сети наружу не глушим:
+
+        пусть ручка ответит 500 и ЮKassa повторит уведомление — иначе
+        оплаченный заказ навсегда останется висеть неоплаченным.
+        """
+        data = self._get(f"{self.api}/payments/{external_id}")
+        status = str(data.get("status", ""))
+        return Result(
+            external_id=external_id,
+            success=status == "succeeded",
+            # waiting_for_capture бывает только при capture=false, но пусть
+            # будет: деньги захолдированы, а не списаны — заказ не закрываем.
+            pending=status in ("pending", "waiting_for_capture"),
+        )
+
+    def _post(self, url: str, body: dict, *, idempotence_key: str) -> dict:
+        try:
+            response = httpx.post(
+                url,
+                json=body,
+                timeout=TIMEOUT,
+                auth=(self.shop_id, self.secret),
+                headers={"Idempotence-Key": idempotence_key},
+            )
+        except httpx.HTTPError as e:
+            raise AcquiringError(f"ЮKassa недоступна: {e}") from e
+        return self._read(response)
+
+    def _get(self, url: str) -> dict:
+        try:
+            response = httpx.get(url, timeout=TIMEOUT, auth=(self.shop_id, self.secret))
+        except httpx.HTTPError as e:
+            raise AcquiringError(f"ЮKassa недоступна: {e}") from e
+        return self._read(response)
+
+    @staticmethod
+    def _read(response: httpx.Response) -> dict:
+        """Причину отказа ЮKassa пишет в тело ответа, а не в код статуса.
+
+        raise_for_status её бы потерял, и сотрудник увидел бы голое «400»
+        вместо «сумма меньше минимальной».
+        """
+        try:
+            data = response.json()
+        except ValueError:
+            data = {}
+        if response.status_code >= 400:
+            raise AcquiringError(
+                data.get("description") or f"ЮKassa ответила {response.status_code}"
+            )
+        return data
+
+
+_ACQUIRERS = {
+    a.name: a
+    for a in (NoAcquirer, TBankAcquirer, SberAcquirer, YooKassaAcquirer)
+}
 
 
 def get_acquirer(name: str | None = None) -> BaseAcquirer:
