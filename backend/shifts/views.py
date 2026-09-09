@@ -8,6 +8,7 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from core.plans import RequiresShifts
 from users.models import User
 from users.permissions import IsStaffRole, IsWarehouseOrAdmin
 
@@ -22,11 +23,11 @@ class ShiftViewSet(viewsets.ViewSet):
     только смотрит: свои смены, кто с ними в смене и выручку дня.
     """
 
-    permission_classes = [IsStaffRole]
+    permission_classes = [IsStaffRole, RequiresShifts]
 
     def get_permissions(self):
         if self.action in ("add_member", "remove_member", "staff", "set_penalty"):
-            return [IsWarehouseOrAdmin()]
+            return [IsWarehouseOrAdmin(), RequiresShifts()]
         return super().get_permissions()
 
     @property

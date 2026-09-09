@@ -10,6 +10,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from catalog.models import Product
+from core.plans import RequiresInventory
 from users.permissions import IsWarehouseOrAdmin
 
 from .models import (
@@ -47,7 +48,7 @@ class StockCategoryViewSet(viewsets.ModelViewSet):
 
     queryset = StockCategory.objects.all()
     serializer_class = StockCategorySerializer
-    permission_classes = [IsWarehouseOrAdmin]
+    permission_classes = [IsWarehouseOrAdmin, RequiresInventory]
 
 
 class StockItemViewSet(viewsets.ModelViewSet):
@@ -55,7 +56,7 @@ class StockItemViewSet(viewsets.ModelViewSet):
 
     queryset = StockItem.objects.select_related("category").prefetch_related("aliases")
     serializer_class = StockItemSerializer
-    permission_classes = [IsWarehouseOrAdmin]
+    permission_classes = [IsWarehouseOrAdmin, RequiresInventory]
 
     def destroy(self, request, *args, **kwargs):
         """Удалить товар.
@@ -115,7 +116,7 @@ class ReceiptViewSet(viewsets.ModelViewSet):
     queryset = Receipt.objects.prefetch_related("items__item").select_related(
         "received_by"
     )
-    permission_classes = [IsWarehouseOrAdmin]
+    permission_classes = [IsWarehouseOrAdmin, RequiresInventory]
     http_method_names = ["get", "post", "delete", "head", "options"]
 
     def get_serializer_class(self):
@@ -142,7 +143,7 @@ class ReceiptScanViewSet(viewsets.ModelViewSet):
 
     queryset = ReceiptScan.objects.select_related("created_by", "receipt")
     serializer_class = ReceiptScanSerializer
-    permission_classes = [IsWarehouseOrAdmin]
+    permission_classes = [IsWarehouseOrAdmin, RequiresInventory]
     http_method_names = ["get", "post", "delete", "head", "options"]
 
     def perform_create(self, serializer):
@@ -184,13 +185,13 @@ class StockItemAliasViewSet(viewsets.ModelViewSet):
 
     queryset = StockItemAlias.objects.select_related("item")
     serializer_class = StockItemAliasSerializer
-    permission_classes = [IsWarehouseOrAdmin]
+    permission_classes = [IsWarehouseOrAdmin, RequiresInventory]
 
 
 class RecipeViewSet(viewsets.ViewSet):
     """Тех карты блюд. Ключ — id блюда из меню, а не отдельная сущность карты."""
 
-    permission_classes = [IsWarehouseOrAdmin]
+    permission_classes = [IsWarehouseOrAdmin, RequiresInventory]
 
     @staticmethod
     def _card(product, costs):
@@ -271,7 +272,7 @@ class PurchaseViewSet(viewsets.ReadOnlyModelViewSet):
         "lines__item__category"
     )
     serializer_class = PurchaseListSerializer
-    permission_classes = [IsWarehouseOrAdmin]
+    permission_classes = [IsWarehouseOrAdmin, RequiresInventory]
 
     @action(detail=False, methods=["get"])
     def day(self, request):
@@ -301,7 +302,7 @@ class PurchaseLineViewSet(viewsets.ModelViewSet):
 
     queryset = PurchaseLine.objects.select_related("item__category", "purchase")
     serializer_class = PurchaseLineSerializer
-    permission_classes = [IsWarehouseOrAdmin]
+    permission_classes = [IsWarehouseOrAdmin, RequiresInventory]
 
     def perform_create(self, serializer):
         # Строку завёл человек — автоформирование её больше не трогает.

@@ -34,6 +34,28 @@ class SiteSettings(models.Model):
         choices=Theme.choices,
         default=Theme.NEUTRAL,
     )
+
+    class Plan(models.TextChoices):
+        START = "start", "Старт"
+        HALL = "hall", "Зал"
+        MAX = "max", "Максимум"
+
+    # Тариф — то, что продаёт лэндинг «Падачи». Что именно входит в каждый,
+    # описано одним словарём в core/plans.py; вьюхи проверяют фичи, а не
+    # тарифы. Дефолт — «Старт»: новая установка не должна раздавать
+    # «Максимум» бесплатно. Существующим заведениям миграция ставит max.
+    # Пока поле правится в Django-админке при подключении; когда появится
+    # пульт «Падачи», сюда будет писать лицензия.
+    plan = models.CharField(
+        "Тариф",
+        max_length=8,
+        choices=Plan.choices,
+        default=Plan.START,
+        help_text=(
+            "«Старт» — меню, заказы и оплаты; «Зал» — плюс экраны кухни и "
+            "бара; «Максимум» — плюс склад, смены и финансы."
+        ),
+    )
     class ServiceMode(models.TextChoices):
         HALL = "hall", "Зал с официантами"
         COUNTER = "counter", "Стойка / окно выдачи"

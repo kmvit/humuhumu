@@ -15,6 +15,17 @@ class SiteSettingsAdmin(admin.ModelAdmin):
 
     fieldsets = (
         ("Основное", {"fields": ("name", "tagline", "app_short_name", "logo", "about")}),
+        (
+            "Тариф",
+            {
+                "fields": ("plan",),
+                "description": (
+                    "Что включено заведению по тарифной сетке «Падачи». "
+                    "Проставляется вручную при подключении; позже сюда "
+                    "будет писать лицензия из пульта."
+                ),
+            },
+        ),
         ("Внешний вид", {"fields": ("theme", "accent_color", "dark_by_default")}),
         (
             "Работа заведения",

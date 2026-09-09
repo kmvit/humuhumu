@@ -4,6 +4,7 @@ import { useSite } from "../site";
 import { useTheme } from "../theme";
 import Footer from "./Footer";
 import Icon, { type IconName } from "./Icon";
+import type { Feature } from "../types";
 import InstallPWA from "./InstallPWA";
 
 const NAV: Record<string, { to: string; label: string; icon: IconName }[]> = {
@@ -40,6 +41,16 @@ const NAV: Record<string, { to: string; label: string; icon: IconName }[]> = {
   ],
 };
 
+// Какая фича тарифа открывает раздел. Раздел без записи доступен всем.
+// Прячем только ссылку — сам запрет держат permissions на бэке.
+const FEATURE_BY_PATH: Record<string, Feature> = {
+  "/kitchen": "stations",
+  "/bar": "stations",
+  "/warehouse": "inventory",
+  "/shifts": "shifts",
+  "/finance": "finance",
+};
+
 // Планшетные рабочие роли: у них шапка сжата в тонкую панель, а подвал убран,
 // чтобы доска целиком помещалась на экран планшета.
 const STAFF_ROLES = ["waiter", "cook", "bar", "warehouse"];
@@ -51,10 +62,18 @@ export default function Layout() {
   const navigate = useNavigate();
   const staff = !!user && STAFF_ROLES.includes(user.role);
   const counter = site?.service_mode === "counter";
-  const links = (NAV[user?.role ?? "guest"] ?? []).map((l) =>
-    // в режиме стойки у официанта не столы, а очередь заказов
-    counter && l.to === "/waiter" ? { ...l, label: "Стойка", icon: "receipt" as const } : l
-  );
+  const feats = site?.features;
+  const links = (NAV[user?.role ?? "guest"] ?? [])
+    // разделы, которых нет в тарифе, из шапки убираем (пока /api/site/
+    // не загрузился — показываем всё, чтобы навигация не мигала)
+    .filter((l) => {
+      const need = FEATURE_BY_PATH[l.to];
+      return !need || !feats || feats.includes(need);
+    })
+    .map((l) =>
+      // в режиме стойки у официанта не столы, а очередь заказов
+      counter && l.to === "/waiter" ? { ...l, label: "Стойка", icon: "receipt" as const } : l
+    );
 
   const themeBtn = (
     <button

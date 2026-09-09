@@ -8,8 +8,12 @@
 """
 from django.contrib import admin as dj_admin
 from django.test import TestCase
+from rest_framework.test import APITestCase
+
+from users.models import User
 
 from .models import SiteSettings
+from .plans import features
 
 
 class AdminCoversModelTests(TestCase):
@@ -47,3 +51,51 @@ class AcquiringDefaultTests(TestCase):
     def test_new_installation_has_no_online_payment(self):
         """Свежее заведение не должно случайно оказаться с включённой оплатой."""
         self.assertEqual(SiteSettings.load().acquiring, SiteSettings.Acquiring.NONE)
+
+
+class PlanGateTests(APITestCase):
+    """Гейт по тарифу: раздел, которого нет в тарифе, закрыт на бэке.
+
+    Прячущий фронт — вежливость, а permission — защита: без неё кофейня
+    на «Старте» получила бы весь «Максимум», просто дёргая API напрямую.
+    """
+
+    def setUp(self):
+        self.site = SiteSettings.load()
+        self.manager = User.objects.create_user(
+            "manager", password="x", role=User.Role.WAREHOUSE
+        )
+        self.client.force_authenticate(self.manager)
+
+    def _set_plan(self, plan):
+        self.site.plan = plan
+        self.site.save()
+
+    def test_start_blocks_paid_sections(self):
+        self._set_plan(SiteSettings.Plan.START)
+        for url in ("/api/inventory/items/", "/api/finance/expenses/", "/api/shifts/"):
+            self.assertEqual(self.client.get(url).status_code, 403, url)
+
+    def test_hall_opens_stations_but_not_warehouse(self):
+        self._set_plan(SiteSettings.Plan.HALL)
+        self.assertIn("stations", features())
+        self.assertEqual(self.client.get("/api/inventory/items/").status_code, 403)
+
+    def test_max_opens_everything(self):
+        self._set_plan(SiteSettings.Plan.MAX)
+        for url in ("/api/inventory/items/", "/api/finance/expenses/", "/api/shifts/"):
+            self.assertEqual(self.client.get(url).status_code, 200, url)
+
+    def test_grandfather_default_is_start_for_new_install(self):
+        # Новая установка не должна получать «Максимум» бесплатно.
+        self.assertEqual(SiteSettings._meta.get_field("plan").default, "start")
+
+    def test_site_api_exposes_features_but_plan_is_read_only(self):
+        self._set_plan(SiteSettings.Plan.START)
+        data = self.client.get("/api/site/").json()
+        self.assertEqual(data["plan"], "start")
+        self.assertEqual(data["features"], [])
+        # заведение не может само себе выписать «Максимум»
+        self.client.patch("/api/site/", {"plan": "max"}, format="json")
+        self.site.refresh_from_db()
+        self.assertEqual(self.site.plan, SiteSettings.Plan.START)

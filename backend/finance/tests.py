@@ -4,6 +4,7 @@ from decimal import Decimal
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
+from core.models import SiteSettings
 from orders.models import Order, Table
 from shifts.models import ShiftSettings
 from users.models import User
@@ -15,6 +16,10 @@ class PayrollStatementTests(APITestCase):
     """Ведомость: начисления берутся из смен, выплаты копятся отдельно."""
 
     def setUp(self):
+        # тесты писались до тарифов и проверяют функционал «Максимума»
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.MAX
+        site.save()
         self.cook = User.objects.create_user(
             username="cook", password="demo12345", role=User.Role.COOK, first_name="Повар"
         )
@@ -183,6 +188,10 @@ class ExpenseTests(APITestCase):
     """Прочие расходы: аренда и всё, что не зарплата и не закуп."""
 
     def setUp(self):
+        # тесты писались до тарифов и проверяют функционал «Максимума»
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.MAX
+        site.save()
         self.manager = User.objects.create_user(
             username="manager", password="demo12345", role=User.Role.WAREHOUSE
         )
@@ -264,6 +273,10 @@ class ProfitReportTests(APITestCase):
     """Отчёт о прибыли: выручка − себестоимость − ФОТ − прочие расходы."""
 
     def setUp(self):
+        # тесты писались до тарифов и проверяют функционал «Максимума»
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.MAX
+        site.save()
         from catalog.models import Category, Product
         from inventory.models import (
             Receipt,

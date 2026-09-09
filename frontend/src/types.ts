@@ -1,5 +1,10 @@
 export type AppTheme = "neutral" | "warm" | "strict" | "island" | "padacha";
 
+export type Plan = "start" | "hall" | "max";
+
+/** Фичи тарифа — по ним фронт прячет разделы; настоящий запрет на бэке. */
+export type Feature = "stations" | "inventory" | "shifts" | "finance";
+
 export interface Site {
   name: string;
   tagline: string;
@@ -33,6 +38,9 @@ export interface Site {
   merchant_bank_address: string;
   acquirer: string;
   legal_updated: string;
+  /** Тариф заведения по сетке «Падачи» и что в него входит. */
+  plan: Plan;
+  features: Feature[];
 }
 
 export type Role = "client" | "waiter" | "cook" | "bar" | "warehouse" | "admin";

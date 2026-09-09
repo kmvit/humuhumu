@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework.viewsets import ViewSet
 
 from users.models import User
+from core.plans import RequiresFinance
 from users.permissions import IsWarehouseOrAdmin
 
 from .models import Expense, ExpenseCategory, PayrollPayout
@@ -23,7 +24,7 @@ class PayrollViewSet(ViewSet):
     («Склад») и админу. Свою выплату работник смотрит в «Сменах».
     """
 
-    permission_classes = [IsWarehouseOrAdmin]
+    permission_classes = [IsWarehouseOrAdmin, RequiresFinance]
 
     def _period(self, request) -> date_cls:
         return parse_month(request.query_params.get("month"), timezone.localdate())
@@ -93,7 +94,7 @@ class ExpenseCategoryViewSet(viewsets.ModelViewSet):
 
     queryset = ExpenseCategory.objects.all()
     serializer_class = ExpenseCategorySerializer
-    permission_classes = [IsWarehouseOrAdmin]
+    permission_classes = [IsWarehouseOrAdmin, RequiresFinance]
     pagination_class = None
 
 
@@ -105,7 +106,7 @@ class ExpenseViewSet(viewsets.ModelViewSet):
     """
 
     serializer_class = ExpenseSerializer
-    permission_classes = [IsWarehouseOrAdmin]
+    permission_classes = [IsWarehouseOrAdmin, RequiresFinance]
     pagination_class = None
 
     def _period(self):

@@ -4,6 +4,7 @@ from decimal import Decimal
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
+from core.models import SiteSettings
 from orders.models import Order, Table
 from users.models import User
 
@@ -14,6 +15,10 @@ class ShiftTests(APITestCase):
     """Смены: состав ставит менеджер, деньги считаются по выручке дня."""
 
     def setUp(self):
+        # тесты писались до тарифов и проверяют функционал «Максимума»
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.MAX
+        site.save()
         self.staff = {
             role: User.objects.create_user(
                 username=role, password="demo12345", role=role, first_name=role.title()

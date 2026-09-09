@@ -7,6 +7,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from catalog.models import Category
+from core.plans import RequiresStations
 from inventory.services import return_order_item, write_off_order_item
 from users.models import User
 from users.permissions import IsBarOrAdmin, IsCookOrAdmin, IsWaiterOrAdmin
@@ -57,10 +58,14 @@ class OrderViewSet(viewsets.ModelViewSet):
             return [AllowAny()]  # клиент без авторизации
         if self.action == "create":
             return [IsWaiterOrAdmin()]
+        # Экраны кухни и бара — тариф «Зал»: на «Старте» станции не
+        # работают с заказами, официант ведёт всё сам.
         if self.action == "food_status":
-            return [IsCookOrAdmin()]
+            return [IsCookOrAdmin(), RequiresStations()]
         if self.action == "drinks_status":
-            return [IsBarOrAdmin()]
+            return [IsBarOrAdmin(), RequiresStations()]
+        if self.action == "item_status":
+            return [IsAuthenticated(), RequiresStations()]
         if self.action in ("close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "item_qty", "confirm", "set_comment", "move", "move_items", "serve", "pay_terminal", "pay_result"):
             return [IsWaiterOrAdmin()]
         # item_status — право проверяем внутри по станции позиции

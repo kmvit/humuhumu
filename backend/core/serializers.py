@@ -5,6 +5,10 @@ from .models import SiteSettings
 
 class SiteSettingsSerializer(serializers.ModelSerializer):
     logo = serializers.SerializerMethodField()
+    # Тариф и его фичи: фронт по ним прячет разделы, которых нет в тарифе.
+    # Настоящая защита — permission-классы на бэке (core/plans.py), фронт
+    # только не показывает лишнего.
+    features = serializers.SerializerMethodField()
     # Умеет ли заведение принимать оплату картой онлайн. Фронт по этому
     # флагу решает, показывать ли гостю кнопку оплаты. Само название банка
     # и тем более его ключи наружу не отдаём — только «да/нет».
@@ -14,6 +18,11 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
         allow_blank=True,
         required=False,
     )
+
+    def get_features(self, obj) -> list[str]:
+        from .plans import features
+
+        return sorted(features(obj.plan))
 
     def get_online_payment(self, obj) -> bool:
         # Провайдера берём из obj, а не через SiteSettings.load(): настройки
@@ -55,6 +64,8 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
             "acquirer",
             "legal_updated",
             "online_payment",
+            "plan",
+            "features",
         )
         # через API правится только внешний вид; остальное — в админке
         read_only_fields = (
@@ -82,6 +93,8 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
             "merchant_bank_address",
             "acquirer",
             "legal_updated",
+            # тариф заведению назначает «Падача», не само заведение
+            "plan",
         )
 
     def get_logo(self, obj):

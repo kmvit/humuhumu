@@ -4,6 +4,7 @@ from django.test import TestCase
 from rest_framework.test import APITestCase
 
 from catalog.models import Category, Product
+from core.models import SiteSettings
 from users.models import User
 
 from .models import Receipt, RecipeItem, StockCategory, StockItem, StockMovement
@@ -13,6 +14,10 @@ class StockItemDeleteTests(APITestCase):
     """Удаление товара склада: чистый — насовсем, с историей — прячем."""
 
     def setUp(self):
+        # тесты писались до тарифов и проверяют функционал «Максимума»
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.MAX
+        site.save()
         self.manager = User.objects.create_user(
             username="manager", password="pw", role=User.Role.WAREHOUSE
         )
@@ -79,6 +84,10 @@ class ReceiptDeleteTests(APITestCase):
     """Удаление прихода менеджером с откатом остатков."""
 
     def setUp(self):
+        # тесты писались до тарифов и проверяют функционал «Максимума»
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.MAX
+        site.save()
         self.manager = User.objects.create_user(
             username="manager", password="pw", role=User.Role.WAREHOUSE
         )
@@ -150,6 +159,10 @@ class ReceiptScanUnitsTests(TestCase):
     """
 
     def setUp(self):
+        # тесты писались до тарифов и проверяют функционал «Максимума»
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.MAX
+        site.save()
         self.cat = StockCategory.objects.create(name="Продукты")
         self.tomato = StockItem.objects.create(
             name="Помидоры", unit="g", category=self.cat

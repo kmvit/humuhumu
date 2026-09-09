@@ -8,7 +8,7 @@ import {
 } from "react";
 import { get } from "./api";
 import { applySiteDefault } from "./theme";
-import type { AppTheme, Site } from "./types";
+import type { AppTheme, Feature, Site } from "./types";
 
 // Ключи совпадают с анти-FOUC скриптом в index.html: он ставит тему
 // заведения до первой отрисовки, а сюда попадает то же самое как стартовое
@@ -110,6 +110,17 @@ export function SiteProvider({ children }: { children: ReactNode }) {
 
 export function useSite() {
   return useContext(SiteContext);
+}
+
+/** Входит ли фича в тариф заведения.
+
+    Пока /api/site/ не загрузился, отвечаем «да»: иначе навигация мигает —
+    исчезает и появляется. Спрятать лишнее — задача UX, а запрет держит бэк.
+*/
+export function useFeature(name: Feature): boolean {
+  const site = useSite();
+  if (!site) return true;
+  return site.features?.includes(name) ?? true;
 }
 
 /** Текущая тема оформления заведения (не путать с день/ночь из theme.ts). */
