@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth";
-import { useSite } from "../site";
-import { ApiError } from "../api";
+import { useSite, useFeature } from "../site";
+import { ApiError, post } from "../api";
 import Icon from "../components/Icon";
 
 export default function Login() {
@@ -13,9 +13,15 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [birth, setBirth] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [registered, setRegistered] = useState(false);
+  // Когда бонусы включены, регистрация сразу заводит гостя в программу
+  // и начисляет приветственные — отдельным шагом их пришлось бы
+  // выпрашивать у гостя второй раз.
+  const bonusOn = useFeature("loyalty") && !!site?.bonus_enabled;
+  const welcome = site?.bonus_welcome ?? 0;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -24,6 +30,13 @@ export default function Login() {
     try {
       if (mode === "login") {
         await login(username, password);
+      } else if (bonusOn) {
+        await post("/loyalty/enroll/", {
+          name,
+          phone,
+          ...(birth ? { birth_date: birth } : {}),
+        });
+        setRegistered(true);
       } else {
         await register(name, phone);
         setRegistered(true);
@@ -85,11 +98,17 @@ export default function Login() {
             <p style={{ margin: "10px 0 0" }}>
               Спасибо, {name}! Логин и пароль пришлём на {phone}.
             </p>
+            {bonusOn && welcome > 0 && (
+              <p className="muted" style={{ margin: "8px 0 0" }}>
+                Начислили {welcome.toLocaleString("ru")} приветственных бонусов ·
+                1 бонус = 1 ₽
+              </p>
+            )}
             <button
               type="button"
               className="btn ghost block"
               style={{ marginTop: 16 }}
-              onClick={() => { setName(""); setPhone(""); setRegistered(false); }}
+              onClick={() => { setName(""); setPhone(""); setBirth(""); setRegistered(false); }}
             >
               Зарегистрировать ещё одного гостя
             </button>
@@ -106,6 +125,12 @@ export default function Login() {
                   <label className="label">Телефон</label>
                   <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} required inputMode="tel" autoComplete="tel" placeholder="+7 999 000-00-00" />
                 </div>
+                {bonusOn && (
+                  <div className="field">
+                    <label className="label">Дата рождения</label>
+                    <input className="input" type="date" value={birth} onChange={(e) => setBirth(e.target.value)} autoComplete="bday" />
+                  </div>
+                )}
               </>
             ) : (
               <>

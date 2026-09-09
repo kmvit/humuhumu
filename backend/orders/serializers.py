@@ -36,6 +36,7 @@ class OrderSerializer(serializers.ModelSerializer):
     drinks_status = serializers.ReadOnlyField()
     food_served = serializers.SerializerMethodField()
     drinks_served = serializers.SerializerMethodField()
+    payable = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
 
     class Meta:
         model = Order
@@ -62,6 +63,8 @@ class OrderSerializer(serializers.ModelSerializer):
             "has_drinks",
             "is_ready",
             "total",
+            "bonus_spent",
+            "payable",
             "items",
             "created_at",
             "food_started_at",

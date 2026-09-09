@@ -21,8 +21,10 @@ PLAN_FEATURES: dict[str, frozenset[str]] = {
     SiteSettings.Plan.START: frozenset(),
     # Зал: + экраны кухни и бара (канбан, тайминги, «К подаче»).
     SiteSettings.Plan.HALL: frozenset({"stations"}),
-    # Максимум: + склад с приходом по фото, смены/зарплата, финансы.
-    SiteSettings.Plan.MAX: frozenset({"stations", "inventory", "shifts", "finance"}),
+    # Максимум: + склад с приходом по фото, смены/зарплата, финансы, бонусы.
+    SiteSettings.Plan.MAX: frozenset(
+        {"stations", "inventory", "shifts", "finance", "loyalty"}
+    ),
 }
 
 #: С какого тарифа фича появляется — для текста ошибки и апселла на фронте.
@@ -31,6 +33,7 @@ FEATURE_PLAN_TITLE = {
     "inventory": "Максимум",
     "shifts": "Максимум",
     "finance": "Максимум",
+    "loyalty": "Максимум",
 }
 
 
@@ -63,3 +66,4 @@ RequiresStations = requires_feature("stations")
 RequiresInventory = requires_feature("inventory")
 RequiresShifts = requires_feature("shifts")
 RequiresFinance = requires_feature("finance")
+RequiresLoyalty = requires_feature("loyalty")

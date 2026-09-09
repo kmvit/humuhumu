@@ -30,6 +30,7 @@ INSTALLED_APPS = [
     "users",
     "catalog",
     "wallet",
+    "loyalty",
     "orders",
     "payments",
     "inventory",

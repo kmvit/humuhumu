@@ -35,6 +35,23 @@ class SiteSettingsAdmin(admin.ModelAdmin):
                 "description": "Формат обслуживания и права официанта на удаление позиций.",
             },
         ),
+        (
+            "Бонусная программа",
+            {
+                "fields": (
+                    "bonus_enabled",
+                    "bonus_welcome",
+                    "bonus_earn_percent",
+                    "bonus_redeem_waiter",
+                    "bonus_redeem_guest",
+                ),
+                "description": (
+                    "1 бонус = 1 ₽. Доступна на тарифе «Максимум». "
+                    "Владельцу удобнее править это в разделе «Бонусы» "
+                    "на фронте — здесь те же настройки."
+                ),
+            },
+        ),
         ("Контакты", {"fields": ("phone", "email", "address", "working_hours")}),
         ("Соцсети", {"fields": ("instagram", "telegram")}),
         (

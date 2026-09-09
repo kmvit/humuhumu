@@ -87,7 +87,9 @@ def next_daily_number() -> int:
     return (last or 0) + 1
 
 
-def create_request(*, customer_name: str, items: list[dict], table: str = "", comment: str = "") -> Order:
+def create_request(
+    *, customer_name: str, items: list[dict], table: str = "", comment: str = "", client=None
+) -> Order:
     """Заказ от гостя без авторизации.
 
     В зале это заявка: официант подтверждает её на стол, который пришёл из
@@ -102,6 +104,7 @@ def create_request(*, customer_name: str, items: list[dict], table: str = "", co
     counter = SiteSettings.load().service_mode == SiteSettings.ServiceMode.COUNTER
     order = Order.objects.create(
         status=Order.Status.OPEN if counter else Order.Status.REQUESTED,
+        client=client,
         customer_name=customer_name,
         table="" if counter else table,
         comment=comment,

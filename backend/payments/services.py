@@ -19,6 +19,17 @@ class PaymentError(Exception):
     pass
 
 
+def accrue_bonuses(order: Order) -> None:
+    """Начислить бонусы за оплаченный заказ, если программа включена.
+
+    Импорт внутри функции: loyalty знает про orders, и связь в обе стороны
+    на уровне модулей замкнула бы их друг на друга.
+    """
+    from loyalty.services import earn_for_order
+
+    earn_for_order(order)
+
+
 @transaction.atomic
 def record_manual_payment(order: Order, method: str, user=None) -> Order:
     """Ручная оплата на кассе (нал/карта без терминала).
@@ -30,7 +41,8 @@ def record_manual_payment(order: Order, method: str, user=None) -> Order:
     Payment.objects.create(
         purpose=Payment.Purpose.ORDER,
         status=Payment.Status.SUCCEEDED,
-        amount=order.total,
+        # деньгами берём чек за вычетом списанных бонусов
+        amount=order.payable,
         order=order,
         method=pm,
         provider="manual",
@@ -42,6 +54,7 @@ def record_manual_payment(order: Order, method: str, user=None) -> Order:
     order.closed_by = user
     order.closed_at = timezone.now()
     order.save(update_fields=["status", "pay_method", "closed_by", "closed_at"])
+    accrue_bonuses(order)
     return order
 
 
@@ -56,7 +69,7 @@ def start_terminal_payment(order: Order, method: str = Payment.Method.CARD) -> P
     payment = Payment.objects.create(
         purpose=Payment.Purpose.ORDER,
         status=Payment.Status.PENDING,
-        amount=order.total,
+        amount=order.payable,
         order=order,
         method=method,
         provider=provider.name,
@@ -86,7 +99,7 @@ def start_online_payment(order: Order, *, return_url: str) -> tuple[Payment, str
     payment = Payment.objects.create(
         purpose=Payment.Purpose.ORDER,
         status=Payment.Status.PENDING,
-        amount=order.total,
+        amount=order.payable,
         order=order,
         method=Payment.Method.CARD,
         provider=acquirer.name,
@@ -125,6 +138,7 @@ def apply_payment_result(payment: Payment, *, success: bool, fiscal_receipt: str
             order.closed_by = user
             order.closed_at = timezone.now()
             order.save(update_fields=["status", "pay_method", "fiscal_receipt", "closed_by", "closed_at"])
+            accrue_bonuses(order)
     else:
         payment.status = Payment.Status.CANCELLED
         payment.save(update_fields=["status", "updated_at"])

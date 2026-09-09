@@ -48,6 +48,12 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
             "theme",
             "service_mode",
             "dark_by_default",
+            # бонусная программа — админ правит их из раздела «Бонусы»
+            "bonus_enabled",
+            "bonus_welcome",
+            "bonus_earn_percent",
+            "bonus_redeem_waiter",
+            "bonus_redeem_guest",
             "accent_color",
             "merchant_type",
             "merchant_name",

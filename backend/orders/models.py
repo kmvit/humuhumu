@@ -84,6 +84,12 @@ class Order(models.Model):
         blank=True, default=PayMethod.CASH,
     )
     total = models.DecimalField("Сумма", max_digits=12, decimal_places=2, default=0)
+    # сколько бонусов списано в счёт заказа (1 бонус = 1 ₽). total остаётся
+    # суммой по меню — иначе разъедется себестоимость и статистика по блюдам,
+    # а деньгами гость платит total за вычетом этой суммы.
+    bonus_spent = models.DecimalField(
+        "Списано бонусами", max_digits=12, decimal_places=2, default=0
+    )
     # номер/признак фискального чека (заполняется при оплате через кассу-терминал)
     fiscal_receipt = models.CharField("Фискальный чек", max_length=64, blank=True, default="")
     created_at = models.DateTimeField("Создан", auto_now_add=True)
@@ -109,6 +115,11 @@ class Order(models.Model):
         """Пересчитать сумму по позициям."""
         self.total = sum((item.subtotal for item in self.items.all()), start=0)
         return self.total
+
+    @property
+    def payable(self):
+        """Сколько гость платит деньгами: чек за вычетом списанных бонусов."""
+        return max(self.total - self.bonus_spent, 0)
 
     @staticmethod
     def aggregate_status(statuses):

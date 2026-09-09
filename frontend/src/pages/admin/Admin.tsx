@@ -5,6 +5,7 @@ import Icon, { type IconName } from "../../components/Icon";
 import { useAppearance, useSite } from "../../site";
 import { useToast } from "../../components/ui/Toast";
 import Staff from "./Staff";
+import Bonuses from "./Bonuses";
 
 // Темы продукта: ключи совпадают с SiteSettings.Theme на бэкенде.
 // Формат обслуживания: зал со столами или стойка с выдачей по номеру.
@@ -247,6 +248,8 @@ export default function Admin() {
           />
         </div>
       </div>
+
+      <Bonuses />
 
       <Staff />
 

@@ -3,7 +3,7 @@ export type AppTheme = "neutral" | "warm" | "strict" | "island" | "padacha";
 export type Plan = "start" | "hall" | "max";
 
 /** Фичи тарифа — по ним фронт прячет разделы; настоящий запрет на бэке. */
-export type Feature = "stations" | "inventory" | "shifts" | "finance";
+export type Feature = "stations" | "inventory" | "shifts" | "finance" | "loyalty";
 
 export interface Site {
   name: string;
@@ -25,6 +25,14 @@ export interface Site {
   /** Заведение принимает оплату картой онлайн (выбран банк и заданы доступы). */
   online_payment: boolean;
   accent_color: string;
+  // Бонусная программа (тариф «Максимум»). 1 бонус = 1 ₽.
+  bonus_enabled: boolean;
+  bonus_welcome: number;
+  bonus_earn_percent: string;
+  /** Официант списывает бонусы на закрытии счёта. */
+  bonus_redeem_waiter: boolean;
+  /** Гость списывает бонусы сам в приложении. */
+  bonus_redeem_guest: boolean;
   // Реквизиты продавца — подставляются в оферту, оплату и контакты.
   merchant_type: string;
   merchant_name: string;
@@ -152,6 +160,10 @@ export interface Order {
   has_drinks: boolean;
   is_ready: boolean;
   total: string;
+  /** Списано бонусами (1 бонус = 1 ₽). */
+  bonus_spent: string;
+  /** Сколько гость платит деньгами: total за вычетом бонусов. */
+  payable: string;
   items: OrderItem[];
   created_at: string;
   food_started_at: string | null;
@@ -475,4 +487,14 @@ export interface TokenPackage {
   bonus_amount: string;
   total_tokens: string;
   is_active: boolean;
+}
+
+/** Участник бонусной программы: 1 бонус = 1 ₽. */
+export interface LoyaltyMember {
+  id: number;
+  name: string;
+  phone: string;
+  birth_date: string | null;
+  balance: string;
+  created_at: string;
 }

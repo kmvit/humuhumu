@@ -171,14 +171,26 @@ def report(period: date_cls) -> dict:
     if penalty_table:
         orders = orders.exclude(table=penalty_table)
 
-    agg = orders.aggregate(total=Sum("total"), checks=Count("id"))
-    revenue = money(agg["total"])
+    # Выручка — деньги, которые заведение получило: чек за вычетом бонусов.
+    # Списанные бонусы — не доход, а скидка за счёт заведения, поэтому идут
+    # отдельной строкой, иначе нал+карта не сойдутся с выручкой.
+    paid_money = F("total") - F("bonus_spent")
+    agg = orders.aggregate(
+        # не называем алиас total: он перекрыл бы одноимённое поле в Sum ниже
+        received=Sum(paid_money),
+        turnover=Sum("total"),
+        bonuses=Sum("bonus_spent"),
+        checks=Count("id"),
+    )
+    revenue = money(agg["received"])
+    turnover = money(agg["turnover"])  # чек по меню — база для покрытия себестоимости
+    bonuses_spent = money(agg["bonuses"])
     checks = agg["checks"] or 0
     avg_check = money(revenue / checks) if checks else money(0)
 
     by_method = {
         row["pay_method"]: money(row["s"])
-        for row in orders.values("pay_method").annotate(s=Sum("total"))
+        for row in orders.values("pay_method").annotate(s=Sum(paid_money))
     }
 
     # ——— себестоимость проданного ———
@@ -198,9 +210,11 @@ def report(period: date_cls) -> dict:
             covered_revenue += money(s["sum"])
     cogs = money(cogs)
 
-    # доля выручки, у которой известна себестоимость, — мера честности отчёта
+    # доля оборота, у которой известна себестоимость, — мера честности отчёта.
+    # Считаем от товарооборота по меню: covered_revenue сложен из цен позиций,
+    # и делить его на выручку за вычетом бонусов — сравнивать разные величины.
     coverage = (
-        float(covered_revenue / revenue) if revenue else 0.0
+        float(covered_revenue / turnover) if turnover else 0.0
     )
 
     gross = money(revenue - cogs)
@@ -229,6 +243,7 @@ def report(period: date_cls) -> dict:
         "avg_check": str(avg_check),
         "cash": str(by_method.get("cash", money(0))),
         "card": str(by_method.get("card", money(0))),
+        "bonuses_spent": str(bonuses_spent),
         "cogs": str(cogs),
         "gross": str(gross),
         "margin": margin,

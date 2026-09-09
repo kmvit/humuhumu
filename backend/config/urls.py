@@ -10,6 +10,7 @@ from catalog.views import CategoryViewSet, ProductViewSet
 from core.branding import app_icon, manifest
 from finance.views import ExpenseCategoryViewSet, ExpenseViewSet, PayrollViewSet
 from core.views import SiteSettingsView, license_refresh, license_status
+from loyalty import views as loyalty_views
 from inventory.views import (
     PurchaseLineViewSet,
     PurchaseViewSet,
@@ -71,6 +72,11 @@ api_patterns = [
     path("wallet/", MyWalletView.as_view(), name="my-wallet"),
     path("wallet/transactions/", MyTransactionsView.as_view(), name="my-transactions"),
     path("wallet/topup/", TopupView.as_view(), name="wallet-topup"),
+    # бонусная программа
+    path("loyalty/program/", loyalty_views.program, name="loyalty-program"),
+    path("loyalty/enroll/", loyalty_views.EnrollView.as_view(), name="loyalty-enroll"),
+    path("loyalty/lookup/", loyalty_views.lookup, name="loyalty-lookup"),
+    path("loyalty/me/", loyalty_views.me, name="loyalty-me"),
     # лицензия «Падачи»: статус подписки и ручная сверка с пультом
     path("license/status/", license_status, name="license-status"),
     path("license/refresh/", license_refresh, name="license-refresh"),

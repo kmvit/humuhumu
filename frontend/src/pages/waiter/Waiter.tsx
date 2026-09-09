@@ -9,6 +9,8 @@ import { fmtClock, fmtDuration, minutesBetween } from "../../time";
 import Compose from "./Compose";
 import Modal from "../../components/ui/Modal";
 import Stepper from "../../components/ui/Stepper";
+import BonusPanel from "./BonusPanel";
+import { useSite, useFeature } from "../../site";
 
 const STATUS_LABEL: Record<StationStatus, string> = {
   new: "новый",
@@ -60,6 +62,11 @@ export default function Waiter() {
   const [busyServe, setBusyServe] = useState<string | null>(null);
   const seenServe = useRef<Set<string> | null>(null);
   const notify = useToast();
+  const site = useSite();
+  // бонусы показываем, только если тариф их даёт, программа включена
+  // и владелец разрешил списывать именно официанту
+  const bonusOn =
+    useFeature("loyalty") && !!site?.bonus_enabled && !!site?.bonus_redeem_waiter;
 
   useEffect(() => {
     get<Table[]>("/tables/").then((ts) => setTables(ts.map((t) => t.name))).catch(() => {});
@@ -788,7 +795,13 @@ export default function Waiter() {
                     </div>
                   ) : payFor === o.id ? (
                     <div className="rule-top mt-3">
-                      <div className="muted sm center">Оплата · {Number(o.total).toLocaleString("ru")} ₽</div>
+                      <div className="muted sm center">
+                        Оплата · {Number(o.payable).toLocaleString("ru")} ₽
+                        {Number(o.bonus_spent) > 0 && (
+                          <> · бонусами {Number(o.bonus_spent).toLocaleString("ru")}</>
+                        )}
+                      </div>
+                      {bonusOn && <BonusPanel order={o} onDone={reload} />}
                       <div className="grid cols-2 mt-2">
                         <button className="btn" disabled={busyClose === o.id} onClick={() => closeOrder(o, "cash")}>
                           <Icon name="cash" size={17} /> Наличными
@@ -808,7 +821,7 @@ export default function Waiter() {
                     </div>
                   ) : (
                     <button className="btn block mt-3" onClick={() => setPayFor(o.id)}>
-                      <Icon name="check" size={17} /> Закрыть заказ · {Number(o.total).toLocaleString("ru")} ₽
+                      <Icon name="check" size={17} /> Закрыть заказ · {Number(o.payable).toLocaleString("ru")} ₽
                     </button>
                   )}
                 </div>

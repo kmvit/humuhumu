@@ -1,3 +1,5 @@
+from decimal import Decimal, InvalidOperation
+
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -56,6 +58,10 @@ class OrderViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ("place", "track", "cancel_request", "pay_online"):
             return [AllowAny()]  # клиент без авторизации
+        # bonus обслуживает и официанта, и гостя — кто именно, решает сама
+        # вьюха: у сценариев разные настройки-выключатели
+        if self.action == "bonus":
+            return [AllowAny()]
         if self.action == "create":
             return [IsWaiterOrAdmin()]
         # Экраны кухни и бара — тариф «Зал»: на «Старте» станции не
@@ -152,6 +158,9 @@ class OrderViewSet(viewsets.ModelViewSet):
                 items=serializer.validated_data["items"],
                 table=serializer.validated_data.get("table", ""),
                 comment=serializer.validated_data.get("comment", ""),
+                # заказ вошедшего гостя закрепляем за ним: по нему пойдут
+                # бонусы, а без владельца заказ считается ничьим
+                client=request.user if request.user.is_authenticated else None,
             )
         except OrderError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -256,6 +265,95 @@ class OrderViewSet(viewsets.ModelViewSet):
         order.table = table
         order.save(update_fields=["table"])
         return Response(OrderSerializer(order).data)
+
+    @action(detail=True, methods=["post"], url_path="bonus")
+    def bonus(self, request, pk=None):
+        """Списать бонусы в счёт заказа. 1 бонус = 1 ₽.
+
+        Один эндпоинт на два сценария, каждый включается своей настройкой:
+        официант находит гостя по телефону, гость в приложении списывает себе.
+        """
+        from core.models import SiteSettings
+        from core.plans import features
+        from loyalty.models import LoyaltyMember
+        from loyalty.serializers import MemberSerializer, normalize_phone
+        from loyalty.services import LoyaltyError, redeem
+
+        order = self.get_object()
+        site = SiteSettings.load()
+        if not site.bonus_enabled or "loyalty" not in features():
+            return Response(
+                {"detail": "Бонусная программа недоступна"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if order.status != Order.Status.OPEN:
+            return Response(
+                {"detail": "Списать бонусы можно только в открытый заказ"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        staff = request.user.is_authenticated and request.user.is_staff_role
+        if staff:
+            if not site.bonus_redeem_waiter:
+                return Response(
+                    {"detail": "Списание бонусов официантом выключено"},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            phone = request.data.get("phone")
+            if phone:
+                try:
+                    phone = normalize_phone(phone)
+                except Exception:
+                    return Response(
+                        {"detail": "Введите номер, например +7 999 000-00-00"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                member = LoyaltyMember.objects.filter(user__phone=phone).first()
+            else:
+                member = getattr(order.client, "loyalty", None) if order.client else None
+        else:
+            if not site.bonus_redeem_guest:
+                return Response(
+                    {"detail": "Списание бонусов гостем выключено"},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            if not request.user.is_authenticated:
+                return Response(
+                    {"detail": "Войдите, чтобы списать бонусы"},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            # Гость распоряжается только своим заказом. Ничей заказ (оформлен
+            # по QR без входа) присвоить нельзя: иначе любой вошедший гость
+            # прицепился бы к чужому счёту и получал за него начисления.
+            if order.client_id != request.user.id:
+                return Response(
+                    {"detail": "Это не ваш заказ"}, status=status.HTTP_403_FORBIDDEN
+                )
+            member = getattr(request.user, "loyalty", None)
+        if member is None:
+            return Response(
+                {"detail": "Гость не найден в бонусной программе"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            amount = Decimal(str(request.data.get("amount", "0")))
+        except (InvalidOperation, TypeError, ValueError):
+            return Response({"detail": "Неверная сумма"}, status=status.HTTP_400_BAD_REQUEST)
+        # заказ закрепляем за гостем: по нему пойдёт начисление при оплате
+        if order.client_id != member.user_id:
+            order.client = member.user
+            order.save(update_fields=["client"])
+        try:
+            redeem(member.pk, amount, order)
+        except LoyaltyError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        order.refresh_from_db()
+        member.refresh_from_db()
+        return Response(
+            {
+                "order": OrderSerializer(order).data,
+                "member": MemberSerializer(member).data,
+            }
+        )
 
     @action(detail=True, methods=["post"], url_path="move_items")
     def move_items(self, request, pk=None):
@@ -455,7 +553,12 @@ class OrderViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["patch"])
     def cancel(self, request, pk=None):
         """Официант: отменить заказ."""
+        from loyalty.services import return_for_order
+
         order = self.get_object()
+        # списанные бонусы возвращаем: заказа не будет, а бонусы гость потерял бы
+        return_for_order(order)
+        order.refresh_from_db()
         order.status = Order.Status.CANCELLED
         order.closed_by = request.user
         order.closed_at = timezone.now()
@@ -515,6 +618,10 @@ class OrderViewSet(viewsets.ModelViewSet):
             self._sync_times(order, Category.Station.KITCHEN)
             self._sync_times(order, Category.Station.BAR)
         else:
+            from loyalty.services import return_for_order
+
+            return_for_order(order)  # заказ опустел и отменяется — бонусы назад
+            order.refresh_from_db()
             order.total = 0
             order.status = Order.Status.CANCELLED
             order.closed_by = request.user

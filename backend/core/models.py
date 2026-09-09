@@ -144,6 +144,31 @@ class SiteSettings(models.Model):
         ),
     )
 
+    # ── Бонусная программа ──────────────────────────────────────────────
+    # 1 бонус = 1 ₽. Списывать бонусы может официант на закрытии счёта и/или
+    # сам гость в приложении — сценарии включаются независимо: в зале удобен
+    # первый, на стойке с QR-заказом — второй.
+    bonus_enabled = models.BooleanField(
+        "Бонусная программа включена", default=False,
+        help_text="Начисление и списание бонусов. 1 бонус = 1 ₽",
+    )
+    bonus_welcome = models.PositiveIntegerField(
+        "Приветственные бонусы", default=200,
+        help_text="Начисляются один раз при регистрации в программе",
+    )
+    bonus_earn_percent = models.DecimalField(
+        "Начисление с покупки, %", max_digits=5, decimal_places=2, default=5,
+        help_text="Процент от оплаченной деньгами суммы чека",
+    )
+    bonus_redeem_waiter = models.BooleanField(
+        "Официант списывает бонусы", default=True,
+        help_text="На закрытии счёта официант находит гостя по телефону и списывает",
+    )
+    bonus_redeem_guest = models.BooleanField(
+        "Гость списывает сам", default=False,
+        help_text="Гость применяет бонусы к своему заказу в приложении",
+    )
+
     class Meta:
         verbose_name = "Настройки сайта"
         verbose_name_plural = "Настройки сайта"

@@ -7,6 +7,7 @@ import { SceneBanner, WaveRule } from "../../components/Ornaments";
 import Lightbox from "../../components/Lightbox";
 import { useToast } from "../../components/ui/Toast";
 import Stepper from "../../components/ui/Stepper";
+import GuestBonus from "./GuestBonus";
 import { useAppearance, useSite } from "../../site";
 import { initTable } from "../../table";
 
@@ -76,6 +77,17 @@ export default function Menu() {
     const t = window.setInterval(poll, 5000);
     return () => { stop = true; window.clearInterval(t); };
   }, [token]);
+
+  // Обновить свой заказ сразу после списания бонусов: ждать следующего
+  // опроса (раз в 5 с) — значит показывать гостю прежнюю сумму.
+  async function reloadTracked() {
+    if (!token) return;
+    try {
+      setTracked(await get<Order>(`/orders/track/?token=${token}`));
+    } catch {
+      /* следующий опрос подхватит */
+    }
+  }
 
   const sections = useMemo(() => {
     const all = categories
@@ -226,11 +238,25 @@ export default function Menu() {
             <strong>Итого</strong>
             <strong className="num">{Number(tracked.total).toLocaleString("ru")} ₽</strong>
           </div>
+          {Number(tracked.bonus_spent) > 0 && (
+            <>
+              <div className="between mt-2">
+                <span className="muted">Бонусами</span>
+                <span className="num">−{Number(tracked.bonus_spent).toLocaleString("ru")} ₽</span>
+              </div>
+              <div className="between mt-2">
+                <strong>К оплате</strong>
+                <strong className="num">{Number(tracked.payable).toLocaleString("ru")} ₽</strong>
+              </div>
+            </>
+          )}
         </div>
+
+        <GuestBonus order={tracked} onDone={reloadTracked} />
         {canPayOnline && st !== "paid" && st !== "cancelled" && (
           <button className="btn block mt-4" disabled={paying} onClick={payOnline}>
             <Icon name="card" size={18} /> Оплатить картой ·{" "}
-            {Number(tracked.total).toLocaleString("ru")} ₽
+            {Number(tracked.payable).toLocaleString("ru")} ₽
           </button>
         )}
         {st === "requested" ? (
