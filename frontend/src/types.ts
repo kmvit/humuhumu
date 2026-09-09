@@ -45,6 +45,17 @@ export interface Site {
 
 export type Role = "client" | "waiter" | "cook" | "bar" | "warehouse" | "admin";
 
+/** Сотрудник заведения — раздел «Сотрудники» в панели владельца. */
+export interface StaffMember {
+  id: number;
+  username: string;
+  name: string;
+  role: Role;
+  role_display: string;
+  phone: string | null;
+  is_active: boolean;
+}
+
 /** Статус подписки «Падачи» — для баннеров персонала (LicenseGuard). */
 export interface LicenseInfo {
   enabled: boolean;

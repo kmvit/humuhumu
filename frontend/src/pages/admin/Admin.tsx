@@ -4,6 +4,7 @@ import type { AppTheme, Order } from "../../types";
 import Icon, { type IconName } from "../../components/Icon";
 import { useAppearance, useSite } from "../../site";
 import { useToast } from "../../components/ui/Toast";
+import Staff from "./Staff";
 
 // Темы продукта: ключи совпадают с SiteSettings.Theme на бэкенде.
 // Формат обслуживания: зал со столами или стойка с выдачей по номеру.
@@ -246,6 +247,8 @@ export default function Admin() {
           />
         </div>
       </div>
+
+      <Staff />
 
       <h2 className="section-title">Последние заказы</h2>
       <div className="card">

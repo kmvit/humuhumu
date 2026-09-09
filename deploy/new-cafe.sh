@@ -171,6 +171,19 @@ done
 [ "$CODE" = 200 ] || die "API не отвечает (последний код: $CODE) — смотри: docker compose -f docker-compose.prod.yml logs backend"
 echo "    API отвечает: 200"
 
+# ── владелец заведения ───────────────────────────────────────────────────
+# Не суперпользователь: Django-админка — наш инструмент поддержки, а
+# заведение управляет людьми и настройками из панели владельца.
+echo "==> Заводим владельца заведения"
+OWNER_PASS=$(python3 -c "import secrets; print(secrets.token_urlsafe(12))")
+docker compose -f docker-compose.prod.yml exec -T backend python manage.py shell -c \
+"from users.models import User
+u, created = User.objects.get_or_create(username='owner', defaults={'role': 'admin'})
+u.role = 'admin'
+u.set_password('$OWNER_PASS')
+u.save()
+print('   владелец:', 'создан' if created else 'обновлён')"
+
 if [ -n "$LICENSE_KEY" ]; then
     echo "==> Первая сверка с пультом"
     docker compose -f docker-compose.prod.yml exec -T backend python manage.py shell -c \
@@ -184,15 +197,17 @@ cat <<DONE
 
 ==> Готово. Стек «$SLUG» работает на 127.0.0.1:$PORT за доменом $DOMAIN.
 
+ДОСТУП ВЛАДЕЛЬЦА (передать клиенту, попросить сменить пароль):
+    https://$DOMAIN/  —  логин: owner  пароль: $OWNER_PASS
+    Сотрудников он заводит сам: Админ-панель → «Сотрудники».
+
 Дальше руками:
 1. DNS: A-запись $DOMAIN → IP этого сервера (если ещё нет).
 2. Панель хостинга: привязать $DOMAIN к этому VPS — иначе прокси
    хостинга не пропустит запросы (грабля jino).
-3. Администратор заведения:
-     cd $DIR && docker compose -f docker-compose.prod.yml exec backend \\
-       python manage.py createsuperuser
-4. В админке https://$DOMAIN/admin/ заполнить настройки заведения
-   (название, логотип, реквизиты), завести меню и столы.
+3. В Django-админке https://$DOMAIN/admin/ (наш доступ поддержки —
+   суперпользователя заводим отдельно при необходимости) или силами
+   владельца заполнить настройки заведения, меню и столы.
 $( [ -z "$LICENSE_KEY" ] && echo "5. ВНИМАНИЕ: LICENSE_KEY пуст — установка автономная. Для клиента:
    завести точку в пульте, ключ в .env, перезапустить стек." )
 

@@ -23,6 +23,7 @@ from inventory.views import (
 from orders.views import OrderViewSet, TableViewSet
 from payments.views import callback as payment_callback
 from shifts.views import ShiftViewSet
+from users.staff import StaffViewSet
 from users.views import MeView, RegisterView
 from wallet.views import (
     MyTransactionsView,
@@ -38,6 +39,7 @@ router.register("token-packages", TokenPackageViewSet, basename="token-package")
 router.register("orders", OrderViewSet, basename="order")
 router.register("tables", TableViewSet, basename="table")
 router.register("shifts", ShiftViewSet, basename="shift")
+router.register("staff", StaffViewSet, basename="staff")
 router.register("finance/payroll", PayrollViewSet, basename="finance-payroll")
 router.register("finance/expenses", ExpenseViewSet, basename="finance-expense")
 router.register(
