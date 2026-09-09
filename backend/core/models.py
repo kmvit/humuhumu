@@ -158,3 +158,37 @@ class SiteSettings(models.Model):
     def load(cls):
         obj, _ = cls.objects.get_or_create(pk=1)
         return obj
+
+
+class LicenseState(models.Model):
+    """Кэш последнего ответа пульта «Падачи» — одна запись (singleton).
+
+    Пульт присылает факты (тариф, «оплачено до», грейс), а лестницу
+    статусов инстанс считает сам от текущей даты (core/license.py):
+    закэшированный статус протух бы между суточными сверками. Кэш нужен,
+    чтобы недоступность пульта не останавливала кафе — см. фейл-опен
+    в effective_status().
+    """
+
+    plan = models.CharField("Тариф из лицензии", max_length=8, blank=True)
+    paid_until = models.DateField("Оплачено до", null=True, blank=True)
+    grace_days = models.PositiveSmallIntegerField("Грейс, дней", default=7)
+    issued_at = models.DateTimeField("Ответ выдан", null=True, blank=True)
+    checked_at = models.DateTimeField("Последняя сверка", null=True, blank=True)
+    last_error = models.TextField("Последняя ошибка", blank=True)
+
+    class Meta:
+        verbose_name = "Лицензия"
+        verbose_name_plural = "Лицензия"
+
+    def __str__(self):
+        return f"Лицензия: {self.plan or '—'} до {self.paid_until or '—'}"
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj

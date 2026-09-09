@@ -6,6 +6,7 @@ import Footer from "./Footer";
 import Icon, { type IconName } from "./Icon";
 import type { Feature } from "../types";
 import InstallPWA from "./InstallPWA";
+import LicenseGuard from "./LicenseGuard";
 
 const NAV: Record<string, { to: string; label: string; icon: IconName }[]> = {
   client: [
@@ -137,7 +138,14 @@ export default function Layout() {
         </div>
       </header>
       <main className={"container" + (staff ? " staff" : "")}>
-        <Outlet />
+        {/* подписка касается только сотрудников: гость у меню ни при чём */}
+        {user && user.role !== "client" ? (
+          <LicenseGuard role={user.role}>
+            <Outlet />
+          </LicenseGuard>
+        ) : (
+          <Outlet />
+        )}
       </main>
       {!staff && <Footer />}
     </>

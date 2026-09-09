@@ -6,13 +6,21 @@
 заказчика его нет. Так уже случилось: из 31 поля в админке было 14, включая
 ни одного реквизита. Тест сторожит, чтобы это не повторилось молча.
 """
+import hashlib
+import hmac
+import json
+from datetime import timedelta
+from unittest import mock
+
 from django.contrib import admin as dj_admin
-from django.test import TestCase
+from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from users.models import User
 
-from .models import SiteSettings
+from .license import effective_status, sync_license
+from .models import LicenseState, SiteSettings
 from .plans import features
 
 
@@ -99,3 +107,86 @@ class PlanGateTests(APITestCase):
         self.client.patch("/api/site/", {"plan": "max"}, format="json")
         self.site.refresh_from_db()
         self.assertEqual(self.site.plan, SiteSettings.Plan.START)
+
+
+@override_settings(LICENSE_KEY="testkey", LICENSE_URL="https://pult.test/api/license/")
+class LicenseClientTests(APITestCase):
+    """Сверка с пультом, фейл-опен и блокировка middleware."""
+
+    def _state(self, paid_delta_days, checked_delta_days=0, grace=7):
+        state = LicenseState.load()
+        state.plan = "max"
+        state.paid_until = timezone.localdate() + timedelta(days=paid_delta_days)
+        state.grace_days = grace
+        state.checked_at = timezone.now() - timedelta(days=checked_delta_days)
+        state.save()
+        return state
+
+    def test_ladder(self):
+        self._state(paid_delta_days=30)
+        self.assertEqual(effective_status(), "active")
+        self._state(paid_delta_days=3)
+        self.assertEqual(effective_status(), "expiring")
+        self._state(paid_delta_days=-2)
+        self.assertEqual(effective_status(), "grace")
+        self._state(paid_delta_days=-8)
+        self.assertEqual(effective_status(), "blocked")
+
+    def test_fail_open(self):
+        # без ключа лицензирование выключено
+        with override_settings(LICENSE_KEY=""):
+            self.assertEqual(effective_status(), "active")
+        # ни одной сверки ещё не было — не блокируем
+        self.assertEqual(effective_status(), "active")
+        # просрочка есть, но пульт молчит дольше STALE_DAYS — смягчаем до грейса
+        self._state(paid_delta_days=-30, checked_delta_days=15)
+        self.assertEqual(effective_status(), "grace")
+
+    def test_sync_verifies_signature_and_writes_plan(self):
+        data = {
+            "plan": "hall",
+            "paid_until": (timezone.localdate() + timedelta(days=30)).isoformat(),
+            "grace_days": 7,
+            "status": "active",
+            "issued_at": timezone.now().isoformat(),
+        }
+        canonical = json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+        sign = hmac.new(b"testkey", canonical, hashlib.sha256).hexdigest()
+        response = mock.Mock(status_code=200)
+        response.json.return_value = {"data": data, "sign": sign}
+        response.raise_for_status.return_value = None
+        with mock.patch("core.license.httpx.post", return_value=response):
+            state = sync_license()
+        self.assertEqual(state.plan, "hall")
+        self.assertEqual(SiteSettings.load().plan, "hall")  # тариф пришёл из лицензии
+        self.assertEqual(state.last_error, "")
+
+        # подделанная подпись — кэш не меняется, ошибка записана
+        response.json.return_value = {"data": {**data, "plan": "max"}, "sign": sign}
+        with mock.patch("core.license.httpx.post", return_value=response):
+            state = sync_license()
+        self.assertEqual(state.plan, "hall")
+        self.assertIn("подпись", state.last_error)
+
+    def test_middleware_blocks_and_whitelists(self):
+        self._state(paid_delta_days=-30)  # заблокировано
+        waiter = User.objects.create_user("w1", password="x", role=User.Role.WAITER)
+        self.client.force_authenticate(waiter)
+        # рабочий API закрыт
+        self.assertEqual(self.client.get("/api/orders/").status_code, 402)
+        # гостевая витрина и вход — открыты
+        self.assertEqual(self.client.get("/api/products/").status_code, 200)
+        self.assertEqual(self.client.get("/api/site/").status_code, 200)
+        self.assertEqual(self.client.get("/api/users/me/").status_code, 200)
+        # кнопка «Проверить оплату» работает у заблокированных
+        response = mock.Mock(status_code=200)
+        response.json.return_value = {}
+        response.raise_for_status.return_value = None
+        with mock.patch("core.license.httpx.post", return_value=response):
+            self.assertEqual(self.client.get("/api/license/status/").status_code, 200)
+
+    def test_status_endpoint_requires_staff(self):
+        self.assertEqual(self.client.get("/api/license/status/").status_code, 401)
+        client_user = User.objects.create_user("c1", password="x", role=User.Role.CLIENT)
+        self.client.force_authenticate(client_user)
+        self.assertEqual(self.client.get("/api/license/status/").status_code, 403)

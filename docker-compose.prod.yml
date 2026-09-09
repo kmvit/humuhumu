@@ -46,8 +46,9 @@ services:
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
     # Celery-воркер: распознавание фото чеков в фоне (см. inventory/tasks.py).
+    # -B — встроенный beat: суточная сверка лицензии с пультом (core/tasks.py).
     # media смонтирован, чтобы воркер читал загруженные фото чеков.
-    command: celery -A config worker -l info --concurrency 2
+    command: celery -A config worker -l info --concurrency 2 -B
     env_file: .env
     volumes:
       - media:/app/media

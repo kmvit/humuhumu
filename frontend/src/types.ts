@@ -45,6 +45,16 @@ export interface Site {
 
 export type Role = "client" | "waiter" | "cook" | "bar" | "warehouse" | "admin";
 
+/** Статус подписки «Падачи» — для баннеров персонала (LicenseGuard). */
+export interface LicenseInfo {
+  enabled: boolean;
+  status: "active" | "expiring" | "grace" | "blocked";
+  plan: Plan;
+  paid_until: string | null;
+  grace_days: number;
+  checked_at: string | null;
+}
+
 export type Station = "kitchen" | "bar";
 
 export type StationStatus = "new" | "in_progress" | "ready";

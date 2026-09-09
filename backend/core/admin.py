@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import SiteSettings
+from .models import LicenseState, SiteSettings
 
 
 @admin.register(SiteSettings)
@@ -21,8 +21,9 @@ class SiteSettingsAdmin(admin.ModelAdmin):
                 "fields": ("plan",),
                 "description": (
                     "Что включено заведению по тарифной сетке «Падачи». "
-                    "Проставляется вручную при подключении; позже сюда "
-                    "будет писать лицензия из пульта."
+                    "Если в .env задан LICENSE_KEY, поле перезаписывается "
+                    "лицензией из пульта при суточной сверке — править его "
+                    "тогда нужно в пульте, а не здесь."
                 ),
             },
         ),
@@ -87,6 +88,21 @@ class SiteSettingsAdmin(admin.ModelAdmin):
     def has_add_permission(self, request):
         # запись одна — новую не создаём, если уже есть
         return not SiteSettings.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(LicenseState)
+class LicenseStateAdmin(admin.ModelAdmin):
+    """Кэш лицензии — только посмотреть. Меняет его сверка с пультом."""
+
+    readonly_fields = (
+        "plan", "paid_until", "grace_days", "issued_at", "checked_at", "last_error",
+    )
+
+    def has_add_permission(self, request):
+        return False
 
     def has_delete_permission(self, request, obj=None):
         return False

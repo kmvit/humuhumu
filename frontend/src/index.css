@@ -869,6 +869,25 @@ h1, h2, h3 { font-family: var(--font-display); color: var(--fg); margin: 0; font
   .balance-card .amount { font-size: 38px; }
 }
 
+/* ============ Подписка «Падачи»: баннеры оплаты ============ */
+.license-banner {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border-radius: var(--radius, 12px);
+  font-weight: 600;
+  font-size: 14px;
+}
+.license-banner.warn {
+  background: color-mix(in srgb, #b58900 14%, transparent);
+  color: #8a6d00;
+  border: 1px solid color-mix(in srgb, #b58900 35%, transparent);
+}
+.license-banner.danger {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+}
+
 /* ============ Reduced motion ============ */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }

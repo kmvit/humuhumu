@@ -30,7 +30,7 @@ services:
   worker:
     build: ./backend
     # Celery-воркер: распознавание фото чеков в фоне (см. inventory/tasks.py).
-    command: celery -A config worker -l info
+    command: celery -A config worker -l info -B
     volumes:
       - ./backend:/app
     env_file: .env

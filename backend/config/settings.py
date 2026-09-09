@@ -44,6 +44,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "core.middleware.LicenseMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -130,6 +131,26 @@ USE_X_FORWARDED_HOST = True
 
 CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("REDIS_URL", "redis://redis:6379/0")
+
+# ─────────── Лицензия «Падачи» ───────────
+# Ключ выдаёт пульт (padacha.ru/pult/) при подключении точки. Пустой ключ —
+# лицензирование выключено: автономная установка (дев, свой сервер), тариф
+# правится руками в админке. С ключом инстанс раз в сутки сверяется с
+# пультом (см. core/license.py): забирает тариф и «оплачено до», а
+# блокировку за неоплату исполняет сам.
+LICENSE_KEY = os.getenv("LICENSE_KEY", "")
+LICENSE_URL = os.getenv("LICENSE_URL", "https://padacha.ru/api/license/")
+
+if LICENSE_KEY:
+    from celery.schedules import crontab
+
+    CELERY_BEAT_SCHEDULE = {
+        "sync-license": {
+            "task": "core.tasks.sync_license_task",
+            # ночью, в неровное время — чтобы точки не стучались хором
+            "schedule": crontab(hour=4, minute=17),
+        },
+    }
 
 # ─────────── LLM (OpenRouter) для распознавания чеков ───────────
 # Подключение как в проекте tourplanner: openai SDK, направленный на OpenRouter.

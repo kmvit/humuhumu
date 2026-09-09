@@ -9,7 +9,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from catalog.views import CategoryViewSet, ProductViewSet
 from core.branding import app_icon, manifest
 from finance.views import ExpenseCategoryViewSet, ExpenseViewSet, PayrollViewSet
-from core.views import SiteSettingsView
+from core.views import SiteSettingsView, license_refresh, license_status
 from inventory.views import (
     PurchaseLineViewSet,
     PurchaseViewSet,
@@ -69,6 +69,9 @@ api_patterns = [
     path("wallet/", MyWalletView.as_view(), name="my-wallet"),
     path("wallet/transactions/", MyTransactionsView.as_view(), name="my-transactions"),
     path("wallet/topup/", TopupView.as_view(), name="wallet-topup"),
+    # лицензия «Падачи»: статус подписки и ручная сверка с пультом
+    path("license/status/", license_status, name="license-status"),
+    path("license/refresh/", license_refresh, name="license-refresh"),
     # уведомления банка об оплате (без авторизации, подлинность — в провайдере)
     path(
         "payments/callback/<str:provider>/",
