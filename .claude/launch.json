@@ -37,6 +37,18 @@
         "/Users/home/PycharmProjects/podacha-landing"
       ],
       "port": 4599
+    },
+    {
+      "name": "landing-8742",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8742",
+        "--directory",
+        "/Users/home/PycharmProjects/podacha-landing"
+      ],
+      "port": 8742
     }
   ]
 }
