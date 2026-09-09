@@ -108,6 +108,11 @@ export default function MenuReels() {
     return [...topPage, ...catPages];
   }, [categories, products]);
 
+  // Категория, на которой гость сейчас. Индекс подрезаем: состав страниц
+  // может измениться (пришли лайки — появились «Хиты»), а activeIdx остаться
+  // от прежнего, более длинного списка.
+  const current = pages[Math.min(activeIdx, pages.length - 1)];
+
   const priceOf = (pid: number) => Number(products.find((x) => x.id === pid)?.price ?? 0);
   const count = Object.values(cart).reduce((a, b) => a + b, 0);
   const total = Object.entries(cart).reduce((s, [pid, q]) => s + priceOf(Number(pid)) * q, 0);
@@ -192,16 +197,29 @@ export default function MenuReels() {
             <Icon name="arrowDown" size={18} />
           </span>
         </Link>
-        <div className="reels-cats">
-          {pages.map((s, i) => (
-            <button
-              key={s.key}
-              className={"reels-chip" + (i === activeIdx ? " on" : "") + (s.key === "top" ? " top" : "")}
-              onClick={() => goCat(i)}
-            >
-              <Icon name={s.icon} size={15} filled={s.key === "top"} /> {s.label}
-            </button>
-          ))}
+        {/* полоски-сегменты как в Stories: видно и текущую категорию, и сколько
+            их всего. Тап по сегменту — переход к его категории */}
+        <div className="reels-nav">
+          <div className="reels-bars">
+            {pages.map((s, i) => (
+              <button
+                key={s.key}
+                className={"reels-bar" + (i === activeIdx ? " on" : "") + (s.key === "top" ? " top" : "")}
+                onClick={() => goCat(i)}
+                aria-label={s.label}
+                aria-current={i === activeIdx}
+              >
+                <span />
+              </button>
+            ))}
+          </div>
+          <div className="reels-now" key={current.key}>
+            <span className={current.key === "top" ? "reels-top-mark" : undefined}>
+              <Icon name={current.icon} size={15} filled={current.key === "top"} />
+            </span>
+            <strong>{current.label}</strong>
+            <span className="reels-count">{activeIdx + 1} / {pages.length}</span>
+          </div>
         </div>
       </div>
 
