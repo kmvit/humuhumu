@@ -25,6 +25,7 @@ from payments.services import (
     PaymentError,
     apply_payment_result,
     record_manual_payment,
+    start_online_payment,
     start_terminal_payment,
 )
 
@@ -52,7 +53,7 @@ class OrderViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch"]
 
     def get_permissions(self):
-        if self.action in ("place", "track", "cancel_request"):
+        if self.action in ("place", "track", "cancel_request", "pay_online"):
             return [AllowAny()]  # клиент без авторизации
         if self.action == "create":
             return [IsWaiterOrAdmin()]
@@ -186,6 +187,28 @@ class OrderViewSet(viewsets.ModelViewSet):
         order.closed_at = timezone.now()
         order.save(update_fields=["status", "closed_at"])
         return Response(OrderSerializer(order).data)
+
+    @action(detail=False, methods=["post"], url_path="pay_online")
+    def pay_online(self, request):
+        """Гость оплачивает свой заказ картой онлайн — по токену, без входа.
+
+        Токен, а не id заказа: id перебирается, и по нему можно было бы
+        вытянуть суммы чужих столов. Токен знает только тот, кто этот
+        заказ создал.
+        """
+        token = request.data.get("token")
+        order = Order.objects.filter(public_token=token).first() if token else None
+        if not order:
+            return Response(
+                {"detail": "Заказ не найден"}, status=status.HTTP_404_NOT_FOUND
+            )
+        # Куда банк вернёт гостя после оплаты: на его же страницу заказа.
+        return_url = request.build_absolute_uri(f"/?token={order.public_token}")
+        try:
+            _, url = start_online_payment(order, return_url=return_url)
+        except PaymentError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"payment_url": url})
 
     @action(detail=True, methods=["patch"])
     def confirm(self, request, pk=None):

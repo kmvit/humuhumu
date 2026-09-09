@@ -21,6 +21,7 @@ from inventory.views import (
     StockItemViewSet,
 )
 from orders.views import OrderViewSet, TableViewSet
+from payments.views import callback as payment_callback
 from shifts.views import ShiftViewSet
 from users.views import MeView, RegisterView
 from wallet.views import (
@@ -68,6 +69,12 @@ api_patterns = [
     path("wallet/", MyWalletView.as_view(), name="my-wallet"),
     path("wallet/transactions/", MyTransactionsView.as_view(), name="my-transactions"),
     path("wallet/topup/", TopupView.as_view(), name="wallet-topup"),
+    # уведомления банка об оплате (без авторизации, подлинность — в провайдере)
+    path(
+        "payments/callback/<str:provider>/",
+        payment_callback,
+        name="payment-callback",
+    ),
     # роутер (categories, products, token-packages, orders)
     *router.urls,
 ]

@@ -83,6 +83,26 @@ class SiteSettings(models.Model):
         "Эквайер", max_length=160, blank=True,
         help_text="Кто принимает онлайн-оплату, напр. «АО «ТБанк» (Т-Касса)»",
     )
+
+    class Acquiring(models.TextChoices):
+        NONE = "none", "Нет онлайн-оплаты"
+        TBANK = "tbank", "Т-Банк (Т-Касса)"
+        SBER = "sber", "Сбербанк (в т.ч. через Эвотор)"
+
+    # Выбор эквайринга — настройка заведения, а не сборки: у разных кафе
+    # разные договоры. Ключи и пароли живут ТОЛЬКО в переменных окружения
+    # (см. payments/acquiring.py): GET /api/site/ отдаётся без авторизации,
+    # и секрету в этой модели не место.
+    acquiring = models.CharField(
+        "Интернет-эквайринг",
+        max_length=16,
+        choices=Acquiring.choices,
+        default=Acquiring.NONE,
+        help_text=(
+            "Кто принимает оплату картой онлайн. Доступы задаются "
+            "переменными окружения на сервере заведения, не здесь."
+        ),
+    )
     legal_updated = models.CharField(
         "Дата редакции документов", max_length=60, blank=True,
         help_text="Как показывать на юр. страницах, напр. «3 августа 2026 г.»",

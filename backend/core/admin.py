@@ -11,6 +11,17 @@ class SiteSettingsAdmin(admin.ModelAdmin):
         ("Контакты", {"fields": ("phone", "email", "address", "working_hours")}),
         ("Соцсети", {"fields": ("instagram", "telegram")}),
         ("Официанты", {"fields": ("item_remove_code",)}),
+        (
+            "Приём оплаты",
+            {
+                "fields": ("acquiring",),
+                "description": (
+                    "Кто принимает оплату картой онлайн. Ключи и пароли банка "
+                    "задаются переменными окружения на сервере заведения "
+                    "(TBANK_* или SBER_*), в базе их не храним."
+                ),
+            },
+        ),
     )
 
     def has_add_permission(self, request):

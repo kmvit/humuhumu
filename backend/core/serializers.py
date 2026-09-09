@@ -5,11 +5,22 @@ from .models import SiteSettings
 
 class SiteSettingsSerializer(serializers.ModelSerializer):
     logo = serializers.SerializerMethodField()
+    # Умеет ли заведение принимать оплату картой онлайн. Фронт по этому
+    # флагу решает, показывать ли гостю кнопку оплаты. Само название банка
+    # и тем более его ключи наружу не отдаём — только «да/нет».
+    online_payment = serializers.SerializerMethodField()
     accent_color = serializers.RegexField(
         regex=r"^#[0-9a-fA-F]{6}$",
         allow_blank=True,
         required=False,
     )
+
+    def get_online_payment(self, obj) -> bool:
+        # Провайдера берём из obj, а не через SiteSettings.load(): настройки
+        # уже загружены, второй поход в базу на каждый запрос ни к чему.
+        from payments.acquiring import get_acquirer
+
+        return get_acquirer(obj.acquiring).configured()
 
     class Meta:
         model = SiteSettings
@@ -43,6 +54,7 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
             "merchant_bank_address",
             "acquirer",
             "legal_updated",
+            "online_payment",
         )
         # через API правится только внешний вид; остальное — в админке
         read_only_fields = (

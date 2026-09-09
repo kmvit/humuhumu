@@ -1,13 +1,16 @@
-"""Оплата заказа через кассу-терминал: старт и применение результата.
+"""Оплата заказа: наличными на кассе, через терминал или картой онлайн.
 
-Единая точка перевода статусов, чтобы и дев-эмуляция, и будущий вебхук
-реального провайдера дёргали одну и ту же логику.
+Три способа стартуют по-разному, но сходятся в одной точке —
+apply_payment_result. Она и переводит статусы, чтобы дев-эмуляция,
+уведомление банка и ручное подтверждение кассиром не разъезжались
+в трёх разных реализациях.
 """
 from django.db import transaction
 from django.utils import timezone
 
 from orders.models import Order
 
+from .acquiring import AcquiringError, get_acquirer
 from .models import Payment
 from .providers import get_provider
 
@@ -62,6 +65,40 @@ def start_terminal_payment(order: Order, method: str = Payment.Method.CARD) -> P
     order.status = Order.Status.AWAITING
     order.save(update_fields=["status"])
     return payment
+
+
+@transaction.atomic
+def start_online_payment(order: Order, *, return_url: str) -> tuple[Payment, str]:
+    """Оплата картой онлайн: создать платёж у банка и вернуть ссылку для гостя.
+
+    Заказ в «к оплате» здесь НЕ переводим, в отличие от терминала: гость
+    может закрыть страницу банка и вернуться платить наличными, а заказ,
+    зависший в «к оплате», официант закрыть не сможет. Статус меняется
+    только по факту оплаты — в apply_payment_result.
+    """
+    if order.status not in (Order.Status.OPEN, Order.Status.REQUESTED):
+        raise PaymentError("Оплатить можно только незакрытый заказ")
+
+    acquirer = get_acquirer()
+    if not acquirer.configured():
+        raise PaymentError("Онлайн-оплата у заведения не подключена")
+
+    payment = Payment.objects.create(
+        purpose=Payment.Purpose.ORDER,
+        status=Payment.Status.PENDING,
+        amount=order.total,
+        order=order,
+        method=Payment.Method.CARD,
+        provider=acquirer.name,
+    )
+    try:
+        url = acquirer.create(payment, return_url=return_url)
+    except AcquiringError as e:
+        # Платёж-пустышку не оставляем: он бы висел в реестре как
+        # «создан» и портил сверку с банком.
+        payment.delete()
+        raise PaymentError(str(e)) from e
+    return payment, url
 
 
 @transaction.atomic

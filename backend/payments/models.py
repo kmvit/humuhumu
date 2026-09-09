@@ -2,7 +2,13 @@ from django.db import models
 
 
 class Payment(models.Model):
-    """Платёж через провайдера (ЮKassa/CloudPayments). Обслуживает оплату заказа и пополнение токенов."""
+    """Платёж по заказу: наличными на кассе, через терминал или картой онлайн.
+
+    provider говорит, кто его провёл: "manual" — касса, имя эквайера
+    (tbank/sber) — онлайн-оплата, имя терминального провайдера — терминал.
+    external_id — номер платежа у банка, по нему находим платёж, когда
+    придёт уведомление.
+    """
 
     class Purpose(models.TextChoices):
         ORDER = "order", "Оплата заказа"
@@ -41,7 +47,10 @@ class Payment(models.Model):
     method = models.CharField(
         "Способ", max_length=8, choices=Method.choices, blank=True, default=""
     )
-    provider = models.CharField("Провайдер", max_length=32, default="yookassa")
+    # Умолчание — «наличными на кассе»: платёж без явного провайдера
+    # создаётся только там. Прежнее "yookassa" врало — провайдера с таким
+    # именем в коде нет, и запись в реестре ссылалась бы на несуществующий банк.
+    provider = models.CharField("Провайдер", max_length=32, default="manual")
     external_id = models.CharField(
         "ID у провайдера", max_length=128, unique=True, null=True, blank=True
     )
