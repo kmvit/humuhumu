@@ -844,7 +844,10 @@ h1, h2, h3 { font-family: var(--font-display); color: var(--fg); margin: 0; font
 .footer-item { display: flex; align-items: center; gap: 10px; font-weight: 500; }
 .footer-item a { color: var(--fg); font-weight: 500; }
 .footer-item a:hover { color: var(--brand); }
-.footer-copy { text-align: center; padding: 0 0 22px; margin: 0; }
+.footer-copy { text-align: center; padding: 0; margin: 0; }
+.footer-by { text-align: center; padding: 6px 0 22px; margin: 0; font-size: 13px; }
+.footer-by a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.footer-by a:hover { color: var(--brand); }
 .footer-title { font-family: var(--font-display); font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
 .footer-link { color: var(--fg); font-weight: 500; font-size: 14px; }
 .footer-link:hover { color: var(--brand); }

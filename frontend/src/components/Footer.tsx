@@ -79,6 +79,14 @@ export default function Footer() {
         {merchant.inn && ` · ИНН ${merchant.inn}`}
         {merchant.ogrnip && ` · ОГРНИП ${merchant.ogrnip}`}
       </p>
+      {/* подпись разработчика — отдельной строкой, чтобы не путалась
+          с реквизитами заведения */}
+      <p className="muted footer-by">
+        Разработано{" "}
+        <a href="https://hack-its.ru" target="_blank" rel="noreferrer noopener">
+          HackIts
+        </a>
+      </p>
     </footer>
   );
 }
