@@ -6,6 +6,7 @@ import { useAppearance, useSite } from "../../site";
 import { useToast } from "../../components/ui/Toast";
 import Staff from "./Staff";
 import Bonuses from "./Bonuses";
+import Catalog from "./Catalog";
 
 // Темы продукта: ключи совпадают с SiteSettings.Theme на бэкенде.
 // Формат обслуживания: зал со столами или стойка с выдачей по номеру.
@@ -39,10 +40,6 @@ const THEMES: { key: AppTheme; name: string; accent: string }[] = [
 
 // Готовые акценты «цвета заведения»; свой цвет — через пипетку рядом.
 const ACCENTS = ["#3557c7", "#0d7a52", "#9c5a1e", "#b03a67", "#1f58a6", "#535a66"];
-
-// Django-админка: на проде nginx проксирует /admin/ на бэкенд,
-// в dev-режиме прокси нет — ходим на бэкенд напрямую.
-const DJANGO_ADMIN_URL = import.meta.env.DEV ? "http://localhost:8000/admin/" : "/admin/";
 
 export default function Admin() {
   const [orders, setOrders] = useState<Order[]>([]);
@@ -146,17 +143,7 @@ export default function Admin() {
         ))}
       </div>
 
-      <div className="card hover enter mt-4">
-        <div className="between">
-          <div>
-            <strong className="title">Управление каталогом</strong>
-            <p className="muted subtitle">Товары и категории</p>
-          </div>
-          <a className="btn sm" href={DJANGO_ADMIN_URL} target="_blank" rel="noreferrer">
-            Открыть <Icon name="arrowUp" size={15} />
-          </a>
-        </div>
-      </div>
+      <Catalog />
 
       <h2 className="section-title">Формат работы</h2>
       <div className="card">

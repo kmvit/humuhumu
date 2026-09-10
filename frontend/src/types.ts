@@ -117,6 +117,7 @@ export interface Product {
   prep_minutes: number | null;
   is_available: boolean;
   is_stopped: boolean;
+  sort_order: number;
   likes?: number;
 }
 

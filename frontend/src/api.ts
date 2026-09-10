@@ -106,3 +106,5 @@ export const del = <T>(path: string) => api<T>(path, { method: "DELETE" });
 // Загрузка файла (multipart): body — FormData, Content-Type ставит браузер.
 export const postForm = <T>(path: string, form: FormData) =>
   api<T>(path, { method: "POST", body: form });
+export const patchForm = <T>(path: string, form: FormData) =>
+  api<T>(path, { method: "PATCH", body: form });

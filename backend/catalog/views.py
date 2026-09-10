@@ -1,5 +1,5 @@
-from django.db.models import Count
-from rest_framework import viewsets
+from django.db.models import Count, ProtectedError
+from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -10,19 +10,54 @@ from .models import Category, Product, ProductLike
 from .serializers import CategorySerializer, ProductSerializer
 
 
-class CategoryViewSet(viewsets.ModelViewSet):
+class ProtectedDeleteMixin:
+    """Удаление того, на что ссылаются заказы, — с понятным ответом.
+
+    В базе стоит PROTECT: товар из закрытого чека удалить нельзя, иначе
+    рассыплется история и отчёты. Без обработки владелец получил бы 500 и
+    не понял, что делать, — поэтому объясняем и подсказываем выход.
+    """
+
+    protected_message = "Удалить нельзя — запись уже используется."
+
+    def destroy(self, request, *args, **kwargs):
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except ProtectedError:
+            return Response(
+                {"detail": self.protected_message},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+
+class CategoryViewSet(ProtectedDeleteMixin, viewsets.ModelViewSet):
     """Категории. Чтение — всем, запись — админу."""
 
-    queryset = Category.objects.filter(is_active=True)
     serializer_class = CategorySerializer
     permission_classes = [ReadOnlyOrAdmin]
+    protected_message = (
+        "В категории есть товары — сначала перенесите их в другую "
+        "категорию или удалите."
+    )
+
+    def get_queryset(self):
+        qs = Category.objects.all()
+        # гостям и персоналу показываем только активные; владельцу — все,
+        # иначе выключенную категорию нечем будет включить обратно
+        if getattr(self.request.user, "role", None) != "admin":
+            qs = qs.filter(is_active=True)
+        return qs
 
 
-class ProductViewSet(viewsets.ModelViewSet):
+class ProductViewSet(ProtectedDeleteMixin, viewsets.ModelViewSet):
     """Товары. Чтение — всем, запись — админу. Фильтр ?category=<id>."""
 
     serializer_class = ProductSerializer
     permission_classes = [ReadOnlyOrAdmin]
+    protected_message = (
+        "Товар есть в заказах — удалить нельзя, иначе рассыплется история. "
+        "Снимите галочку «В меню», чтобы убрать его из продажи."
+    )
 
     def get_permissions(self):
         # лайки и топ доступны анонимным гостям
