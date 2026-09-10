@@ -19,7 +19,7 @@ from rest_framework.test import APITestCase
 
 from users.models import User
 
-from .license import effective_status, sync_license
+from .license import effective_status, status_payload, sync_license
 from .models import LicenseState, SiteSettings
 from .plans import features
 
@@ -131,6 +131,20 @@ class LicenseClientTests(APITestCase):
         self.assertEqual(effective_status(), "grace")
         self._state(paid_delta_days=-8)
         self.assertEqual(effective_status(), "blocked")
+
+    def test_internal_point_never_blocks_and_keeps_real_date(self):
+        """Своя точка: не блокируется, но дата в кэше — настоящая из пульта.
+
+        Раньше пульт слал своим точкам фиктивное «сегодня + год», и панель
+        владельца показывала одно, а пульт — другое.
+        """
+        state = self._state(paid_delta_days=-90)  # давно «просрочено»
+        state.internal = True
+        state.save()
+        self.assertEqual(effective_status(), "active")
+        payload = status_payload()
+        self.assertTrue(payload["internal"])
+        self.assertEqual(payload["paid_until"], state.paid_until.isoformat())
 
     def test_fail_open(self):
         # без ключа лицензирование выключено

@@ -210,6 +210,10 @@ class LicenseState(models.Model):
 
     plan = models.CharField("Тариф из лицензии", max_length=8, blank=True)
     paid_until = models.DateField("Оплачено до", null=True, blank=True)
+    # Своя точка «Падачи»: подписка не тарифицируется, блокировать нельзя.
+    # Отдельный признак, а не фиктивная дата: иначе панель владельца
+    # показывает «оплачено до» год вперёд, а в пульте стоит другое.
+    internal = models.BooleanField("Своя точка", default=False)
     grace_days = models.PositiveSmallIntegerField("Грейс, дней", default=7)
     issued_at = models.DateTimeField("Ответ выдан", null=True, blank=True)
     checked_at = models.DateTimeField("Последняя сверка", null=True, blank=True)

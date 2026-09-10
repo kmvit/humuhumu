@@ -76,6 +76,8 @@ export interface StaffMember {
 export interface LicenseInfo {
   enabled: boolean;
   status: "active" | "expiring" | "grace" | "blocked";
+  /** Своя точка «Падачи»: подписка не тарифицируется, дата не показывается. */
+  internal: boolean;
   plan: Plan;
   paid_until: string | null;
   grace_days: number;

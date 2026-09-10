@@ -83,14 +83,21 @@ export default function Subscription() {
 
         {info?.enabled ? (
           <div className="rule-top mt-3">
+            {/* У своей точки «оплачено до» в пульте техническое — показывать
+                его владельцу нечестно и незачем: она не тарифицируется. */}
             <div className="between mt-3">
               <span className="muted sm">Оплачено до</span>
-              <strong>{fmtDate(info.paid_until)}</strong>
+              <strong>{info.internal ? "без ограничения" : fmtDate(info.paid_until)}</strong>
             </div>
             <div className="between mt-2">
               <span className="muted sm">Последняя сверка</span>
               <span className="muted">{fmtDate(info.checked_at)}</span>
             </div>
+            {info.internal && (
+              <p className="muted sm mt-2 m-0">
+                Своя точка «Падачи» — подписка не тарифицируется.
+              </p>
+            )}
             {info.status !== "active" && (
               <p className="muted sm mt-2 m-0">
                 {info.status === "expiring"

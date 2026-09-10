@@ -70,6 +70,8 @@ def sync_license() -> LicenseState:
         state.plan = data["plan"]
         state.paid_until = date.fromisoformat(data["paid_until"])
         state.grace_days = int(data["grace_days"])
+        # Старый пульт признака не присылает — тогда обычная точка.
+        state.internal = bool(data.get("internal", False))
         state.issued_at = timezone.now()
         state.checked_at = timezone.now()
         state.last_error = ""
@@ -97,6 +99,10 @@ def effective_status(today: date | None = None) -> str:
     if not settings.LICENSE_KEY:
         return ACTIVE
     state = LicenseState.load()
+    # Своя точка не биллится: дата в пульте у неё техническая (триал), и
+    # считать по ней лестницу нельзя — заблокировала бы сама себя.
+    if state.internal:
+        return ACTIVE
     if state.paid_until is None:
         return ACTIVE
     if today is None:
@@ -122,6 +128,7 @@ def status_payload() -> dict:
     return {
         "enabled": bool(settings.LICENSE_KEY),
         "status": effective_status(),
+        "internal": state.internal,
         "plan": state.plan or SiteSettings.load().plan,
         "paid_until": state.paid_until.isoformat() if state.paid_until else None,
         "grace_days": state.grace_days,
