@@ -226,44 +226,42 @@ export default function Catalog() {
 
   return (
     <>
-      <h2 className="section-title">Каталог</h2>
-      <div className="card">
-        <div className="between">
-          <div>
-            <strong className="title">Меню заведения</strong>
-            <p className="muted subtitle m-0">
-              {loading
-                ? "Загрузка…"
-                : `${cats.length} категорий · ${items.length} блюд`}
-            </p>
-          </div>
-          <div className="wrap">
-            <button className="btn sm ghost" onClick={() => setCDraft(emptyCategory())}>
-              <Icon name="plus" size={15} /> Категория
-            </button>
-            <button
-              className="btn sm"
-              disabled={cats.length === 0}
-              onClick={() => setPDraft(emptyProduct(cats[0]?.id ?? ""))}
-            >
-              <Icon name="plus" size={15} /> Блюдо
-            </button>
-          </div>
+      <div className="between">
+        <h1 className="h1">Каталог</h1>
+        <div className="wrap">
+          <button className="btn sm ghost" onClick={() => setCDraft(emptyCategory())}>
+            <Icon name="plus" size={15} /> Категория
+          </button>
+          <button
+            className="btn sm"
+            disabled={cats.length === 0}
+            onClick={() => setPDraft(emptyProduct(cats[0]?.id ?? ""))}
+          >
+            <Icon name="plus" size={15} /> Блюдо
+          </button>
         </div>
+      </div>
+      <p className="muted subtitle">
+        {loading
+          ? "Загрузка…"
+          : `Меню заведения · ${cats.length} категорий · ${items.length} блюд`}
+      </p>
 
+      <div className="card mt-4">
         {!loading && cats.length === 0 && (
-          <p className="muted mt-3 m-0">
+          <p className="muted m-0">
             Категорий пока нет. Начните с категории — «Кофе», «Завтраки», — а
             потом добавьте в неё блюда.
           </p>
         )}
 
-        <div className="stack mt-3">
-          {cats.map((c) => {
+        <div className="stack">
+          {cats.map((c, i) => {
             const list = byCat.get(c.id) ?? [];
             const open = openCats.has(c.id);
             return (
-              <div key={c.id} className="rule-top">
+              // разделитель между категориями, но не над первой
+              <div key={c.id} className={i > 0 ? "rule-top" : undefined}>
                 <div className="row mt-2">
                   <button
                     className="icon-btn"

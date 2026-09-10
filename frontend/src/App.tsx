@@ -11,6 +11,7 @@ import Counter from "./pages/counter/Counter";
 import Kitchen from "./pages/kitchen/Kitchen";
 import Bar from "./pages/bar/Bar";
 import Admin from "./pages/admin/Admin";
+import Catalog from "./pages/admin/Catalog";
 import Warehouse from "./pages/warehouse/Warehouse";
 import Shifts from "./pages/shifts/Shifts";
 import Finance from "./pages/finance/Finance";
@@ -119,6 +120,7 @@ export default function App() {
           />
         )}
         {user?.role === "admin" && <Route path="/admin" element={<Admin />} />}
+        {user?.role === "admin" && <Route path="/catalog" element={<Catalog />} />}
         {/* смены — всем сотрудникам, клиентам не нужно */}
         {user && user.role !== "client" && (
           <Route

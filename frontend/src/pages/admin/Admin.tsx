@@ -6,7 +6,6 @@ import { useAppearance, useSite } from "../../site";
 import { useToast } from "../../components/ui/Toast";
 import Staff from "./Staff";
 import Bonuses from "./Bonuses";
-import Catalog from "./Catalog";
 
 // Темы продукта: ключи совпадают с SiteSettings.Theme на бэкенде.
 // Формат обслуживания: зал со столами или стойка с выдачей по номеру.
@@ -142,8 +141,6 @@ export default function Admin() {
           </div>
         ))}
       </div>
-
-      <Catalog />
 
       <h2 className="section-title">Формат работы</h2>
       <div className="card">
