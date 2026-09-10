@@ -324,11 +324,13 @@ h1, h2, h3 { font-family: var(--font-display); color: var(--fg); margin: 0; font
 .footer .brand .logo:has(img), .footer .brand .logo:has(img) img { height: 40px; max-width: 130px; }
 /* логотип — сам по себе леттеринг, поэтому название рядом не дублируем */
 .brand:has(.logo img) .brand-name { display: none; }
-/* Колонку навигации не ужимаем: иначе ссылки наезжают на название заведения —
-   особенно в широких шрифтах вроде Unbounded. Ниже 560px название скрыто
-   (.hide-sm), места хватает и там сжатие безопасно. */
-.header nav { display: flex; gap: 4px; justify-self: start; }
-@media (max-width: 560px) { .header nav { min-width: 0; } }
+/* Навигация не должна наезжать на название заведения. Раньше колонку
+   не ужимали вовсе — и с ростом числа разделов она полезла на логотип.
+   Теперь колонка сжимается, а ссылки уезжают в прокрутку: лишний раздел
+   больше ничего не ломает. */
+.header nav { display: flex; gap: 4px; justify-self: stretch; min-width: 0; overflow-x: auto; scrollbar-width: none; -ms-overflow-style: none; }
+.header nav::-webkit-scrollbar { display: none; }
+.header nav > * { flex-shrink: 0; }
 
 /* тонкая рабочая панель для планшетных ролей (бар/официант/кухня/склад):
    без чернильной полосы и логотипа, две колонки, минимум высоты */

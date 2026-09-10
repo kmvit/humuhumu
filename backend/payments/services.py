@@ -92,6 +92,13 @@ def start_online_payment(order: Order, *, return_url: str) -> tuple[Payment, str
     if order.status not in (Order.Status.OPEN, Order.Status.REQUESTED):
         raise PaymentError("Оплатить можно только незакрытый заказ")
 
+    # Выключатель владельца проверяем и здесь, а не только прячем кнопку:
+    # ручка публичная, и старая вкладка гостя дошла бы до банка.
+    from core.models import SiteSettings
+
+    if not SiteSettings.load().online_payment_on:
+        raise PaymentError("Оплата картой сейчас недоступна")
+
     acquirer = get_acquirer()
     if not acquirer.configured():
         raise PaymentError("Онлайн-оплата у заведения не подключена")

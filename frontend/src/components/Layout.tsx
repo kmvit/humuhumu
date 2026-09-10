@@ -56,7 +56,10 @@ const FEATURE_BY_PATH: Record<string, Feature> = {
 
 // Планшетные рабочие роли: у них шапка сжата в тонкую панель, а подвал убран,
 // чтобы доска целиком помещалась на экран планшета.
-const STAFF_ROLES = ["waiter", "cook", "bar", "warehouse"];
+// Кто работает в приложении, а не выбирает еду: им — тонкая рабочая шапка
+// без витринного логотипа. Владелец тоже работает, и разделов у него
+// больше всех — с центральным логотипом они переставали помещаться.
+const STAFF_ROLES = ["waiter", "cook", "bar", "warehouse", "admin"];
 
 export default function Layout() {
   const { user, logout } = useAuth();

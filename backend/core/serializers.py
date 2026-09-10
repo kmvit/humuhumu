@@ -13,6 +13,10 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
     # флагу решает, показывать ли гостю кнопку оплаты. Само название банка
     # и тем более его ключи наружу не отдаём — только «да/нет».
     online_payment = serializers.SerializerMethodField()
+    # Для раздела «Оплата» в панели владельца: подключён ли банк и какой.
+    # Ключи наружу не отдаём — только факт настроенности и название.
+    acquiring_ready = serializers.SerializerMethodField()
+    acquiring_name = serializers.SerializerMethodField()
     accent_color = serializers.RegexField(
         regex=r"^#[0-9a-fA-F]{6}$",
         allow_blank=True,
@@ -27,9 +31,19 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
     def get_online_payment(self, obj) -> bool:
         # Провайдера берём из obj, а не через SiteSettings.load(): настройки
         # уже загружены, второй поход в базу на каждый запрос ни к чему.
+        # Выключатель владельца поверх доступов: без ключей его «включено»
+        # ничего не даёт, гость упёрся бы в ошибку банка.
+        from payments.acquiring import get_acquirer
+
+        return obj.online_payment_on and get_acquirer(obj.acquiring).configured()
+
+    def get_acquiring_ready(self, obj) -> bool:
         from payments.acquiring import get_acquirer
 
         return get_acquirer(obj.acquiring).configured()
+
+    def get_acquiring_name(self, obj) -> str:
+        return obj.get_acquiring_display() if obj.acquiring != obj.Acquiring.NONE else ""
 
     class Meta:
         model = SiteSettings
@@ -70,6 +84,9 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
             "acquirer",
             "legal_updated",
             "online_payment",
+            "online_payment_on",
+            "acquiring_ready",
+            "acquiring_name",
             "plan",
             "features",
         )

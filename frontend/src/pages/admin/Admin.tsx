@@ -6,6 +6,7 @@ import { useAppearance, useSite } from "../../site";
 import { useToast } from "../../components/ui/Toast";
 import Staff from "./Staff";
 import Bonuses from "./Bonuses";
+import OnlinePayment from "./OnlinePayment";
 
 // Темы продукта: ключи совпадают с SiteSettings.Theme на бэкенде.
 // Формат обслуживания: зал со столами или стойка с выдачей по номеру.
@@ -232,6 +233,8 @@ export default function Admin() {
           />
         </div>
       </div>
+
+      <OnlinePayment />
 
       <Bonuses />
 

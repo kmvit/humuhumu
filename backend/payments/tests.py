@@ -297,3 +297,70 @@ class ManualPaymentUnaffectedTests(TestCase):
             amount=Decimal("1"),
         )
         self.assertEqual(payment.provider, "manual")
+
+
+class OnlinePaymentToggleTests(APITestCase):
+    """Выключатель приёма оплаты картой в панели владельца.
+
+    Отдельно от выбора банка: банк с ключами настраивают один раз, а
+    закрыть оплату может понадобиться в любой момент — банк лёг, день
+    только за наличные.
+    """
+
+    ENV = {"TBANK_TERMINAL_KEY": "term-1", "TBANK_PASSWORD": "secret"}
+
+    def setUp(self):
+        site = SiteSettings.load()
+        site.acquiring = SiteSettings.Acquiring.TBANK
+        site.online_payment_on = True
+        site.save()
+
+    def site(self):
+        return self.client.get("/api/site/").data
+
+    @mock.patch.dict("os.environ", ENV)
+    def test_on_and_configured_shows_button(self):
+        self.assertTrue(self.site()["online_payment"])
+
+    @mock.patch.dict("os.environ", ENV)
+    def test_owner_can_switch_payment_off(self):
+        site = SiteSettings.load()
+        site.online_payment_on = False
+        site.save()
+        data = self.site()
+        self.assertFalse(data["online_payment"])
+        # банк остаётся подключённым — выключатель его не сбрасывает
+        self.assertTrue(data["acquiring_ready"])
+
+    @mock.patch.dict("os.environ", {"TBANK_TERMINAL_KEY": "", "TBANK_PASSWORD": ""})
+    def test_switch_on_does_not_fake_missing_keys(self):
+        """Без доступов «включено» ничего не даёт — иначе гость упрётся в банк."""
+        data = self.site()
+        self.assertTrue(data["online_payment_on"])
+        self.assertFalse(data["acquiring_ready"])
+        self.assertFalse(data["online_payment"])
+
+    @mock.patch.dict("os.environ", ENV)
+    def test_backend_refuses_payment_when_switched_off(self):
+        """Ручка публичная: спрятать кнопку мало, старая вкладка дошла бы до банка."""
+        from orders.models import Order
+
+        from .services import PaymentError, start_online_payment
+
+        site = SiteSettings.load()
+        site.online_payment_on = False
+        site.save()
+        order = Order.objects.create(status=Order.Status.OPEN, table="5", total=Decimal("500"))
+        with self.assertRaises(PaymentError):
+            start_online_payment(order, return_url="https://example.com/")
+
+    def test_acquiring_name_shown_for_owner(self):
+        self.assertEqual(self.site()["acquiring_name"], "Т-Банк (Т-Касса)")
+
+    def test_no_bank_selected_reports_nothing_configured(self):
+        site = SiteSettings.load()
+        site.acquiring = SiteSettings.Acquiring.NONE
+        site.save()
+        data = self.site()
+        self.assertEqual(data["acquiring_name"], "")
+        self.assertFalse(data["acquiring_ready"])

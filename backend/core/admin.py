@@ -57,7 +57,7 @@ class SiteSettingsAdmin(admin.ModelAdmin):
         (
             "Приём оплаты",
             {
-                "fields": ("acquiring",),
+                "fields": ("acquiring", "online_payment_on"),
                 "description": (
                     "Кто принимает оплату картой онлайн. Ключи и пароли банка "
                     "задаются переменными окружения на сервере заведения "
