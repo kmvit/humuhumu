@@ -434,6 +434,9 @@ h1, h2, h3 { font-family: var(--font-display); color: var(--fg); margin: 0; font
 .reel-body { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; padding: 20px 18px calc(26px + env(safe-area-inset-bottom)); z-index: 1; transition: padding-bottom 0.2s var(--ease); }
 /* когда снизу висит корзина — приподнимаем контент, чтобы «+» и цена не перекрывались */
 .reels.has-cart .reel-body { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+/* панель своего заказа занимает низ так же, как корзина; когда обе — вдвое */
+.reels.has-order .reel-body { padding-bottom: calc(108px + env(safe-area-inset-bottom)); }
+.reels.has-order.has-cart .reel-body { padding-bottom: calc(174px + env(safe-area-inset-bottom)); }
 .reel-info { min-width: 0; }
 .reel-info h2 { font-family: var(--font-display); font-size: 26px; font-weight: 500; line-height: 1.15; color: #fff; text-shadow: 0 2px 12px rgba(0,0,0,0.6); }
 .reel-desc { margin: 6px 0 0; font-size: 13.5px; line-height: 1.4; color: rgba(255,255,255,0.85); max-width: 42ch; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -462,7 +465,18 @@ h1, h2, h3 { font-family: var(--font-display); color: var(--fg); margin: 0; font
 @keyframes sheetUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
 .reels-sheet-items { display: flex; flex-direction: column; gap: 10px; margin: 14px 0; }
 .reels-sheet-row { gap: 12px; }
-@media (prefers-reduced-motion: reduce) { .reels-cartbar { animation: none; } }
+/* Свой заказ гостя — главное, за чем он возвращается в ленту: статус
+   всегда под рукой. Когда в корзине что-то есть, поднимаем над её панелью. */
+.reels-orderbar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 46; display: flex; align-items: center; justify-content: space-between; gap: 14px; width: min(560px, calc(100% - 24px)); padding: 12px 18px; border-radius: 999px; background: rgba(20,20,24,0.92); backdrop-filter: blur(8px); color: #fff; border: 1px solid rgba(255,255,255,0.18); box-shadow: 0 8px 28px rgba(0,0,0,0.45); font-size: 15px; font-weight: 600; cursor: pointer; animation: slideUp 0.3s var(--ease); }
+.reels.has-cart .reels-orderbar { bottom: calc(80px + env(safe-area-inset-bottom)); }
+.reels-orderbar-l { display: inline-flex; align-items: center; gap: 9px; min-width: 0; }
+.reels-orderbar-l strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* номер выдачи — то, что выкрикнут в окно, поэтому крупно и заметно */
+.reels-orderno.ready { background: #35c07a; box-shadow: 0 0 12px rgba(53,192,122,0.6); }
+.reels-orderno { flex-shrink: 0; display: inline-grid; place-items: center; min-width: 34px; height: 30px; padding: 0 9px; border-radius: 9px; background: var(--brand); font-family: var(--font-display); font-size: 17px; }
+.reels-orderbar .dot { flex-shrink: 0; width: 9px; height: 9px; border-radius: 50%; background: #f0a132; }
+.reels-orderbar .dot.ready { background: #35c07a; box-shadow: 0 0 10px rgba(53,192,122,0.7); }
+@media (prefers-reduced-motion: reduce) { .reels-cartbar, .reels-orderbar { animation: none; } }
 
 /* одноразовая подсказка по жестам */
 .reels-coach { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(0,0,0,0.72); backdrop-filter: blur(2px); animation: fadeIn 0.2s var(--ease); }

@@ -6,6 +6,8 @@ import Icon, { categoryIcon, type IconName } from "../../components/Icon";
 import Modal from "../../components/ui/Modal";
 import { useToast } from "../../components/ui/Toast";
 import { initTable } from "../../table";
+import { useTrackedOrder } from "../../orderTrack";
+import OrderStatus from "./OrderStatus";
 
 const COACH_KEY = "humu_reels_coached";
 const DEVICE_KEY = "humu_device";
@@ -40,6 +42,10 @@ export default function MenuReels() {
     () => new Set(JSON.parse(localStorage.getItem(LIKES_KEY) || "[]"))
   );
   const [device] = useState(initDevice);
+  // Свой заказ гостя. В ленте это главный экран после отправки: гость
+  // смотрит статус, а на стойке ещё и забирает по номеру.
+  const { token, order: myOrder, track, forget, reload: reloadOrder } = useTrackedOrder();
+  const [statusOpen, setStatusOpen] = useState(false);
 
   const trackRef = useRef<HTMLDivElement>(null);
 
@@ -113,6 +119,11 @@ export default function MenuReels() {
   // от прежнего, более длинного списка.
   const current = pages[Math.min(activeIdx, pages.length - 1)];
 
+  // панель своего заказа: она же поднимает низ карточки, чтобы не перекрыть
+  // название блюда
+  const showOrderBar =
+    !!myOrder && !cartOpen && !statusOpen && myOrder.status !== "cancelled";
+
   const priceOf = (pid: number) => Number(products.find((x) => x.id === pid)?.price ?? 0);
   const count = Object.values(cart).reduce((a, b) => a + b, 0);
   const total = Object.entries(cart).reduce((s, [pid, q]) => s + priceOf(Number(pid)) * q, 0);
@@ -153,15 +164,16 @@ export default function MenuReels() {
         product: Number(product),
         quantity,
       }));
-      await post<Order>("/orders/place/", {
+      const order = await post<Order>("/orders/place/", {
         customer_name: name.trim(),
         items,
         table: table ?? "",
       });
+      track(order);
       setCart({});
       setCartOpen(false);
       setName("");
-      notify("Заказ отправлен — подойдёт официант", "ok");
+      setStatusOpen(true); // сразу показываем статус, а не только тост
     } catch (err) {
       notify(err instanceof ApiError ? err.message : "Ошибка", "bad");
     } finally {
@@ -189,7 +201,13 @@ export default function MenuReels() {
   }
 
   return (
-    <div className={"reels" + (count > 0 ? " has-cart" : "")}>
+    <div
+      className={
+        "reels" +
+        (count > 0 ? " has-cart" : "") +
+        (showOrderBar ? " has-order" : "")
+      }
+    >
       {/* верхняя лента категорий */}
       <div className="reels-top">
         <Link className="reels-back" to="/menu" aria-label="Обычное меню">
@@ -279,6 +297,53 @@ export default function MenuReels() {
           </div>
         ))}
       </div>
+
+      {/* свой заказ: статус всегда под рукой, на стойке — с номером выдачи */}
+      {showOrderBar && myOrder && (
+        <button className="reels-orderbar" onClick={() => setStatusOpen(true)}>
+          <span className="reels-orderbar-l">
+            {myOrder.daily_number != null ? (
+              <span className={"reels-orderno" + (myOrder.is_ready ? " ready" : "")}>
+                {myOrder.daily_number}
+              </span>
+            ) : (
+              <span className={"dot" + (myOrder.is_ready ? " ready" : "")} />
+            )}
+            <strong>
+              {myOrder.status === "requested"
+                ? "Заявка принята"
+                : myOrder.status === "paid"
+                  ? "Заказ закрыт"
+                  : myOrder.is_ready
+                    ? "Готово!"
+                    : "Готовится"}
+            </strong>
+          </span>
+          <span className="num">{Number(myOrder.payable).toLocaleString("ru")} ₽</span>
+        </button>
+      )}
+
+      {statusOpen && myOrder && (
+        <Modal
+          variant="sheet"
+          onClose={() => setStatusOpen(false)}
+          head={
+            <div className="between">
+              <strong className="title lg">Ваш заказ</strong>
+              <button className="icon-btn" onClick={() => setStatusOpen(false)} aria-label="Закрыть">
+                <span className="rot-45"><Icon name="plus" size={18} /></span>
+              </button>
+            </div>
+          }
+        >
+          <OrderStatus
+            order={myOrder}
+            token={token}
+            onReload={reloadOrder}
+            onForget={() => { forget(); setStatusOpen(false); }}
+          />
+        </Modal>
+      )}
 
       {/* корзина */}
       {count > 0 && !cartOpen && (

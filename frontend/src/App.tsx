@@ -113,7 +113,9 @@ export default function App() {
             element={<Gated feature="stations" what="Экран бара" need="Зал"><Bar /></Gated>}
           />
         )}
-        {user?.role === "warehouse" && (
+        {/* склад ведёт кладовщик, но владельцу он нужен не меньше:
+            остатки и закуп — его деньги. Бэкенд обоих и так пускает. */}
+        {(user?.role === "warehouse" || user?.role === "admin") && (
           <Route
             path="/warehouse"
             element={<Gated feature="inventory" what="Склад" need="Максимум"><Warehouse /></Gated>}

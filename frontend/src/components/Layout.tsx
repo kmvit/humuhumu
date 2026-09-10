@@ -32,6 +32,7 @@ const NAV: Record<string, { to: string; label: string; icon: IconName }[]> = {
   admin: [
     { to: "/admin", label: "Админ", icon: "chart" },
     { to: "/catalog", label: "Каталог", icon: "coffee" },
+    { to: "/warehouse", label: "Склад", icon: "box" },
     { to: "/shifts", label: "Смены", icon: "user" },
     { to: "/finance", label: "Финансы", icon: "wallet" },
   ],

@@ -7,11 +7,10 @@ import { SceneBanner, WaveRule } from "../../components/Ornaments";
 import Lightbox from "../../components/Lightbox";
 import { useToast } from "../../components/ui/Toast";
 import Stepper from "../../components/ui/Stepper";
-import GuestBonus from "./GuestBonus";
+import OrderStatus from "./OrderStatus";
+import { useTrackedOrder } from "../../orderTrack";
 import { useAppearance, useSite } from "../../site";
 import { initTable } from "../../table";
-
-const TOKEN_KEY = "humu_order_token";
 
 export default function Menu() {
   const [categories, setCategories] = useState<Category[]>([]);
@@ -29,15 +28,8 @@ export default function Menu() {
   const { theme } = useAppearance();
   // Стойка: без столов и официанта, заказ забирают по номеру в окне.
   const counter = useSite()?.service_mode === "counter";
-  // Онлайн-оплата: показываем кнопку, только если заведение её подключило,
-  // иначе гость нажмёт и упрётся в ошибку банка.
-  const canPayOnline = useSite()?.online_payment === true;
-  const [paying, setPaying] = useState(false);
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
-  const [tracked, setTracked] = useState<Order | null>(null);
+  const { token, order: tracked, track, forget, reload: reloadTracked } = useTrackedOrder();
   const [table] = useState<string | null>(initTable);
-  const [cancelling, setCancelling] = useState(false);
-  const [confirmCancel, setConfirmCancel] = useState(false);
 
   // убираем ?table из адреса — значение уже сохранено, чтобы не мозолило глаз
   useEffect(() => {
@@ -56,38 +48,6 @@ export default function Menu() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
-
-  // отслеживание своего заказа по токену (пока он есть в localStorage)
-  useEffect(() => {
-    if (!token) {
-      setTracked(null);
-      return;
-    }
-    let stop = false;
-    const poll = () =>
-      get<Order>(`/orders/track/?token=${token}`)
-        .then((o) => !stop && setTracked(o))
-        .catch((e) => {
-          if (e instanceof ApiError && e.status === 404) {
-            localStorage.removeItem(TOKEN_KEY);
-            if (!stop) { setToken(null); setTracked(null); }
-          }
-        });
-    poll();
-    const t = window.setInterval(poll, 5000);
-    return () => { stop = true; window.clearInterval(t); };
-  }, [token]);
-
-  // Обновить свой заказ сразу после списания бонусов: ждать следующего
-  // опроса (раз в 5 с) — значит показывать гостю прежнюю сумму.
-  async function reloadTracked() {
-    if (!token) return;
-    try {
-      setTracked(await get<Order>(`/orders/track/?token=${token}`));
-    } catch {
-      /* следующий опрос подхватит */
-    }
-  }
 
   const sections = useMemo(() => {
     const all = categories
@@ -137,11 +97,7 @@ export default function Menu() {
         items,
         table: table ?? "",
       });
-      if (order.public_token) {
-        localStorage.setItem(TOKEN_KEY, order.public_token);
-        setToken(order.public_token);
-        setTracked(order);
-      }
+      track(order);
       setCart({});
     } catch (err) {
       notify(err instanceof ApiError ? err.message : "Ошибка", "bad");
@@ -151,133 +107,21 @@ export default function Menu() {
   }
 
   function newOrder() {
-    localStorage.removeItem(TOKEN_KEY);
-    setToken(null);
-    setTracked(null);
+    forget();
     setName("");
     setComment("");
   }
 
-  // клиент отменяет свою заявку, пока официант её не подтвердил
-  async function cancelRequest() {
-    if (!token) return;
-    setCancelling(true);
-    try {
-      await post("/orders/cancel_request/", { token });
-      newOrder();
-    } catch (err) {
-      notify(err instanceof ApiError ? err.message : "Не удалось отменить", "bad");
-    } finally {
-      setCancelling(false);
-      setConfirmCancel(false);
-    }
-  }
-
-  // --- экран статуса своего заказа ---
-  /** Уводим гостя на страницу банка. Заказ пометит оплаченным вебхук,
-   *  поэтому здесь ничего не меняем — вернувшись, гость увидит новый статус. */
-  async function payOnline() {
-    if (!token) return;
-    setPaying(true);
-    try {
-      const { payment_url } = await post<{ payment_url: string }>(
-        "/orders/pay_online/",
-        { token },
-      );
-      window.location.href = payment_url;
-    } catch (e) {
-      notify(e instanceof ApiError ? e.message : "Не удалось начать оплату", "bad");
-      setPaying(false);
-    }
-  }
-
   if (tracked) {
-    const st = tracked.status;
-    const head =
-      st === "requested" ? "Заявка принята"
-      : st === "open" ? (tracked.is_ready ? "Готово!" : "Готовится")
-      : st === "paid" ? "Заказ закрыт"
-      : "Заказ отменён";
-    const note =
-      st === "requested" ? `Подойдите к стойке и назовите имя «${tracked.customer_name}» — официант оформит заказ.`
-      : st === "open"
-        ? tracked.is_ready
-          ? counter ? "Готово — подойдите к окну и назовите свой номер." : "Ваш заказ готов, можно забирать."
-          : counter ? "Готовим. Следите за номером — здесь появится «готово»." : `Заказ готовится${tracked.table ? `, стол ${tracked.table}` : ""}.`
-      : st === "paid" ? "Спасибо, что были у нас!"
-      : "Заказ отменён.";
     return (
       <>
         <h1 className="h1">Ваш заказ</h1>
-        {/* На стойке номер — единственный способ забрать заказ, поэтому крупно. */}
-        {counter && tracked.daily_number != null && st !== "cancelled" && (
-          <div className="pickup-no mt-4">
-            <span className="muted">Ваш номер</span>
-            <strong>{tracked.daily_number}</strong>
-          </div>
-        )}
-        <div className="card enter mt-4">
-          <div className="between">
-            <strong className="title lg">{head}</strong>
-            {st !== "requested" && (
-              <span className={"badge " + (tracked.is_ready ? "ready" : st === "open" ? "preparing" : st === "paid" ? "paid" : "cancelled")}>
-                {tracked.status_display}
-              </span>
-            )}
-          </div>
-          <p className="muted mt-2">{note}</p>
-          <ul className="stack tight list mt-4">
-            {tracked.items.map((it) => (
-              <li key={it.id} className="between">
-                <span>{it.product_name}</span>
-                <span className="num muted">× {it.quantity}</span>
-              </li>
-            ))}
-          </ul>
-          <div className="between rule-top mt-3">
-            <strong>Итого</strong>
-            <strong className="num">{Number(tracked.total).toLocaleString("ru")} ₽</strong>
-          </div>
-          {Number(tracked.bonus_spent) > 0 && (
-            <>
-              <div className="between mt-2">
-                <span className="muted">Бонусами</span>
-                <span className="num">−{Number(tracked.bonus_spent).toLocaleString("ru")} ₽</span>
-              </div>
-              <div className="between mt-2">
-                <strong>К оплате</strong>
-                <strong className="num">{Number(tracked.payable).toLocaleString("ru")} ₽</strong>
-              </div>
-            </>
-          )}
-        </div>
-
-        <GuestBonus order={tracked} onDone={reloadTracked} />
-        {canPayOnline && st !== "paid" && st !== "cancelled" && (
-          <button className="btn block mt-4" disabled={paying} onClick={payOnline}>
-            <Icon name="card" size={18} /> Оплатить картой ·{" "}
-            {Number(tracked.payable).toLocaleString("ru")} ₽
-          </button>
-        )}
-        {st === "requested" ? (
-          confirmCancel ? (
-            <div className="wrap mt-4" style={{ justifyContent: "center" }}>
-              <span className="muted" style={{ alignSelf: "center" }}>Точно отменить заказ?</span>
-              <button className="btn sm danger" disabled={cancelling} onClick={cancelRequest}>
-                <Icon name="check" size={16} /> Да, отменить
-              </button>
-              <button className="btn sm ghost" onClick={() => setConfirmCancel(false)}>Нет</button>
-            </div>
-          ) : (
-            <button className="btn ghost block mt-4" onClick={() => setConfirmCancel(true)}>
-              <Icon name="minus" size={18} /> Отменить заказ
-            </button>
-          )
-        ) : (
-          <button className="btn ghost block mt-4" onClick={newOrder}>
-            <Icon name="plus" size={18} /> Новый заказ
-          </button>
-        )}
+        <OrderStatus
+          order={tracked}
+          token={token}
+          onReload={reloadTracked}
+          onForget={newOrder}
+        />
       </>
     );
   }
