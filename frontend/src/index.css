@@ -286,7 +286,7 @@ h1, h2, h3 { font-family: var(--font-display); color: var(--fg); margin: 0; font
 .title { font-family: var(--font-display); font-weight: 500; font-size: 17px; letter-spacing: 0.01em; }
 .title.lg { font-size: 20px; }
 /* крупное число в плитке статистики */
-.stat-value { font-family: var(--font-display); font-weight: 600; font-size: 28px; color: var(--brand); font-variant-numeric: tabular-nums; }
+.stat-value { font-family: var(--font-display); font-weight: 600; font-size: clamp(20px, 2.4vw + 6px, 28px); line-height: 1.15; color: var(--brand); font-variant-numeric: tabular-nums; min-width: 0; overflow-wrap: anywhere; }
 
 /* мелкая разрядка заглавными — как «мл руб» в печатном меню */
 .script {
@@ -552,7 +552,8 @@ h1, h2, h3 { font-family: var(--font-display); color: var(--fg); margin: 0; font
 }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 14px; }
-.grid.stats { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.grid.stats { grid-template-columns: repeat(auto-fit, minmax(178px, 1fr)); }
+.grid.stats > * { min-width: 0; }
 .grid.cards { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
 .grid.tiles { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
 .grid.cols-2 { grid-template-columns: 1fr 1fr; gap: 10px; }

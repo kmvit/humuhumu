@@ -119,11 +119,15 @@ export default function Admin() {
   }, [orders]);
   const active = orders.filter((o) => o.status === "open").length;
 
+  // Копейки в сводке не нужны и только удлиняют семизначные суммы: сложение
+  // Number(total) вдобавок даёт хвост вроде 2 901 160,0000001.
+  const money = (v: number) => Math.round(v).toLocaleString("ru");
+
   const stats = [
     { icon: "receipt", label: "Всего заказов", value: orders.length },
-    { icon: "chart", label: "Оборот (без отмен)", value: revenue.toLocaleString("ru") },
-    { icon: "cash", label: "Наличными", value: cash.toLocaleString("ru") },
-    { icon: "card", label: "Картой", value: card.toLocaleString("ru") },
+    { icon: "chart", label: "Оборот (без отмен)", value: money(revenue) },
+    { icon: "cash", label: "Наличными", value: money(cash) },
+    { icon: "card", label: "Картой", value: money(card) },
     { icon: "store", label: "В работе", value: active },
   ] as const;
 
