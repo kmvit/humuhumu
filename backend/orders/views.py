@@ -160,11 +160,39 @@ class OrderViewSet(viewsets.ModelViewSet):
                 comment=serializer.validated_data.get("comment", ""),
                 # заказ вошедшего гостя закрепляем за ним: по нему пойдут
                 # бонусы, а без владельца заказ считается ничьим
-                client=request.user if request.user.is_authenticated else None,
+                client=self._order_client(request, serializer.validated_data),
             )
         except OrderError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
+
+    @staticmethod
+    def _order_client(request, data):
+        """Кому принадлежит заказ по QR — от этого зависит начисление бонусов.
+
+        Вошедший гость — это он сам. Остальные могут оставить телефон: по нему
+        заказ привязывается к участнику программы, а незнакомый номер сразу
+        заводится в неё (так решили: иначе гость оставил бы телефон и всё
+        равно ничего не получил). Программа выключена — телефон игнорируем.
+        """
+        if request.user.is_authenticated:
+            return request.user
+        phone = (data.get("phone") or "").strip()
+        if not phone:
+            return None
+
+        from core.models import SiteSettings
+        from core.plans import features
+        from loyalty.services import LoyaltyError, enroll_by_phone
+
+        if not SiteSettings.load().bonus_enabled or "loyalty" not in features():
+            return None
+        try:
+            member = enroll_by_phone(phone, data.get("customer_name", ""))
+        except LoyaltyError:
+            # программу выключили между проверкой и записью — заказ не роняем
+            return None
+        return member.user
 
     @action(detail=False, methods=["get"])
     def track(self, request):

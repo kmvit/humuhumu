@@ -352,6 +352,65 @@ class CancelTests(LoyaltyBase):
         self.assertEqual(order.bonus_spent, Decimal("0"))
 
 
+class GuestPhoneOnOrderTests(LoyaltyBase):
+    """Телефон в заказе по QR — единственный способ начислить бонусы гостю,
+    который не входил в приложение. Поле необязательное."""
+
+    def place(self, **extra):
+        return self.client.post(
+            "/api/orders/place/",
+            {"customer_name": "Олег", "table": "5",
+             "items": [{"product": self.latte.id, "quantity": 5}], **extra},
+            format="json",
+        )
+
+    def test_phone_enrolls_new_guest_and_links_order(self):
+        res = self.place(phone="8 999 777-00-11")
+        self.assertEqual(res.status_code, 201)
+        member = LoyaltyMember.objects.get(user__phone="+79997770011")
+        self.assertEqual(member.balance, Decimal("200"))  # приветственные
+        self.assertEqual(member.name, "Олег")
+        self.assertEqual(Order.objects.get(pk=res.data["id"]).client_id, member.user_id)
+
+    def test_known_phone_links_without_second_welcome(self):
+        member = self.guest(phone="+79997770011", name="Олег")
+        self.place(phone="+7 999 777-00-11")
+        member.refresh_from_db()
+        self.assertEqual(member.balance, Decimal("200"))
+        self.assertEqual(LoyaltyMember.objects.count(), 1)
+
+    def test_order_without_phone_still_works(self):
+        res = self.place()
+        self.assertEqual(res.status_code, 201)
+        self.assertIsNone(Order.objects.get(pk=res.data["id"]).client_id)
+        self.assertFalse(LoyaltyMember.objects.exists())
+
+    def test_typo_in_phone_is_reported_not_swallowed(self):
+        res = self.place(phone="12")
+        self.assertEqual(res.status_code, 400)
+        self.assertFalse(Order.objects.exists())
+
+    def test_phone_ignored_when_program_off(self):
+        site = SiteSettings.load()
+        site.bonus_enabled = False
+        site.save()
+        res = self.place(phone="89997770011")
+        self.assertEqual(res.status_code, 201)
+        self.assertIsNone(Order.objects.get(pk=res.data["id"]).client_id)
+        self.assertFalse(LoyaltyMember.objects.exists())
+
+    def test_bonuses_accrue_for_that_order_after_payment(self):
+        """Ради этого всё и затевалось: гость по QR наконец что-то копит."""
+        res = self.place(phone="89997770011")
+        order = Order.objects.get(pk=res.data["id"])  # 5 × 240 = 1200 ₽
+        order.status = Order.Status.OPEN
+        order.save(update_fields=["status"])
+        self.auth(self.waiter)
+        self.client.post(f"/api/orders/{order.id}/close/", {"pay_method": "cash"}, format="json")
+        member = LoyaltyMember.objects.get(user__phone="+79997770011")
+        self.assertEqual(member.balance, Decimal("260"))  # 200 + 5% от 1200
+
+
 class FinanceTests(LoyaltyBase):
     """Бонусы — скидка за счёт заведения, а не полученные деньги."""
 

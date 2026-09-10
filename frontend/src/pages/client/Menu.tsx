@@ -9,7 +9,7 @@ import { useToast } from "../../components/ui/Toast";
 import Stepper from "../../components/ui/Stepper";
 import OrderStatus from "./OrderStatus";
 import { useTrackedOrder } from "../../orderTrack";
-import { useAppearance, useSite } from "../../site";
+import { useAppearance, useSite, useFeature } from "../../site";
 import { initTable } from "../../table";
 
 export default function Menu() {
@@ -21,13 +21,21 @@ export default function Menu() {
 
   const [cart, setCart] = useState<Record<number, number>>({});
   const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   const notify = useToast();
   const { theme } = useAppearance();
   // Стойка: без столов и официанта, заказ забирают по номеру в окне.
-  const counter = useSite()?.service_mode === "counter";
+  const site = useSite();
+  const counter = site?.service_mode === "counter";
+  // Телефон в форме заказа нужен только бонусной программе: по нему заказ
+  // привяжется к гостю и ему будет что начислить.
+  const bonusOn = useFeature("loyalty") && !!site?.bonus_enabled;
+  const welcome = site?.bonus_welcome ?? 0;
+  const bonusPercent = Number(site?.bonus_earn_percent ?? 0);
+
   const { token, order: tracked, track, forget, reload: reloadTracked } = useTrackedOrder();
   const [table] = useState<string | null>(initTable);
 
@@ -96,6 +104,7 @@ export default function Menu() {
         comment: comment.trim(),
         items,
         table: table ?? "",
+        ...(bonusOn && phone.trim() ? { phone: phone.trim() } : {}),
       });
       track(order);
       setCart({});
@@ -278,6 +287,24 @@ export default function Menu() {
               maxLength={120}
             />
           </label>
+          {bonusOn && (
+            <label className="field mt-3">
+              <span className="label">Телефон — для бонусов</span>
+              <input
+                className="input"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="+7 999 000-00-00"
+                inputMode="tel"
+                autoComplete="tel"
+                maxLength={20}
+              />
+              <span className="muted sm">
+                Необязательно. Начислим {bonusPercent}% с заказа
+                {welcome > 0 ? `, а за первый визит ещё ${welcome} бонусов` : ""}.
+              </span>
+            </label>
+          )}
           <label className="field mt-3">
             <span className="label">Комментарий к заказу</span>
             <input

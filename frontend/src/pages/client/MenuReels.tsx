@@ -6,6 +6,7 @@ import Icon, { categoryIcon, type IconName } from "../../components/Icon";
 import Modal from "../../components/ui/Modal";
 import { useToast } from "../../components/ui/Toast";
 import { initTable } from "../../table";
+import { useSite, useFeature } from "../../site";
 import { useTrackedOrder } from "../../orderTrack";
 import OrderStatus from "./OrderStatus";
 
@@ -32,6 +33,7 @@ export default function MenuReels() {
   const [cart, setCart] = useState<Record<number, number>>({});
   const [cartOpen, setCartOpen] = useState(false);
   const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const notify = useToast();
   const [activeIdx, setActiveIdx] = useState(0);
@@ -42,6 +44,13 @@ export default function MenuReels() {
     () => new Set(JSON.parse(localStorage.getItem(LIKES_KEY) || "[]"))
   );
   const [device] = useState(initDevice);
+  const site = useSite();
+  // Телефон в форме заказа нужен только бонусной программе: по нему заказ
+  // привяжется к гостю и ему будет что начислить.
+  const bonusOn = useFeature("loyalty") && !!site?.bonus_enabled;
+  const welcome = site?.bonus_welcome ?? 0;
+  const bonusPercent = Number(site?.bonus_earn_percent ?? 0);
+
   // Свой заказ гостя. В ленте это главный экран после отправки: гость
   // смотрит статус, а на стойке ещё и забирает по номеру.
   const { token, order: myOrder, track, forget, reload: reloadOrder } = useTrackedOrder();
@@ -168,11 +177,13 @@ export default function MenuReels() {
         customer_name: name.trim(),
         items,
         table: table ?? "",
+        ...(bonusOn && phone.trim() ? { phone: phone.trim() } : {}),
       });
       track(order);
       setCart({});
       setCartOpen(false);
       setName("");
+      setPhone("");
       setStatusOpen(true); // сразу показываем статус, а не только тост
     } catch (err) {
       notify(err instanceof ApiError ? err.message : "Ошибка", "bad");
@@ -404,6 +415,24 @@ export default function MenuReels() {
                 maxLength={120}
               />
             </label>
+            {bonusOn && (
+              <label className="field mt-3">
+                <span className="label">Телефон — для бонусов</span>
+                <input
+                  className="input"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="+7 999 000-00-00"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  maxLength={20}
+                />
+                <span className="muted sm">
+                  Необязательно. Начислим {bonusPercent}% с заказа
+                  {welcome > 0 ? `, а за первый визит ещё ${welcome} бонусов` : ""}.
+                </span>
+              </label>
+            )}
             <div className="between mt-4">
               <strong className="num" style={{ fontSize: 20 }}>{total.toLocaleString("ru")} ₽</strong>
               <button className="btn" onClick={submit} disabled={submitting}>

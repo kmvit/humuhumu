@@ -103,4 +103,17 @@ class ClientOrderSerializer(serializers.Serializer):
     customer_name = serializers.CharField(max_length=120, required=False, allow_blank=True)
     comment = serializers.CharField(max_length=300, required=False, allow_blank=True)
     table = serializers.CharField(max_length=32, required=False, allow_blank=True)
+    # Телефон нужен только бонусной программе: по нему заказ привязывается к
+    # гостю, иначе начислять некому. Поле необязательное — гость, которому
+    # бонусы не нужны, не должен упираться в него по дороге к заказу.
+    phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
     items = OrderItemCreateSerializer(many=True)
+
+    def validate_phone(self, value):
+        # Пустое поле пропускаем, а введённое проверяем: молча потерять
+        # телефон из-за опечатки хуже, чем сказать про неё сразу.
+        if not (value or "").strip():
+            return ""
+        from loyalty.serializers import normalize_phone
+
+        return normalize_phone(value)

@@ -2,8 +2,6 @@ import re
 
 from rest_framework import serializers
 
-from users.models import User
-
 from .models import BonusTransaction, LoyaltyMember
 
 
@@ -51,22 +49,10 @@ class EnrollSerializer(serializers.Serializer):
         return normalize_phone(value)
 
     def create(self, validated_data):
-        """Гость мог уже быть в базе (заказывал раньше) — тогда не плодим
-        второго пользователя, а дописываем имя и заводим участника."""
-        from .services import enroll
+        from .services import enroll_by_phone
 
-        phone = validated_data["phone"]
-        user = User.objects.filter(phone=phone).first()
-        if user is None:
-            user = User(
-                username=phone,
-                phone=phone,
-                first_name=validated_data["name"].strip(),
-                role=User.Role.CLIENT,
-            )
-            user.set_unusable_password()
-            user.save()
-        elif not user.first_name:
-            user.first_name = validated_data["name"].strip()
-            user.save(update_fields=["first_name"])
-        return enroll(user, validated_data.get("birth_date"))
+        return enroll_by_phone(
+            validated_data["phone"],
+            validated_data["name"],
+            validated_data.get("birth_date"),
+        )

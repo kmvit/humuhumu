@@ -64,6 +64,32 @@ def enroll(user, birth_date=None) -> LoyaltyMember:
 
 
 @transaction.atomic
+def enroll_by_phone(phone: str, name: str = "", birth_date=None) -> LoyaltyMember:
+    """Записать в программу по телефону: найти гостя или завести нового.
+
+    Телефон — ключ программы: гость мог заказывать раньше и уже быть в базе,
+    тогда второго пользователя не плодим. Нужен и на кассе, и в форме заказа,
+    поэтому живёт здесь, а не в сериализаторе регистрации.
+    """
+    from users.models import User
+
+    user = User.objects.filter(phone=phone).first()
+    if user is None:
+        user = User(
+            username=phone,
+            phone=phone,
+            first_name=(name or "").strip(),
+            role=User.Role.CLIENT,
+        )
+        user.set_unusable_password()  # пароль выдаём отдельно, при рассылке
+        user.save()
+    elif not user.first_name and (name or "").strip():
+        user.first_name = name.strip()
+        user.save(update_fields=["first_name"])
+    return enroll(user, birth_date)
+
+
+@transaction.atomic
 def redeem(member_id: int, amount: Decimal, order) -> BonusTransaction:
     """Списать бонусы в счёт заказа.
 

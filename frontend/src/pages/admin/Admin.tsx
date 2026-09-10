@@ -7,28 +7,23 @@ import { useToast } from "../../components/ui/Toast";
 import Staff from "./Staff";
 import Bonuses from "./Bonuses";
 import OnlinePayment from "./OnlinePayment";
+import Subscription from "./Subscription";
 
 // Темы продукта: ключи совпадают с SiteSettings.Theme на бэкенде.
 // Формат обслуживания: зал со столами или стойка с выдачей по номеру.
-const MODES: {
-  key: "hall" | "counter";
-  name: string;
-  note: string;
-  icon: IconName;
-}[] = [
-  {
-    key: "hall",
+// Владельцу только показываем — переключение живёт в Django-админке.
+const MODES: Record<"hall" | "counter", { name: string; note: string; icon: IconName }> = {
+  hall: {
     name: "Зал с официантами",
     note: "Гость за столом, официант принимает и подаёт",
     icon: "store",
   },
-  {
-    key: "counter",
+  counter: {
     name: "Стойка и окно",
     note: "Заказ по QR, выдача по номеру, без столов",
     icon: "receipt",
   },
-];
+};
 
 const THEMES: { key: AppTheme; name: string; accent: string }[] = [
   { key: "neutral", name: "Нейтраль", accent: "#3557c7" },
@@ -45,12 +40,11 @@ export default function Admin() {
   const [orders, setOrders] = useState<Order[]>([]);
   const { theme, accent, set } = useAppearance();
   const site = useSite();
-  const [mode, setMode] = useState<"hall" | "counter" | null>(null);
   const [dark, setDark] = useState<boolean | null>(null);
   const [savingMode, setSavingMode] = useState(false);
   // Локальное состояние перекрывает контекст: он загружается один раз при
   // старте и после сохранения показывал бы старое значение.
-  const serviceMode = mode ?? site?.service_mode ?? "hall";
+  const serviceMode = site?.service_mode ?? "hall";
   const darkDefault = dark ?? site?.dark_by_default ?? false;
   const notify = useToast();
   const [savingLook, setSavingLook] = useState(false);
@@ -58,24 +52,6 @@ export default function Admin() {
   useEffect(() => {
     get<Order[]>("/orders/").then(setOrders).catch(() => {});
   }, []);
-
-  // Применяем сразу (живой предпросмотр), сохраняем на сервере; при ошибке откатываем.
-  async function saveMode(next: "hall" | "counter") {
-    if (next === serviceMode) return;
-    setSavingMode(true);
-    try {
-      await patch("/site/", { service_mode: next });
-      setMode(next);
-      notify(
-        next === "counter" ? "Формат: стойка и окно" : "Формат: зал с официантами",
-        "ok"
-      );
-    } catch (e) {
-      notify(e instanceof ApiError ? e.message : "Не удалось сохранить", "bad");
-    } finally {
-      setSavingMode(false);
-    }
-  }
 
   /** Каким режимом встречать гостя, пока он сам не переключил. */
   async function saveDark(value: boolean) {
@@ -147,25 +123,28 @@ export default function Admin() {
         ))}
       </div>
 
+      <Subscription />
+
       <h2 className="section-title">Формат работы</h2>
       <div className="card">
-        <p className="muted m-0">
-          Как гости получают заказ. Меняется сразу — и у гостей, и у сотрудников.
-        </p>
-        <div className="grid cols-2 mt-3">
-          {MODES.map((m) => (
-            <button
-              key={m.key}
-              className={"card mode-tile" + (serviceMode === m.key ? " active" : " hover")}
-              disabled={savingMode}
-              onClick={() => saveMode(m.key)}
-            >
-              <Icon name={m.icon} size={26} />
-              <strong>{m.name}</strong>
-              <span className="muted">{m.note}</span>
-            </button>
-          ))}
+        <div className="between">
+          <div className="inline">
+            <span className="tx-icon">
+              <Icon name={MODES[serviceMode].icon} size={18} />
+            </span>
+            <div>
+              <strong className="title">{MODES[serviceMode].name}</strong>
+              <p className="muted subtitle m-0">{MODES[serviceMode].note}</p>
+            </div>
+          </div>
         </div>
+        {/* Переключение убрано намеренно: смена формата разом меняет экраны
+            всем — официанту, кухне, гостю. Это настройка запуска, а не
+            кнопка на каждый день; меняется при подключении заведения. */}
+        <p className="muted sm mt-3 m-0">
+          Формат выбирается при подключении заведения. Чтобы сменить —
+          напишите в поддержку «Падачи».
+        </p>
       </div>
 
       <h2 className="section-title">Внешний вид</h2>
