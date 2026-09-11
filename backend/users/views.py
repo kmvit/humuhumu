@@ -7,7 +7,6 @@ from .serializers import MeSerializer, RegisterSerializer
 class RegisterView(generics.CreateAPIView):
     """POST /api/auth/register/ — регистрация клиента (доступно без авторизации)."""
 
-    queryset = User.objects.all()
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]
 

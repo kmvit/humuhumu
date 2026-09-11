@@ -92,7 +92,11 @@ class PayrollViewSet(ViewSet):
 class ExpenseCategoryViewSet(viewsets.ModelViewSet):
     """Справочник статей расходов заведения."""
 
-    queryset = ExpenseCategory.objects.all()
+    def get_queryset(self):
+        # get_queryset, а не queryset на классе: запрос с фильтром по
+        # заведению вычислился бы один раз при импорте и обслуживал бы
+        # всех тенантов данными первого. См. core/tenancy.py.
+        return ExpenseCategory.objects.all()
     serializer_class = ExpenseCategorySerializer
     permission_classes = [IsWarehouseOrAdmin, RequiresFinance]
     pagination_class = None

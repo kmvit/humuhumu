@@ -15,11 +15,13 @@ Middleware, а не permission на каждой вьюхе: «заблокир�
 """
 import re
 
+from django.contrib import messages
 from django.http import JsonResponse
+from django.shortcuts import redirect
 
 from .license import BLOCKED, effective_status
 from .models import Organization
-from .tenancy import set_current_organization
+from .tenancy import NoOrganizationSelected, set_current_organization
 
 _OPEN_ALWAYS = (
     "/api/site/",
@@ -77,9 +79,15 @@ class TenantMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
 
+    #: Админка — инструмент поддержки «Падачи», а не заведения. Она обязана
+    #: открываться и по служебному адресу сервера, где никакого заведения
+    #: нет: иначе, сменив домен клиенту, в неё было бы не попасть.
+    ADMIN_PREFIX = "/admin/"
+
     def __call__(self, request):
         host = Organization.normalize_host(request.get_host())
         org = Organization.objects.filter(domain=host).first()
+        is_admin = request.path.startswith(self.ADMIN_PREFIX)
 
         if org is None:
             # Домен никому не назначен. На отдельной установке это норма —
@@ -87,12 +95,32 @@ class TenantMiddleware:
             only = Organization.objects.order_by("pk")[:2]
             if len(only) == 1:
                 org = only[0]
-            else:
+            elif not is_admin:
                 return JsonResponse(
                     {"detail": "Заведение по этому адресу не найдено.",
                      "code": "unknown_tenant"},
                     status=404,
                 )
+
+        # Поддержка «Падачи»: суперпользователь может открыть админку от
+        # имени любого заведения, не заходя на его домен (действие
+        # «Работать от имени» в списке заведений). Только суперпользователь
+        # и только для админки: ни API клиента, ни гостевые страницы так
+        # подменить нельзя.
+        override = request.session.get("tenant_override") if hasattr(request, "session") else None
+        if (
+            override
+            and request.path.startswith("/admin/")
+            and getattr(request.user, "is_superuser", False)
+        ):
+            chosen = Organization.objects.filter(pk=override).first()
+            if chosen is not None:
+                org = chosen
+
+        if org is None:
+            # Админка по служебному адресу: заведение ещё не выбрано.
+            # Список заведений откроется, остальные разделы попросят выбрать.
+            return self._admin_without_tenant(request)
 
         if not org.is_active:
             return JsonResponse(
@@ -102,4 +130,22 @@ class TenantMiddleware:
 
         set_current_organization(org)
         request.organization = org
+        if is_admin:
+            return self._admin_without_tenant(request)
         return self.get_response(request)
+
+    def _admin_without_tenant(self, request):
+        """Пройти запрос админки, мягко обработав «заведение не выбрано».
+
+        Раздел, которому нужно заведение, без выбора падал бы пятисоткой.
+        Вместо этого возвращаем на список заведений с понятной подсказкой.
+        """
+        try:
+            return self.get_response(request)
+        except NoOrganizationSelected:
+            messages.warning(
+                request,
+                "Сначала выберите заведение: отметьте его и примените "
+                "действие «Работать от имени».",
+            )
+            return redirect("admin:core_organization_changelist")

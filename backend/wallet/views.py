@@ -40,7 +40,11 @@ class MyTransactionsView(generics.ListAPIView):
 class TokenPackageViewSet(viewsets.ReadOnlyModelViewSet):
     """GET /api/token-packages/ — активные пакеты токенов."""
 
-    queryset = TokenPackage.objects.filter(is_active=True)
+    def get_queryset(self):
+        # get_queryset, а не queryset на классе: запрос с фильтром по
+        # заведению вычислился бы один раз при импорте и обслуживал бы
+        # всех тенантов данными первого. См. core/tenancy.py.
+        return TokenPackage.objects.filter(is_active=True)
     serializer_class = TokenPackageSerializer
     permission_classes = [IsAuthenticated]
 

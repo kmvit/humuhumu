@@ -1,6 +1,7 @@
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.utils.html import format_html
 
-from .models import LicenseState, SiteSettings
+from .models import LicenseState, Organization, SiteSettings
 
 
 @admin.register(SiteSettings)
@@ -123,3 +124,80 @@ class LicenseStateAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+@admin.register(Organization)
+class OrganizationAdmin(admin.ModelAdmin):
+    """Главная страница «Падачи»: все заведения установки.
+
+    Здесь владелец продукта видит парк целиком и может открыть любое
+    заведение — кнопка «Работать от имени» подменяет текущее заведение
+    для всей админки, не требуя заходить на его домен.
+    """
+
+    list_display = (
+        "name",
+        "domain",
+        "is_active",
+        "current_badge",
+        "orders_count",
+        "last_order",
+        "created_at",
+    )
+    list_filter = ("is_active",)
+    search_fields = ("name", "domain", "slug")
+    prepopulated_fields = {"slug": ("name",)}
+    actions = ["switch_to"]
+    fieldsets = (
+        (None, {"fields": ("name", "slug", "domain", "is_active")}),
+        (
+            "Подписка",
+            {
+                "fields": ("license_key",),
+                "description": (
+                    "Ключ из пульта padacha.ru/pult/. Пусто — заведение не "
+                    "биллится (своя точка или отдельная установка)."
+                ),
+            },
+        ),
+    )
+
+    # Считаем прямыми запросами, а не annotate: у тенантной связи нет
+    # обратного имени (related_name="+"), да и заведений десятки — на
+    # списке это незаметно.
+    @admin.display(description="Заказов")
+    def orders_count(self, obj):
+        from orders.models import Order
+
+        return Order.all_objects.filter(organization=obj).count()
+
+    @admin.display(description="Последний заказ")
+    def last_order(self, obj):
+        from orders.models import Order
+
+        last = (
+            Order.all_objects.filter(organization=obj)
+            .order_by("-created_at")
+            .values_list("created_at", flat=True)
+            .first()
+        )
+        return last.strftime("%d.%m.%Y %H:%M") if last else "—"
+
+    @admin.display(description="Открыто")
+    def current_badge(self, obj):
+        from .tenancy import current_organization
+
+        if current_organization() == obj:
+            return format_html('<b style="color:#1a7f37">сейчас здесь</b>')
+        return ""
+
+    @admin.action(description="Работать от имени этого заведения")
+    def switch_to(self, request, queryset):
+        if queryset.count() != 1:
+            self.message_user(
+                request, "Выберите ровно одно заведение", level=messages.WARNING
+            )
+            return
+        org = queryset.first()
+        request.session["tenant_override"] = org.pk
+        self.message_user(request, f"Админка открыта от имени «{org.name}»")

@@ -104,7 +104,11 @@ class ReceiptSerializer(serializers.ModelSerializer):
 
 
 class ReceiptItemCreateSerializer(serializers.Serializer):
-    item = serializers.PrimaryKeyRelatedField(queryset=StockItem.objects.all())
+    # Менеджер, а не .all(): DRF вызовет его на каждый запрос, и выбор
+    # ограничится складом своего заведения. С .all() фильтр по
+    # заведению застыл бы при импорте — одно кафе смогло бы сослаться
+    # на позицию склада другого.
+    item = serializers.PrimaryKeyRelatedField(queryset=StockItem.objects)
     quantity = serializers.DecimalField(max_digits=12, decimal_places=3, min_value=Decimal("0.001"))
     unit_cost = serializers.DecimalField(
         max_digits=10, decimal_places=2, required=False, allow_null=True, min_value=Decimal("0")
@@ -242,7 +246,11 @@ class RecipeSerializer(serializers.Serializer):
 
 
 class RecipeLineWriteSerializer(serializers.Serializer):
-    item = serializers.PrimaryKeyRelatedField(queryset=StockItem.objects.all())
+    # Менеджер, а не .all(): DRF вызовет его на каждый запрос, и выбор
+    # ограничится складом своего заведения. С .all() фильтр по
+    # заведению застыл бы при импорте — одно кафе смогло бы сослаться
+    # на позицию склада другого.
+    item = serializers.PrimaryKeyRelatedField(queryset=StockItem.objects)
     quantity = serializers.DecimalField(
         max_digits=12, decimal_places=3, min_value=Decimal("0.001")
     )

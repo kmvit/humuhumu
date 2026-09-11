@@ -38,7 +38,11 @@ class TableViewSet(viewsets.ReadOnlyModelViewSet):
 
     serializer_class = TableSerializer
     permission_classes = [IsAuthenticated]
-    queryset = Table.objects.filter(is_active=True)
+    def get_queryset(self):
+        # get_queryset, а не queryset на классе: запрос с фильтром по
+        # заведению вычислился бы один раз при импорте и обслуживал бы
+        # всех тенантов данными первого. См. core/tenancy.py.
+        return Table.objects.filter(is_active=True)
 
 STATION_TIMES = {
     Category.Station.KITCHEN: ("food_started_at", "food_ready_at"),

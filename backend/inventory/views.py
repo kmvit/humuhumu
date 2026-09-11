@@ -46,7 +46,11 @@ from .tasks import process_receipt_scan
 class StockCategoryViewSet(viewsets.ModelViewSet):
     """Категории склада (назначение). Заводит кладовщик/админ прямо в интерфейсе."""
 
-    queryset = StockCategory.objects.all()
+    def get_queryset(self):
+        # get_queryset, а не queryset на классе: запрос с фильтром по
+        # заведению вычислился бы один раз при импорте и обслуживал бы
+        # всех тенантов данными первого. См. core/tenancy.py.
+        return StockCategory.objects.all()
     serializer_class = StockCategorySerializer
     permission_classes = [IsWarehouseOrAdmin, RequiresInventory]
 
@@ -54,7 +58,11 @@ class StockCategoryViewSet(viewsets.ModelViewSet):
 class StockItemViewSet(viewsets.ModelViewSet):
     """Товары склада и их текущие остатки."""
 
-    queryset = StockItem.objects.select_related("category").prefetch_related("aliases")
+    def get_queryset(self):
+        # get_queryset, а не queryset на классе: запрос с фильтром по
+        # заведению вычислился бы один раз при импорте и обслуживал бы
+        # всех тенантов данными первого. См. core/tenancy.py.
+        return StockItem.objects.select_related("category").prefetch_related("aliases")
     serializer_class = StockItemSerializer
     permission_classes = [IsWarehouseOrAdmin, RequiresInventory]
 
@@ -113,9 +121,13 @@ class StockItemViewSet(viewsets.ModelViewSet):
 class ReceiptViewSet(viewsets.ModelViewSet):
     """Приходы: список и оприходование (увеличивает остатки)."""
 
-    queryset = Receipt.objects.prefetch_related("items__item").select_related(
-        "received_by"
-    )
+    def get_queryset(self):
+        # get_queryset, а не queryset на классе: запрос с фильтром по
+        # заведению вычислился бы один раз при импорте и обслуживал бы
+        # всех тенантов данными первого. См. core/tenancy.py.
+        return Receipt.objects.prefetch_related("items__item").select_related(
+            "received_by"
+        )
     permission_classes = [IsWarehouseOrAdmin, RequiresInventory]
     http_method_names = ["get", "post", "delete", "head", "options"]
 
@@ -141,7 +153,11 @@ class ReceiptScanViewSet(viewsets.ModelViewSet):
     action `confirm` — там уже переиспользуется штатный ReceiptCreateSerializer.
     """
 
-    queryset = ReceiptScan.objects.select_related("created_by", "receipt")
+    def get_queryset(self):
+        # get_queryset, а не queryset на классе: запрос с фильтром по
+        # заведению вычислился бы один раз при импорте и обслуживал бы
+        # всех тенантов данными первого. См. core/tenancy.py.
+        return ReceiptScan.objects.select_related("created_by", "receipt")
     serializer_class = ReceiptScanSerializer
     permission_classes = [IsWarehouseOrAdmin, RequiresInventory]
     http_method_names = ["get", "post", "delete", "head", "options"]
@@ -183,7 +199,11 @@ class ReceiptScanViewSet(viewsets.ModelViewSet):
 class StockItemAliasViewSet(viewsets.ModelViewSet):
     """Варианты товара: как его называют при закупке и в чеках."""
 
-    queryset = StockItemAlias.objects.select_related("item")
+    def get_queryset(self):
+        # get_queryset, а не queryset на классе: запрос с фильтром по
+        # заведению вычислился бы один раз при импорте и обслуживал бы
+        # всех тенантов данными первого. См. core/tenancy.py.
+        return StockItemAlias.objects.select_related("item")
     serializer_class = StockItemAliasSerializer
     permission_classes = [IsWarehouseOrAdmin, RequiresInventory]
 
@@ -268,9 +288,11 @@ class RecipeViewSet(viewsets.ViewSet):
 class PurchaseViewSet(viewsets.ReadOnlyModelViewSet):
     """Закуп по дням: список формируется сам и правится руками."""
 
-    queryset = PurchaseList.objects.prefetch_related(
-        "lines__item__category"
-    )
+    def get_queryset(self):
+        # get_queryset, а не queryset на классе: запрос с фильтром по
+        # заведению вычислился бы один раз при импорте и обслуживал бы
+        # всех тенантов данными первого. См. core/tenancy.py.
+        return PurchaseList.objects.prefetch_related("lines__item__category")
     serializer_class = PurchaseListSerializer
     permission_classes = [IsWarehouseOrAdmin, RequiresInventory]
 
@@ -300,7 +322,11 @@ class PurchaseViewSet(viewsets.ReadOnlyModelViewSet):
 class PurchaseLineViewSet(viewsets.ModelViewSet):
     """Строки закупа: добавить своё, поправить количество, отметить купленным."""
 
-    queryset = PurchaseLine.objects.select_related("item__category", "purchase")
+    def get_queryset(self):
+        # get_queryset, а не queryset на классе: запрос с фильтром по
+        # заведению вычислился бы один раз при импорте и обслуживал бы
+        # всех тенантов данными первого. См. core/tenancy.py.
+        return PurchaseLine.objects.select_related("item__category", "purchase")
     serializer_class = PurchaseLineSerializer
     permission_classes = [IsWarehouseOrAdmin, RequiresInventory]
 
