@@ -389,3 +389,139 @@ class GuestSideIsolationTests(TestCase):
             "/api/orders/track/", {"token": str(token)}, HTTP_HOST=self.HOST_A
         )
         self.assertIn(res.status_code, (400, 403, 404), "открылся чужой заказ")
+
+
+@override_settings(ALLOWED_HOSTS=["*"])
+class BoardsIsolationTests(TestCase):
+    """Боевые доски: официант, кухня, бар, стойка.
+
+    Здесь ошибка стоит дороже всего: повар видит доску весь день и
+    действует по ней не думая. Чужой заказ на экране — это не только
+    утечка, это ещё и еда, приготовленная не тому.
+    """
+
+    HOST_A = "alpha.padacha.ru"
+    HOST_B = "beta.padacha.ru"
+
+    def _cafe(self, org, marker):
+        """Кафе с кухней, баром и живым заказом на «Столе 5»."""
+        with organization_context(org):
+            site = SiteSettings.load()
+            site.plan = SiteSettings.Plan.MAX
+            site.save()
+            kitchen = Category.objects.create(name=f"Кухня {marker}", station="kitchen")
+            bar = Category.objects.create(name=f"Бар {marker}", station="bar")
+            food = Product.objects.create(name=f"Суп {marker}", price=300, category=kitchen)
+            drink = Product.objects.create(name=f"Чай {marker}", price=100, category=bar)
+            Table.objects.create(name="Стол 5")
+            order = Order.objects.create(total=400, table="Стол 5")
+            OrderItem.objects.create(order=order, product=food, quantity=1, unit_price=300)
+            OrderItem.objects.create(order=order, product=drink, quantity=1, unit_price=100)
+            staff = {
+                role: User.objects.create_user(
+                    f"{role}-{marker}", password="Sh4-board-pass",
+                    role=role, organization=org,
+                )
+                for role in ("waiter", "cook", "bar")
+            }
+        return {"order": order, "staff": staff, "food": food, "drink": drink}
+
+    def setUp(self):
+        self.a = Organization.objects.order_by("pk").first()
+        self.a.domain, self.a.name, self.a.slug = self.HOST_A, "Альфа", "alpha"
+        self.a.save()
+        self.b = Organization.objects.create(name="Бета", slug="beta", domain=self.HOST_B)
+        self.data_a = self._cafe(self.a, "альфы")
+        self.data_b = self._cafe(self.b, "беты")
+        self.client = APIClient()
+
+    def _as(self, role):
+        token = self.client.post(
+            "/api/auth/token/",
+            {"username": f"{role}-альфы", "password": "Sh4-board-pass"},
+            format="json",
+            HTTP_HOST=self.HOST_A,
+        ).json()["access"]
+        return {"HTTP_AUTHORIZATION": f"Bearer {token}", "HTTP_HOST": self.HOST_A}
+
+    def _ids(self, res):
+        body = res.json()
+        rows = body if isinstance(body, list) else body.get("results", [])
+        return {row["id"] for row in rows}
+
+    # ── что видно на досках ──────────────────────────────────────────────
+    def test_boards_show_only_own_orders(self):
+        cases = [
+            ("официант", "waiter", {}),
+            ("кухня", "cook", {"station": "kitchen"}),
+            ("бар", "bar", {"station": "bar"}),
+            ("к подаче", "waiter", {"serve": "1"}),
+        ]
+        for title, role, params in cases:
+            with self.subTest(доска=title):
+                res = self.client.get("/api/orders/", params, **self._as(role))
+                self.assertEqual(res.status_code, 200, res.data)
+                ids = self._ids(res)
+                self.assertNotIn(
+                    self.data_b["order"].pk, ids,
+                    f"на доске «{title}» показался заказ соседнего кафе",
+                )
+
+    def test_own_order_is_on_the_board(self):
+        """Обратная проверка: доска не пустая, иначе тест ничего не значит."""
+        res = self.client.get("/api/orders/", {"station": "kitchen"}, **self._as("cook"))
+        self.assertIn(self.data_a["order"].pk, self._ids(res))
+
+    # ── действия по чужому заказу ────────────────────────────────────────
+    def test_station_actions_on_foreign_order_are_refused(self):
+        foreign = self.data_b["order"].pk
+        cases = [
+            ("cook", f"/api/orders/{foreign}/food_status/", "patch", {"status": "ready"}),
+            ("bar", f"/api/orders/{foreign}/drinks_status/", "patch", {"status": "ready"}),
+            ("waiter", f"/api/orders/{foreign}/serve/", "patch", {"station": "kitchen"}),
+            ("waiter", f"/api/orders/{foreign}/close/", "post", {"pay_method": "cash"}),
+            ("waiter", f"/api/orders/{foreign}/cancel/", "patch", {}),
+            ("waiter", f"/api/orders/{foreign}/work_status/", "patch", {"status": "ready"}),
+        ]
+        for role, url, method, payload in cases:
+            with self.subTest(url=url):
+                res = getattr(self.client, method)(
+                    url, payload, format="json", **self._as(role)
+                )
+                self.assertIn(
+                    res.status_code, (403, 404),
+                    f"{url} принят ({res.status_code}) — чужой заказ изменён",
+                )
+        self.data_b["order"].refresh_from_db()
+        self.assertEqual(
+            self.data_b["order"].status, Order.Status.OPEN,
+            "заказ соседнего кафе изменил состояние",
+        )
+
+    def test_closing_table_touches_only_own_orders(self):
+        """«Стол 5» есть у обоих кафе — закрыть надо ровно свой."""
+        res = self.client.post(
+            "/api/orders/close_table/",
+            {"table": "Стол 5", "pay_method": "cash"},
+            format="json",
+            **self._as("waiter"),
+        )
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(res.json()["closed"], 1, "закрыто не одно заведение")
+
+        self.data_a["order"].refresh_from_db()
+        self.data_b["order"].refresh_from_db()
+        self.assertEqual(self.data_a["order"].status, Order.Status.PAID)
+        self.assertEqual(
+            self.data_b["order"].status, Order.Status.OPEN,
+            "закрыт счёт стола соседнего кафе",
+        )
+
+    def test_cannot_add_foreign_dish_to_own_order(self):
+        res = self.client.post(
+            f"/api/orders/{self.data_a['order'].pk}/add_items/",
+            {"items": [{"product": self.data_b["food"].pk, "quantity": 1}]},
+            format="json",
+            **self._as("waiter"),
+        )
+        self.assertNotEqual(res.status_code, 200, "в заказ добавлено чужое блюдо")
