@@ -129,7 +129,7 @@ class ShiftViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"])
     def staff(self, request):
         """Кого можно поставить в смену — активные сотрудники."""
-        users = User.objects.filter(
+        users = User.tenant.filter(
             is_active=True,
             role__in=[
                 User.Role.WAITER,
@@ -170,7 +170,7 @@ class ShiftViewSet(viewsets.ViewSet):
                 {"detail": "Дата в формате ГГГГ-ММ-ДД"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        worker = User.objects.filter(id=request.data.get("user")).first()
+        worker = User.tenant.filter(id=request.data.get("user")).first()
         if worker is None or not worker.is_staff_role:
             return Response(
                 {"detail": "Работник не найден"}, status=status.HTTP_404_NOT_FOUND

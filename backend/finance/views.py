@@ -60,7 +60,7 @@ class PayrollViewSet(ViewSet):
         if amount <= 0:
             return Response({"detail": "Сумма должна быть больше нуля"},
                             status=status.HTTP_400_BAD_REQUEST)
-        if not User.objects.filter(pk=user_id).exists():
+        if not User.tenant.filter(pk=user_id).exists():
             return Response({"detail": "Работник не найден"},
                             status=status.HTTP_400_BAD_REQUEST)
 

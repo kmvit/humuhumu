@@ -61,7 +61,7 @@ class StaffSerializer(serializers.ModelSerializer):
         value = value.strip()
         if not value:
             raise serializers.ValidationError("Логин обязателен")
-        qs = User.objects.filter(username__iexact=value)
+        qs = User.tenant.filter(username__iexact=value)
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():
@@ -108,7 +108,7 @@ class StaffViewSet(viewsets.ModelViewSet):
         # Суперпользователи — доступ поддержки «Падачи»; заведение их не
         # видит и не редактирует.
         return (
-            User.objects.filter(role__in=STAFF_ROLES, is_superuser=False)
+            User.tenant.filter(role__in=STAFF_ROLES, is_superuser=False)
             .order_by("role", "first_name", "username")
         )
 

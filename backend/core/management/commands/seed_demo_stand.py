@@ -161,7 +161,7 @@ class Command(BaseCommand):
         Product.objects.all().delete()
         Category.objects.all().delete()
         Table.objects.all().delete()
-        User.objects.filter(is_superuser=False).delete()
+        User.tenant.filter(is_superuser=False).delete()
 
     def _settings(self):
         site = SiteSettings.load()

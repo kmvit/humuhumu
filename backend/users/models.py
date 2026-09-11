@@ -1,7 +1,9 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 
-from core.tenancy import TenantMixin
+from django.contrib.auth.models import UserManager
+
+from core.tenancy import TenantManager, TenantMixin
 
 
 class User(AbstractUser, TenantMixin):
@@ -26,6 +28,14 @@ class User(AbstractUser, TenantMixin):
         "Роль", max_length=16, choices=Role.choices, default=Role.CLIENT
     )
     phone = models.CharField("Телефон", max_length=20, null=True, blank=True)
+
+    #: Вход и createsuperuser: ищут по всей базе, иначе не найдут никого
+    #: до того, как заведение определено.
+    objects = UserManager()
+    #: Прикладной код берёт ЭТОТ менеджер: список сотрудников, поиск гостя
+    #: по телефону, состав смены — всё это в границах заведения. С objects
+    #: панель владельца показывала сотрудников всех кафе сразу.
+    tenant = TenantManager()
 
     class Meta:
         verbose_name = "Пользователь"

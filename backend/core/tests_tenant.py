@@ -417,3 +417,73 @@ class AdminIsolationTests(TestCase):
             "/admin/core/sitesettings/", HTTP_HOST="alpha.padacha.ru"
         ).content.decode()
         self.assertNotIn("Настройки Беты", body)
+
+
+@override_settings(ALLOWED_HOSTS=["*"])
+class StaffApiIsolationTests(TestCase):
+    """Панель владельца не должна показывать чужих сотрудников.
+
+    Здесь утечка опаснее, чем в Django-админке: эту страницу открывает
+    сам клиент, а не мы. Причина была та же — у пользователей менеджер
+    намеренно не фильтрует, и прикладной код обязан брать User.tenant.
+    """
+
+    def setUp(self):
+        self.a = Organization.objects.order_by("pk").first()
+        self.a.domain = "alpha.padacha.ru"
+        self.a.save()
+        self.b = make_org("Бета", "beta.padacha.ru", "beta")
+        with organization_context(self.a):
+            self.owner_a = User.objects.create_user(
+                "owner", password="Sh4-alpha-pass", role="admin", organization=self.a
+            )
+            User.objects.create_user("повар-альфы", role="cook", organization=self.a)
+        with organization_context(self.b):
+            User.objects.create_user("повар-беты", role="cook", organization=self.b)
+        self.client = APIClient()
+
+    def _token(self, host, username, password):
+        return self.client.post(
+            "/api/auth/token/",
+            {"username": username, "password": password},
+            format="json",
+            HTTP_HOST=host,
+        ).json()["access"]
+
+    def test_staff_list_is_limited_to_own_cafe(self):
+        token = self._token("alpha.padacha.ru", "owner", "Sh4-alpha-pass")
+        rows = self.client.get(
+            "/api/staff/",
+            HTTP_HOST="alpha.padacha.ru",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        ).json()
+        names = {r["username"] for r in rows}
+        self.assertIn("повар-альфы", names)
+        self.assertNotIn("повар-беты", names)
+
+    def test_same_login_is_allowed_in_another_cafe(self):
+        """Проверка занятости логина тоже должна смотреть только своё —
+        иначе соседнее кафе «забирает» удобные имена."""
+        token = self._token("alpha.padacha.ru", "owner", "Sh4-alpha-pass")
+        res = self.client.post(
+            "/api/staff/",
+            {"username": "повар-беты", "role": "cook", "password": "Sh4-new-pass"},
+            format="json",
+            HTTP_HOST="alpha.padacha.ru",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(res.status_code, 201, res.data)
+
+    def test_foreign_employee_is_not_reachable_by_id(self):
+        """Знание чужого id не должно давать доступ к человеку."""
+        with organization_context(self.b):
+            stranger = User.objects.get(username="повар-беты")
+        token = self._token("alpha.padacha.ru", "owner", "Sh4-alpha-pass")
+        res = self.client.patch(
+            f"/api/staff/{stranger.pk}/",
+            {"password": "Sh4-hacked-pass"},
+            format="json",
+            HTTP_HOST="alpha.padacha.ru",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(res.status_code, 404)

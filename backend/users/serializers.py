@@ -20,7 +20,7 @@ class RegisterSerializer(serializers.Serializer):
         else:
             raise serializers.ValidationError("Введите номер, например +7 999 000-00-00")
         phone = "+" + digits
-        if User.objects.filter(phone=phone).exists():
+        if User.tenant.filter(phone=phone).exists():
             raise serializers.ValidationError("Этот номер уже зарегистрирован")
         return phone
 

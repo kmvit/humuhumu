@@ -73,7 +73,7 @@ def enroll_by_phone(phone: str, name: str = "", birth_date=None) -> LoyaltyMembe
     """
     from users.models import User
 
-    user = User.objects.filter(phone=phone).first()
+    user = User.tenant.filter(phone=phone).first()
     if user is None:
         user = User(
             username=phone,
