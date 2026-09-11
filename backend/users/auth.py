@@ -15,7 +15,7 @@ from django.contrib.auth.backends import ModelBackend
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import AuthenticationFailed
 
-from core.tenancy import current_organization
+from core.tenancy import current_organization_or_none
 
 from .models import User
 
@@ -27,7 +27,7 @@ class OrganizationBackend(ModelBackend):
         if username is None or password is None:
             return None
 
-        org = current_organization()
+        org = current_organization_or_none()
         qs = User.objects.filter(username=username)
         if org is not None:
             qs = qs.filter(organization=org)
@@ -51,7 +51,7 @@ class OrganizationBackend(ModelBackend):
         user = super().get_user(user_id)
         if user is None:
             return None
-        org = current_organization()
+        org = current_organization_or_none()
         if org is not None and user.organization_id != org.pk:
             return None
         return user
@@ -68,7 +68,7 @@ class OrganizationJWTAuthentication(JWTAuthentication):
 
     def get_user(self, validated_token):
         user = super().get_user(validated_token)
-        org = current_organization()
+        org = current_organization_or_none()
         if org is not None and user.organization_id != org.pk:
             raise AuthenticationFailed(
                 "Токен выдан другому заведению", code="wrong_tenant"

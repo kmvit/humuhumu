@@ -73,6 +73,20 @@ def current_organization():
     return first_two[0]
 
 
+def current_organization_or_none():
+    """current_organization(), но без исключения при неопределённости.
+
+    Для мест, где «заведение не выбрано» — нормальная ситуация, а не
+    ошибка: служебный адрес админки, где тенант выбирают переключателем.
+    Ограничивать там нечем, и это безопасно: API без заведения не
+    обслуживается вовсе (TenantMiddleware отвечает 404).
+    """
+    try:
+        return current_organization()
+    except NoOrganizationSelected:
+        return None
+
+
 def set_current_organization(org) -> None:
     """Задать заведение запроса. Зовётся из middleware."""
     _current.set(org)

@@ -281,3 +281,84 @@ class ImportInstanceTests(TestCase):
         self._import()
         with self.assertRaises(CommandError):
             self._import()
+
+class ImportInstanceTests(TestCase):
+    """Переезд отдельной установки в общую.
+
+    Главная опасность переезда — ключи: в отдельных базах у каждой точки
+    есть заказ №1 и товар №1. Проверяем, что данные не перетирают друг
+    друга, ссылки внутри дампа остаются связными, а счётчики id после
+    вставки с явными ключами не начинают выдавать занятые номера.
+    """
+
+    #: Дамп «старой установки»: поля organization в нём нет — такие
+    #: установки живут на коде старше тенантности.
+    DUMP = [
+        {"model": "catalog.category", "pk": 1,
+         "fields": {"name": "Кофе", "station": "bar", "sort_order": 0,
+                    "is_active": True, "icon": ""}},
+        {"model": "catalog.product", "pk": 1,
+         "fields": {"name": "Раф", "price": "350.00", "category": 1,
+                    "is_available": True, "sort_order": 0, "description": "",
+                    "weight_grams": None, "image": "", "thumbnail": "",
+                    "prep_minutes": None, "is_stopped": False}},
+        {"model": "core.sitesettings", "pk": 1,
+         "fields": {"name": "Переехавшее кафе", "theme": "neutral",
+                    "service_mode": "counter", "plan": "max"}},
+    ]
+
+    def setUp(self):
+        self.home = Organization.objects.order_by("pk").first()
+        self.home.domain = "home.padacha.ru"
+        self.home.save()
+        with organization_context(self.home):
+            cat = Category.objects.create(name="Свой кофе")
+            self.own = Product.objects.create(name="Свой раф", price=300, category=cat)
+
+    def _import(self, domain="pereezd.padacha.ru"):
+        import json
+        import tempfile
+
+        from django.core.management import call_command
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+            json.dump(self.DUMP, fh)
+            path = fh.name
+        call_command("import_instance", path, domain=domain, verbosity=0)
+        return Organization.objects.get(domain=domain)
+
+    def test_import_does_not_overwrite_existing_rows(self):
+        """У приезжающих те же id, что у своих, — но перетереть не должны."""
+        org = self._import()
+        self.own.refresh_from_db()
+        self.assertEqual(self.own.name, "Свой раф")  # своё на месте
+
+        with organization_context(org):
+            self.assertEqual(
+                list(Product.objects.values_list("name", flat=True)), ["Раф"]
+            )
+            # связь внутри дампа осталась связной
+            self.assertEqual(Product.objects.first().category.name, "Кофе")
+            # настройки переехали вместе с данными
+            self.assertEqual(SiteSettings.load().service_mode, "counter")
+
+        with organization_context(self.home):
+            self.assertEqual(
+                list(Product.objects.values_list("name", flat=True)), ["Свой раф"]
+            )
+
+    def test_sequences_are_reset_after_import(self):
+        """Строки вставлены с явными ключами выше счётчика — без сброса
+        следующая запись столкнулась бы с занятым id."""
+        self._import()
+        with organization_context(self.home):
+            cat = Category.objects.first()
+            fresh = Product.objects.create(name="Новый", price=100, category=cat)
+        self.assertTrue(Product.all_objects.filter(pk=fresh.pk).count() == 1)
+
+    def test_repeat_import_is_refused(self):
+        from django.core.management.base import CommandError
+
+        self._import()
+        with self.assertRaises(CommandError):
+            self._import()

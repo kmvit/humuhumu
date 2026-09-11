@@ -9,6 +9,11 @@ def create_wallet_for_client(sender, instance, created, **kwargs):
     # при загрузке фикстур (loaddata) кошельки приходят из данных — сигнал не вмешивается
     if kwargs.get("raw") or not created:
         return
+    from core.tenancy import organization_context
     from wallet.models import Wallet
 
-    Wallet.objects.get_or_create(user=instance)
+    # Заведение берём у самого пользователя, а не «текущее»: сигнал
+    # срабатывает и в админке, и в командах, где текущего может не быть
+    # вовсе — а кошелёк обязан принадлежать тому же кафе, что и хозяин.
+    with organization_context(instance.organization):
+        Wallet.objects.get_or_create(user=instance)
