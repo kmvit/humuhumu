@@ -14,7 +14,7 @@ def normalize_name(text: str) -> str:
 class StockCategory(TenantModel):
     """Назначение складской позиции: для блюд, для напитков, для уборки, для сервиса и т.д."""
 
-    name = models.CharField("Название", max_length=100, unique=True)
+    name = models.CharField("Название", max_length=100)
     sort_order = models.PositiveIntegerField("Порядок", default=0)
     is_active = models.BooleanField("Активна", default=True)
 
@@ -22,6 +22,13 @@ class StockCategory(TenantModel):
         verbose_name = "Категория склада"
         verbose_name_plural = "Категории склада"
         ordering = ["sort_order", "name"]
+        # Уникально внутри заведения, а не на всю базу:
+        # у каждого кафе своё, и совпадения — норма.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "name"], name="uniq_stock_category_per_org"
+            ),
+        ]
 
     def __str__(self):
         return self.name
@@ -146,13 +153,20 @@ class StockItemAlias(TenantModel):
         verbose_name="Товар",
     )
     name = models.CharField("Название в чеке", max_length=200)
-    norm = models.CharField("Нормализованное", max_length=200, unique=True)
+    norm = models.CharField("Нормализованное", max_length=200)
     created_at = models.DateTimeField("Когда", auto_now_add=True)
 
     class Meta:
         verbose_name = "Вариант / название в чеке"
         verbose_name_plural = "Варианты и названия в чеках"
         ordering = ["name"]
+        # Уникально внутри заведения, а не на всю базу:
+        # у каждого кафе своё, и совпадения — норма.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "norm"], name="uniq_alias_per_org"
+            ),
+        ]
 
     def save(self, *args, **kwargs):
         self.norm = normalize_name(self.name)
@@ -369,13 +383,20 @@ class PurchaseList(TenantModel):
     уже купленные и вручную поправленные строки при этом не трогаются.
     """
 
-    date = models.DateField("Дата", unique=True)
+    date = models.DateField("Дата")
     created_at = models.DateTimeField("Создан", auto_now_add=True)
 
     class Meta:
         verbose_name = "Закуп"
         verbose_name_plural = "Закуп"
         ordering = ["-date"]
+        # Уникально внутри заведения, а не на всю базу:
+        # у каждого кафе своё, и совпадения — норма.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "date"], name="uniq_purchase_list_per_org"
+            ),
+        ]
 
     def __str__(self):
         return f"Закуп на {self.date:%d.%m.%Y}"

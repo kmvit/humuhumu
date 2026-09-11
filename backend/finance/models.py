@@ -56,7 +56,7 @@ class ExpenseCategory(TenantModel):
     Справочник, а не enum: у каждого заведения свой набор статей.
     """
 
-    name = models.CharField("Название", max_length=80, unique=True)
+    name = models.CharField("Название", max_length=80)
     sort_order = models.PositiveIntegerField("Порядок", default=0)
     is_active = models.BooleanField("Активна", default=True)
 
@@ -64,6 +64,13 @@ class ExpenseCategory(TenantModel):
         verbose_name = "Статья расходов"
         verbose_name_plural = "Статьи расходов"
         ordering = ("sort_order", "name")
+        # Уникально внутри заведения, а не на всю базу:
+        # у каждого кафе своё, и совпадения — норма.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "name"], name="uniq_expense_category_per_org"
+            ),
+        ]
 
     def __str__(self):
         return self.name

@@ -9,7 +9,7 @@ from catalog.models import Category
 class Table(TenantModel):
     """Стол зала. Реестр столов; в заказе стол хранится строкой (name)."""
 
-    name = models.CharField("Название / номер", max_length=32, unique=True)
+    name = models.CharField("Название / номер", max_length=32)
     sort_order = models.PositiveIntegerField("Порядок", default=0)
     is_active = models.BooleanField("Активен", default=True)
 
@@ -17,6 +17,13 @@ class Table(TenantModel):
         verbose_name = "Стол"
         verbose_name_plural = "Столы"
         ordering = ["sort_order", "name"]
+        # Уникально внутри заведения, а не на всю базу:
+        # у каждого кафе своё, и совпадения — норма.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "name"], name="uniq_table_per_org"
+            ),
+        ]
 
     def __str__(self):
         return self.name

@@ -71,7 +71,7 @@ class Shift(TenantModel):
     """Рабочий день. Параметры оплаты фиксируются на момент открытия смены,
     чтобы правка ставки в админке не переписывала историю выплат."""
 
-    date = models.DateField("Дата", unique=True)
+    date = models.DateField("Дата")
     daily_rate = models.DecimalField(
         "Оплата за смену", max_digits=10, decimal_places=2, default=Decimal("0")
     )
@@ -95,6 +95,13 @@ class Shift(TenantModel):
         verbose_name = "Смена"
         verbose_name_plural = "Смены"
         ordering = ["-date"]
+        # Уникально внутри заведения, а не на всю базу:
+        # у каждого кафе своё, и совпадения — норма.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "date"], name="uniq_shift_per_org"
+            ),
+        ]
 
     def __str__(self):
         return f"Смена {self.date:%d.%m.%Y}"
