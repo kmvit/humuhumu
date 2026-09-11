@@ -84,7 +84,14 @@ class TenantMiddleware:
     #: нет: иначе, сменив домен клиенту, в неё было бы не попасть.
     ADMIN_PREFIX = "/admin/"
 
+    #: Надтенантные пути: отвечают от имени установки, а не заведения.
+    #: Выдача лицензии адресована ключом, а не доменом, и должна работать
+    #: на любом хосте — иначе внешней установке некуда стучаться.
+    AUTHORITY_PATHS = ("/api/license/",)
+
     def __call__(self, request):
+        if request.path in self.AUTHORITY_PATHS:
+            return self.get_response(request)
         host = Organization.normalize_host(request.get_host())
         org = Organization.objects.filter(domain=host).first()
         is_admin = request.path.startswith(self.ADMIN_PREFIX)

@@ -22,6 +22,7 @@ from inventory.views import (
     StockItemViewSet,
 )
 from orders.views import OrderViewSet, TableViewSet
+from billing.views import license_view
 from payments.views import callback as payment_callback
 from shifts.views import ShiftViewSet
 from users.staff import StaffViewSet
@@ -77,6 +78,8 @@ api_patterns = [
     path("loyalty/enroll/", loyalty_views.EnrollView.as_view(), name="loyalty-enroll"),
     path("loyalty/lookup/", loyalty_views.lookup, name="loyalty-lookup"),
     path("loyalty/me/", loyalty_views.me, name="loyalty-me"),
+    # выдача лицензии внешним установкам (кафе на своём сервере, демо)
+    path("license/", license_view, name="license-issue"),
     # лицензия «Падачи»: статус подписки и ручная сверка с пультом
     path("license/status/", license_status, name="license-status"),
     path("license/refresh/", license_refresh, name="license-refresh"),

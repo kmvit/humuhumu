@@ -20,15 +20,27 @@ class Organization(models.Model):
         "Домен", max_length=200, blank=True, default="", db_index=True,
         help_text="Напр. moyokafe.padacha.ru — по нему гость попадает именно сюда",
     )
+    client = models.ForeignKey(
+        "billing.Client", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="organizations", verbose_name="Клиент",
+        help_text="Заказчик. У сети точек он один на все",
+    )
     license_key = models.CharField(
         "Ключ лицензии", max_length=64, blank=True, default="",
-        help_text="Из пульта «Падачи». Пусто — заведение не биллится",
+        help_text=(
+            "Нужен только внешней установке — она спрашивает подписку по "
+            "нему через /api/license/. Заведению этой установки не нужен"
+        ),
     )
     is_active = models.BooleanField(
         "Активно", default=True,
         help_text="Выключенное заведение не отвечает по своему домену",
     )
     created_at = models.DateTimeField("Создано", auto_now_add=True)
+    # Заполняет внешняя установка, когда приходит за лицензией: по ним
+    # видно, жива ли точка и не отстала ли по версии.
+    last_seen_at = models.DateTimeField("Выходила на связь", null=True, blank=True)
+    last_version = models.CharField("Версия", max_length=40, blank=True, default="")
 
     class Meta:
         verbose_name = "Заведение"

@@ -104,6 +104,21 @@ def sync_license() -> LicenseState:
     return state
 
 
+def local_subscription():
+    """Подписка заведения в этой же установке, если она тут заведена.
+
+    В общей установке подписки лежат рядом с данными (приложение billing),
+    и спрашивать их по сети у самого себя незачем. Внешняя установка
+    подписок не хранит — там работает сверка по HTTP.
+    """
+    from .tenancy import current_organization
+
+    org = current_organization()
+    if org is None:
+        return None
+    return getattr(org, "subscription", None)
+
+
 def effective_status(today: date | None = None) -> str:
     """Статус подписки, который исполняет middleware.
 
@@ -111,6 +126,9 @@ def effective_status(today: date | None = None) -> str:
     ни одной успешной сверки — тоже active: новая точка не должна стоять
     из-за того, что beat ещё не добежал.
     """
+    subscription = local_subscription()
+    if subscription is not None:
+        return subscription.status(today)
     if not license_key():
         return ACTIVE
     state = LicenseState.load()
@@ -139,6 +157,17 @@ def effective_status(today: date | None = None) -> str:
 
 def status_payload() -> dict:
     """Что видит персонал в баннере и на экране блокировки."""
+    subscription = local_subscription()
+    if subscription is not None:
+        return {
+            "enabled": True,
+            "status": subscription.status(),
+            "internal": subscription.is_internal,
+            "plan": subscription.plan,
+            "paid_until": subscription.paid_until.isoformat(),
+            "grace_days": subscription.grace_days,
+            "checked_at": None,  # сверяться не с кем: подписка здесь же
+        }
     state = LicenseState.load()
     return {
         "enabled": bool(license_key()),

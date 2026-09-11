@@ -36,6 +36,8 @@ INSTALLED_APPS = [
     "inventory",
     "shifts",
     "finance",
+    # коммерческая часть: подписки заведений (бывший пульт)
+    "billing",
 ]
 
 MIDDLEWARE = [

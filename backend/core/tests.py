@@ -224,6 +224,11 @@ class TenancyGuardTests(TestCase):
     EXEMPT = {
         # сама организация и есть тенант
         "core.Organization",
+        # коммерческая часть смотрит поверх заведений, а не изнутри:
+        # подписка принадлежит заведению, а не заведение — подписке
+        "billing.Client",
+        "billing.Subscription",
+        "billing.Payment",
         # служебные таблицы Django: сессии, права, типы, миграции
         "admin.LogEntry",
         "auth.Group",
