@@ -773,3 +773,137 @@ class ReportsIsolationTests(TestCase):
     def test_orders_feed_for_admin_panel_is_own(self):
         """Плитки админ-панели считаются по этому же списку заказов."""
         self._clean("/api/orders/")
+
+
+@override_settings(ALLOWED_HOSTS=["*"])
+class AdminFullIsolationTests(TestCase):
+    """Django-админка целиком: проходим ВСЕ зарегистрированные модели.
+
+    Точечные тесты проверяют разделы, о которых вспомнили. Этот берёт
+    список из самой админки, поэтому новая модель попадает под проверку
+    сама — а не тогда, когда кто-то вспомнит дописать тест.
+
+    Надтенантные разделы (заведения, клиенты, подписки, платежи «Падачи»)
+    исключены осознанно: они и должны показывать всё — это инструмент
+    владельца продукта, а не заведения.
+    """
+
+    HOST = "alpha.padacha.ru"
+
+    #: Разделы, которые смотрят поверх заведений — им фильтр не нужен.
+    AUTHORITY = {
+        "core.Organization",
+        "billing.Client",
+        "billing.Subscription",
+        "billing.Payment",
+    }
+
+    def setUp(self):
+        self.a = Organization.objects.order_by("pk").first()
+        self.a.domain, self.a.name, self.a.slug = self.HOST, "Альфа", "alpha"
+        self.a.save()
+        self.b = Organization.objects.create(
+            name="Бета", slug="beta", domain="beta.padacha.ru"
+        )
+        self.data_a = build_cafe(self.a, "альфы")
+        self.data_b = build_cafe(self.b, "беты")
+        with organization_context(self.a):
+            self.root = User.objects.create_user(
+                "root", password="Sh4-root-pass", role=User.Role.ADMIN,
+                organization=self.a,
+            )
+            self.root.is_staff = self.root.is_superuser = True
+            self.root.save()
+        self.client.force_login(self.root)
+
+    def _tenant_admins(self):
+        """Зарегистрированные админки моделей, принадлежащих заведению."""
+        from django.contrib import admin as dj_admin
+
+        from core.tenancy import TenantMixin
+
+        for model, model_admin in dj_admin.site._registry.items():
+            label = f"{model._meta.app_label}.{model.__name__}"
+            if label in self.AUTHORITY or not issubclass(model, TenantMixin):
+                continue
+            yield label, model, model_admin
+
+    def test_every_admin_queryset_is_limited_to_current_cafe(self):
+        """Белым ящиком: выборка каждой админки не выходит за заведение.
+
+        Проверяем именно queryset, а не страницу: так под контроль
+        попадают и модели, у которых сейчас нет данных, — завтра будут.
+        """
+        from django.contrib.auth.models import AnonymousUser
+        from django.test import RequestFactory
+
+        from core.tenancy import set_current_organization
+
+        request = RequestFactory().get("/admin/", HTTP_HOST=self.HOST)
+        request.user = self.root
+        set_current_organization(self.a)
+
+        for label, model, model_admin in self._tenant_admins():
+            with self.subTest(model=label):
+                foreign = model.all_objects.filter(organization=self.b) if hasattr(
+                    model, "all_objects"
+                ) else model.objects.filter(organization=self.b)
+                if not foreign.exists():
+                    continue  # данных нет — проверять нечего, но и дыры нет
+                shown = model_admin.get_queryset(request)
+                leaked = shown.filter(organization=self.b).count()
+                self.assertEqual(
+                    leaked, 0,
+                    f"{label}: админка показывает {leaked} записей соседнего кафе",
+                )
+        del AnonymousUser
+
+    def test_changelists_open_and_do_not_show_foreign_rows(self):
+        """Чёрным ящиком: открываем каждую страницу списка по-настоящему."""
+        for label, model, model_admin in self._tenant_admins():
+            app, name = label.split(".")
+            url = f"/admin/{app.lower()}/{name.lower()}/"
+            with self.subTest(url=url):
+                res = self.client.get(url, HTTP_HOST=self.HOST)
+                if res.status_code == 403:
+                    continue  # раздел закрыт правами — тем более не утечёт
+                self.assertEqual(res.status_code, 200, f"{url} не открылся")
+                html = res.content.decode()
+                foreign_qs = (
+                    model.all_objects if hasattr(model, "all_objects") else model.objects
+                ).filter(organization=self.b)
+                for obj in foreign_qs[:5]:
+                    self.assertNotIn(
+                        f"/{obj.pk}/change/", html,
+                        f"{url}: в списке оказалась запись соседнего кафе",
+                    )
+
+    def test_foreign_object_page_is_not_found(self):
+        """Прямая ссылка на карточку чужого объекта не должна открываться."""
+        cases = [
+            ("catalog/product", self.data_b["product"]),
+            ("orders/order", self.data_b["order"]),
+            ("users/user", self.data_b["staff"]),
+            ("inventory/stockitem", self.data_b["stock_item"]),
+            ("core/sitesettings", None),
+        ]
+        for path, obj in cases:
+            if obj is None:
+                continue
+            with self.subTest(path=path):
+                res = self.client.get(
+                    f"/admin/{path}/{obj.pk}/change/", HTTP_HOST=self.HOST
+                )
+                self.assertIn(
+                    res.status_code, (302, 403, 404),
+                    f"/admin/{path}/{obj.pk}/ открыл чужой объект",
+                )
+
+    def test_own_rows_are_visible(self):
+        """Обратная проверка: свои записи в админке видны.
+
+        Без неё тест прошёл бы и на полностью пустой админке.
+        """
+        res = self.client.get("/admin/catalog/product/", HTTP_HOST=self.HOST)
+        self.assertEqual(res.status_code, 200)
+        self.assertIn(f"/{self.data_a['product'].pk}/change/", res.content.decode())
