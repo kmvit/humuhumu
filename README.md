@@ -172,7 +172,7 @@ docker compose up --build
 docker compose exec backend python manage.py seed_demo
 ```
 
-Тесты (114 шт.). Локальный Postgres может быть занят чужим инстансом — тогда
+Тесты (181 шт.). Локальный Postgres может быть занят чужим инстансом — тогда
 через docker-сеть:
 
 ```bash
