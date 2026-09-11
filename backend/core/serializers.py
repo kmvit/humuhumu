@@ -23,10 +23,20 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
         required=False,
     )
 
+    # Тариф и фичи отдаём ДЕЙСТВУЮЩИЕ: при общей базе их назначает
+    # подписка, а поле настроек — лишь запасной источник. Иначе владелец
+    # оплачивал бы «Максимум», а разделы оставались скрытыми.
+    plan = serializers.SerializerMethodField()
+
+    def get_plan(self, obj) -> str:
+        from .plans import current_plan
+
+        return current_plan()
+
     def get_features(self, obj) -> list[str]:
         from .plans import features
 
-        return sorted(features(obj.plan))
+        return sorted(features())
 
     def get_online_payment(self, obj) -> bool:
         # Провайдера берём из obj, а не через SiteSettings.load(): настройки

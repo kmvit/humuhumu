@@ -216,3 +216,44 @@ class ImportPultTests(TestCase):
         self.assertEqual(Organization.objects.filter(domain="naberezhnaya.padacha.ru").count(), 1)
         self.assertEqual(Client.objects.filter(name="Сеть «Дубль»").count(), 1)
         self.assertEqual(Payment.objects.count(), 1)
+
+
+class SubscriptionDrivesFeaturesTests(TestCase):
+    """Оплаченный тариф обязан открывать разделы.
+
+    Ровно эта связь и потерялась: подписка ставила «Максимум», а фичи
+    читались из настроек заведения, куда её никто не переносил, — владелец
+    платил, а склада не видел.
+    """
+
+    def test_features_follow_subscription(self):
+        from core.plans import current_plan, features
+
+        sub = make_sub(plan=SiteSettings.Plan.START)
+        with organization_context(sub.organization):
+            self.assertEqual(current_plan(), "start")
+            self.assertEqual(features(), frozenset())
+
+            sub.plan = SiteSettings.Plan.MAX
+            sub.save()
+            self.assertEqual(current_plan(), "max")
+            self.assertIn("inventory", features())
+
+    def test_site_settings_follow_subscription(self):
+        """Тариф в настройках не должен спорить с подпиской: его читают и
+        в панели владельца, и в Django-админке."""
+        sub = make_sub(plan=SiteSettings.Plan.HALL)
+        with organization_context(sub.organization):
+            self.assertEqual(SiteSettings.load().plan, "hall")
+            sub.plan = SiteSettings.Plan.MAX
+            sub.save()
+            self.assertEqual(SiteSettings.load().plan, "max")
+
+    def test_api_reports_paid_plan(self):
+        from rest_framework.test import APIClient
+
+        sub = make_sub(plan=SiteSettings.Plan.MAX, domain="paid.padacha.ru")
+        with self.settings(ALLOWED_HOSTS=["*"]):
+            data = APIClient().get("/api/site/", HTTP_HOST="paid.padacha.ru").json()
+        self.assertEqual(data["plan"], "max")
+        self.assertIn("inventory", data["features"])

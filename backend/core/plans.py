@@ -37,10 +37,26 @@ FEATURE_PLAN_TITLE = {
 }
 
 
+def current_plan() -> str:
+    """Тариф текущего заведения.
+
+    Если подписка лежит в этой же установке (общая база) — главная она:
+    тариф назначается в разделе «Подписки», и настройки заведения не
+    должны с ней спорить. Иначе берём поле настроек: так живут отдельные
+    установки, которым тариф привозит сверка лицензии.
+    """
+    from .license import local_subscription
+
+    subscription = local_subscription()
+    if subscription is not None:
+        return subscription.plan
+    return SiteSettings.load().plan
+
+
 def features(plan: str | None = None) -> frozenset[str]:
-    """Набор фич тарифа; без аргумента — тарифа текущей установки."""
+    """Набор фич тарифа; без аргумента — тарифа текущего заведения."""
     if plan is None:
-        plan = SiteSettings.load().plan
+        plan = current_plan()
     return PLAN_FEATURES.get(plan, frozenset())
 
 

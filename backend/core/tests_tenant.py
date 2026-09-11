@@ -362,3 +362,58 @@ class ImportInstanceTests(TestCase):
         self._import()
         with self.assertRaises(CommandError):
             self._import()
+
+
+@override_settings(ALLOWED_HOSTS=["*"])
+class AdminIsolationTests(TestCase):
+    """Django-админка не должна показывать чужие заведения.
+
+    Модели, чей менеджер намеренно не фильтрует (User, настройки), в
+    админке фильтруются отдельным миксином. Без него админка на домене
+    одного кафе показывала сотрудников всех — самая дорогая из возможных
+    утечек, потому что выглядит как «просто список».
+    """
+
+    def setUp(self):
+        self.a = Organization.objects.order_by("pk").first()
+        self.a.domain, self.a.name = "alpha.padacha.ru", "Альфа"
+        self.a.save()
+        self.b = make_org("Бета", "beta.padacha.ru", "beta")
+
+        with organization_context(self.a):
+            self.root = User.objects.create_user(
+                "root", password="Sh4-root-pass", role="admin", organization=self.a
+            )
+            self.root.is_staff = self.root.is_superuser = True
+            self.root.save()
+            User.objects.create_user("повар-альфы", role="cook", organization=self.a)
+        with organization_context(self.b):
+            User.objects.create_user("повар-беты", role="cook", organization=self.b)
+
+    def test_user_list_shows_only_current_organization(self):
+        self.client.force_login(self.root)
+        body = self.client.get("/admin/users/user/", HTTP_HOST="alpha.padacha.ru").content.decode()
+        self.assertIn("повар-альфы", body)
+        self.assertNotIn("повар-беты", body)
+
+    def test_switcher_changes_what_admin_shows(self):
+        self.client.force_login(self.root)
+        session = self.client.session
+        session["tenant_override"] = self.b.pk
+        session.save()
+        body = self.client.get("/admin/users/user/", HTTP_HOST="alpha.padacha.ru").content.decode()
+        self.assertIn("повар-беты", body)
+        self.assertNotIn("повар-альфы", body)
+
+    def test_settings_list_shows_only_current_organization(self):
+        with organization_context(self.a):
+            SiteSettings.load()
+        with organization_context(self.b):
+            site_b = SiteSettings.load()
+            site_b.name = "Настройки Беты"
+            site_b.save()
+        self.client.force_login(self.root)
+        body = self.client.get(
+            "/admin/core/sitesettings/", HTTP_HOST="alpha.padacha.ru"
+        ).content.decode()
+        self.assertNotIn("Настройки Беты", body)

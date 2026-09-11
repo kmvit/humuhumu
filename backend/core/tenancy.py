@@ -87,9 +87,19 @@ def current_organization_or_none():
         return None
 
 
-def set_current_organization(org) -> None:
-    """Задать заведение запроса. Зовётся из middleware."""
-    _current.set(org)
+def set_current_organization(org):
+    """Задать заведение запроса и вернуть метку для отката.
+
+    Метку обязательно отдать в reset_current_organization по завершении
+    запроса: воркер обслуживает запросы один за другим, и незакрытое
+    заведение досталось бы следующему — чужому.
+    """
+    return _current.set(org)
+
+
+def reset_current_organization(token) -> None:
+    """Вернуть заведение, каким оно было до запроса."""
+    _current.reset(token)
 
 
 @contextlib.contextmanager

@@ -19,7 +19,7 @@ from django.http import JsonResponse
 
 from .license import BLOCKED, effective_status
 from .models import Organization
-from .tenancy import set_current_organization
+from .tenancy import reset_current_organization, set_current_organization
 
 _OPEN_ALWAYS = (
     "/api/site/",
@@ -84,7 +84,9 @@ class TenantMiddleware:
 
     def __call__(self, request):
         if request.path in self.AUTHORITY_PATHS:
-            return self.get_response(request)
+            # Заведение сбрасываем явно: путь надтенантный, и заведение
+            # прошлого запроса не должно достаться этому по наследству.
+            return self._serve(request, None)
 
         host = Organization.normalize_host(request.get_host())
         org = Organization.objects.filter(domain=host).first()
@@ -123,6 +125,13 @@ class TenantMiddleware:
                 status=404,
             )
 
-        set_current_organization(org)
         request.organization = org
-        return self.get_response(request)
+        return self._serve(request, org)
+
+    def _serve(self, request, org):
+        """Обслужить запрос от имени заведения и вернуть всё как было."""
+        token = set_current_organization(org)
+        try:
+            return self.get_response(request)
+        finally:
+            reset_current_organization(token)

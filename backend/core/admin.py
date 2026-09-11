@@ -2,10 +2,28 @@ from django.contrib import admin, messages
 from django.utils.html import format_html
 
 from .models import LicenseState, Organization, SiteSettings
+from .tenancy import current_organization_or_none
+
+
+class TenantAdminMixin:
+    """Показывать в админке только текущее заведение.
+
+    Нужен там, где менеджер модели намеренно НЕ фильтрует: у User на нём
+    держится вход и createsuperuser, у настроек — загрузка по заведению.
+    Без этого админка на домене одного кафе показывала сотрудников всех —
+    ровно та утечка, ради предотвращения которой всё и затевалось.
+
+    Моделям на TenantModel он не нужен: их менеджер фильтрует сам.
+    """
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        org = current_organization_or_none()
+        return qs.filter(organization=org) if org is not None else qs
 
 
 @admin.register(SiteSettings)
-class SiteSettingsAdmin(admin.ModelAdmin):
+class SiteSettingsAdmin(TenantAdminMixin, admin.ModelAdmin):
     """Все настройки заведения — здесь.
 
     Продукт разворачивается разным кафе, и каждое поле кто-то должен
@@ -104,15 +122,17 @@ class SiteSettingsAdmin(admin.ModelAdmin):
     )
 
     def has_add_permission(self, request):
-        # запись одна — новую не создаём, если уже есть
-        return not SiteSettings.objects.exists()
+        # запись одна НА ЗАВЕДЕНИЕ — новую не создаём, если у него уже есть
+        org = current_organization_or_none()
+        qs = SiteSettings.objects.filter(organization=org) if org else SiteSettings.objects
+        return not qs.exists()
 
     def has_delete_permission(self, request, obj=None):
         return False
 
 
 @admin.register(LicenseState)
-class LicenseStateAdmin(admin.ModelAdmin):
+class LicenseStateAdmin(TenantAdminMixin, admin.ModelAdmin):
     """Кэш лицензии — только посмотреть. Меняет его сверка с пультом."""
 
     readonly_fields = (

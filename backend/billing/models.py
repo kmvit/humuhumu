@@ -104,6 +104,23 @@ class Subscription(models.Model):
     def __str__(self):
         return f"{self.organization} — до {self.paid_until}"
 
+    def save(self, *args, **kwargs):
+        """Держим тариф в настройках заведения в согласии с подпиской.
+
+        Читают его в обоих местах (панель владельца, Django-админка), и
+        расхождение выглядело бы как ошибка: «оплачен Максимум, а склада
+        нет». Источник правды — подписка, настройки лишь отражают её.
+        """
+        super().save(*args, **kwargs)
+        from core.models import SiteSettings
+        from core.tenancy import organization_context
+
+        with organization_context(self.organization):
+            site = SiteSettings.load()
+            if site.plan != self.plan:
+                site.plan = self.plan
+                site.save(update_fields=["plan"])
+
     def status(self, today: date | None = None) -> str:
         if self.is_internal:
             return self.Status.ACTIVE
