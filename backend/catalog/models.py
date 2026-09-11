@@ -3,10 +3,12 @@ from io import BytesIO
 
 from django.core.files.base import ContentFile
 from django.db import models
+
+from core.tenancy import TenantModel
 from PIL import Image
 
 
-class Category(models.Model):
+class Category(TenantModel):
     """Категория товаров (кофе, сэндвичи, боулы, мороженое и т.д.)."""
 
     class Station(models.TextChoices):
@@ -31,7 +33,7 @@ class Category(models.Model):
         return self.name
 
 
-class Product(models.Model):
+class Product(TenantModel):
     """Товар. Цена в рублях; при курсе 1 токен = 1 ₽ она же — цена в токенах."""
 
     category = models.ForeignKey(
@@ -103,7 +105,7 @@ class Product(models.Model):
         self._orig_image = current
 
 
-class ProductLike(models.Model):
+class ProductLike(TenantModel):
     """Лайк блюда анонимным гостем. device — id устройства из localStorage."""
 
     product = models.ForeignKey(

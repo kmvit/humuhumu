@@ -11,10 +11,12 @@ from decimal import Decimal
 from django.conf import settings
 from django.db import models
 
+from core.tenancy import TenantModel
+
 from users.models import User
 
 
-class ShiftSettings(models.Model):
+class ShiftSettings(TenantModel):
     """Параметры расчёта зарплаты — одна запись (singleton). Правится в админке."""
 
     daily_rate = models.DecimalField(
@@ -55,7 +57,7 @@ class ShiftSettings(models.Model):
         return obj
 
 
-class Shift(models.Model):
+class Shift(TenantModel):
     """Рабочий день. Параметры оплаты фиксируются на момент открытия смены,
     чтобы правка ставки в админке не переписывала историю выплат."""
 
@@ -88,7 +90,7 @@ class Shift(models.Model):
         return f"Смена {self.date:%d.%m.%Y}"
 
 
-class ShiftMember(models.Model):
+class ShiftMember(TenantModel):
     """Работник, поставленный в смену на этот день."""
 
     shift = models.ForeignKey(

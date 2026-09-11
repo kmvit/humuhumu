@@ -1,10 +1,12 @@
 from django.conf import settings
 from django.db import models
 
+from core.tenancy import TenantModel
+
 from catalog.models import Category
 
 
-class Table(models.Model):
+class Table(TenantModel):
     """Стол зала. Реестр столов; в заказе стол хранится строкой (name)."""
 
     name = models.CharField("Название / номер", max_length=32, unique=True)
@@ -20,7 +22,7 @@ class Table(models.Model):
         return self.name
 
 
-class Order(models.Model):
+class Order(TenantModel):
     """Заказ. Создаёт официант, готовит повар, оплату фиксирует кассир-бармен."""
 
     class Status(models.TextChoices):
@@ -161,7 +163,7 @@ class Order(models.Model):
         return bool(items) and all(i.status == self.StationStatus.READY for i in items)
 
 
-class OrderItem(models.Model):
+class OrderItem(TenantModel):
     """Позиция заказа. Цена фиксируется на момент покупки."""
 
     order = models.ForeignKey(

@@ -9,8 +9,10 @@ from decimal import Decimal
 from django.conf import settings
 from django.db import models
 
+from core.tenancy import TenantModel
 
-class PayrollPayout(models.Model):
+
+class PayrollPayout(TenantModel):
     """Выплата работнику за месяц. Начисление не хранится — оно считается
     из смен, иначе цифры разъедутся при правке состава смены задним числом."""
 
@@ -48,7 +50,7 @@ class PayrollPayout(models.Model):
         return f"{self.user} · {self.period:%m.%Y} · {self.amount} ₽"
 
 
-class ExpenseCategory(models.Model):
+class ExpenseCategory(TenantModel):
     """Статья расходов: аренда, коммуналка, реклама и т. п.
 
     Справочник, а не enum: у каждого заведения свой набор статей.
@@ -67,7 +69,7 @@ class ExpenseCategory(models.Model):
         return self.name
 
 
-class Expense(models.Model):
+class Expense(TenantModel):
     """Прочий расход заведения — всё, что не зарплата и не закуп продуктов.
 
     Зарплата считается из смен, закуп — из приходов на склад; здесь аренда,

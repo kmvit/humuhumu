@@ -1,8 +1,10 @@
 from django.conf import settings
 from django.db import models
 
+from core.tenancy import TenantModel
 
-class LoyaltyMember(models.Model):
+
+class LoyaltyMember(TenantModel):
     """Участник бонусной программы.
 
     Отдельно от wallet.Wallet намеренно: там предоплаченные токены — живые
@@ -39,7 +41,7 @@ class LoyaltyMember(models.Model):
         return f"{self.name} ({self.phone}) — {self.balance} б."
 
 
-class BonusTransaction(models.Model):
+class BonusTransaction(TenantModel):
     """Журнал бонусов. Плюс — начисление, минус — списание."""
 
     class Type(models.TextChoices):

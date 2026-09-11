@@ -1,8 +1,10 @@
 from django.conf import settings
 from django.db import models
 
+from core.tenancy import TenantModel
 
-class Wallet(models.Model):
+
+class Wallet(TenantModel):
     """Токен-кошелёк клиента. Баланс — кэш суммы транзакций (источник правды — журнал)."""
 
     user = models.OneToOneField(
@@ -23,7 +25,7 @@ class Wallet(models.Model):
         return f"{self.user} — {self.balance} ток."
 
 
-class TokenTransaction(models.Model):
+class TokenTransaction(TenantModel):
     """Журнал движений токенов. Положительная сумма — начисление, отрицательная — списание."""
 
     class Type(models.TextChoices):
@@ -61,7 +63,7 @@ class TokenTransaction(models.Model):
         return f"{self.get_type_display()}: {self.amount}"
 
 
-class TokenPackage(models.Model):
+class TokenPackage(TenantModel):
     """Пакет токенов: платит pay_amount ₽ → получает pay_amount + bonus_amount токенов."""
 
     pay_amount = models.DecimalField("Стоимость, ₽", max_digits=10, decimal_places=2)

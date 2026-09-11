@@ -1,7 +1,29 @@
 from django.db import models
 
+from .tenancy import TenantMixin
 
-class SiteSettings(models.Model):
+
+class Organization(models.Model):
+    """Заведение как сущность данных — будущий тенант.
+
+    Пока в каждой базе ровно одна запись: продукт разворачивается по
+    инстансу на точку. Смысл модели в том, чтобы связи и фильтрация были
+    готовы заранее — см. core/tenancy.py.
+    """
+
+    name = models.CharField("Название", max_length=160)
+    slug = models.SlugField("Код", max_length=60, unique=True)
+    created_at = models.DateTimeField("Создано", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Заведение"
+        verbose_name_plural = "Заведения"
+
+    def __str__(self):
+        return self.name
+
+
+class SiteSettings(TenantMixin):
     """Настройки сайта — одна запись (singleton). Редактируется в админке."""
 
     class Theme(models.TextChoices):
@@ -198,7 +220,7 @@ class SiteSettings(models.Model):
         return obj
 
 
-class LicenseState(models.Model):
+class LicenseState(TenantMixin):
     """Кэш последнего ответа пульта «Падачи» — одна запись (singleton).
 
     Пульт присылает факты (тариф, «оплачено до», грейс), а лестницу

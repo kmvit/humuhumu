@@ -25,12 +25,17 @@ from .plans import features
 
 
 class AdminCoversModelTests(TestCase):
+    #: Поля, которых в админке заведения быть не должно. Тест сторожит
+    #: полноту настроек, а это не настройка: привязку к заведению ставит
+    #: код (core/tenancy.py), владельцу её менять нечем и незачем.
+    TECHNICAL = {"organization"}
+
     def _model_fields(self) -> set[str]:
         return {
             f.name
             for f in SiteSettings._meta.get_fields()
             if getattr(f, "editable", False) and not f.auto_created
-        }
+        } - self.TECHNICAL
 
     def _admin_fields(self) -> set[str]:
         admin_class = dj_admin.site._registry[SiteSettings]
@@ -204,3 +209,78 @@ class LicenseClientTests(APITestCase):
         client_user = User.objects.create_user("c1", password="x", role=User.Role.CLIENT)
         self.client.force_authenticate(client_user)
         self.assertEqual(self.client.get("/api/license/status/").status_code, 403)
+
+
+class TenancyGuardTests(TestCase):
+    """Сторож этапа тенантности.
+
+    Смысл всей затеи — чтобы будущий переезд на общую базу не превратился
+    в правку каждого запроса. Он сработает, только если НИ ОДНА бизнес-
+    модель не осталась без привязки к заведению. Тест следит, чтобы новая
+    модель не появилась в обход — молча и незаметно.
+    """
+
+    #: Модели вне тенантности, с обоснованием каждой.
+    EXEMPT = {
+        # сама организация и есть тенант
+        "core.Organization",
+        # служебные таблицы Django: сессии, права, типы, миграции
+        "admin.LogEntry",
+        "auth.Group",
+        "auth.Permission",
+        "contenttypes.ContentType",
+        "sessions.Session",
+        "token_blacklist.BlacklistedToken",
+        "token_blacklist.OutstandingToken",
+    }
+
+    #: У этих менеджер не подменяется (см. core/tenancy.py): на User
+    #: держится вход и createsuperuser, singleton-настройки грузятся по pk.
+    MIXIN_ONLY = {"users.User", "core.SiteSettings", "core.LicenseState"}
+
+    def _app_models(self):
+        from django.apps import apps as django_apps
+
+        for model in django_apps.get_models():
+            label = f"{model._meta.app_label}.{model.__name__}"
+            if label in self.EXEMPT:
+                continue
+            yield label, model
+
+    def test_every_model_belongs_to_an_organization(self):
+        from core.tenancy import TenantMixin
+
+        missing = [
+            label
+            for label, model in self._app_models()
+            if not issubclass(model, TenantMixin)
+        ]
+        self.assertEqual(
+            missing,
+            [],
+            "Модели без привязки к заведению — из-за них переезд на общую "
+            "базу придётся делать вручную: " + ", ".join(sorted(missing)),
+        )
+
+    def test_business_models_filter_by_organization(self):
+        from core.tenancy import TenantManager
+
+        unfiltered = [
+            label
+            for label, model in self._app_models()
+            if label not in self.MIXIN_ONLY
+            and not isinstance(model._default_manager, TenantManager)
+        ]
+        self.assertEqual(
+            unfiltered,
+            [],
+            "Менеджер по умолчанию не фильтрует по заведению: "
+            + ", ".join(sorted(unfiltered)),
+        )
+
+    def test_organization_is_set_automatically(self):
+        from catalog.models import Category
+        from core.tenancy import current_organization
+
+        category = Category.objects.create(name="Напитки")
+        self.assertEqual(category.organization, current_organization())

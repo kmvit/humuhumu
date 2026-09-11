@@ -3,13 +3,15 @@ from decimal import Decimal
 from django.conf import settings
 from django.db import models, transaction
 
+from core.tenancy import TenantModel
+
 
 def normalize_name(text: str) -> str:
     """Свести название к виду, по которому сравниваем товары (чеки, алиасы)."""
     return " ".join((text or "").lower().replace("ё", "е").split())
 
 
-class StockCategory(models.Model):
+class StockCategory(TenantModel):
     """Назначение складской позиции: для блюд, для напитков, для уборки, для сервиса и т.д."""
 
     name = models.CharField("Название", max_length=100, unique=True)
@@ -25,7 +27,7 @@ class StockCategory(models.Model):
         return self.name
 
 
-class StockItem(models.Model):
+class StockItem(TenantModel):
     """Товар склада: «Креветки», «Кола», «Молоко» — с единицей и одним остатком.
 
     Марки и фасовки («мелкие 70/90», «Pepsi 1 л») в остатках не разделяются:
@@ -128,7 +130,7 @@ class StockItem(models.Model):
         return locked.quantity
 
 
-class StockItemAlias(models.Model):
+class StockItemAlias(TenantModel):
     """Вариант товара — как его покупают и пишут в чеках.
 
     «Креветки» покупают как «КРЕВЕТКА В/М 16/20 VICI» и «креветка мелкая», «Колу» —
@@ -160,7 +162,7 @@ class StockItemAlias(models.Model):
         return f"{self.name} → {self.item}"
 
 
-class Receipt(models.Model):
+class Receipt(TenantModel):
     """Приход — документ поступления товаров от поставщика."""
 
     received_by = models.ForeignKey(
@@ -192,7 +194,7 @@ class Receipt(models.Model):
         )
 
 
-class ReceiptItem(models.Model):
+class ReceiptItem(TenantModel):
     """Позиция прихода: номенклатура + количество (+ цена закупки опционально)."""
 
     receipt = models.ForeignKey(
@@ -227,7 +229,7 @@ class ReceiptItem(models.Model):
         return f"{self.item} × {self.quantity}"
 
 
-class ReceiptScan(models.Model):
+class ReceiptScan(TenantModel):
     """Фото чека и результат его распознавания — черновик будущего прихода.
 
     Живёт отдельно от Receipt: распознавание и сопоставление номенклатуры
@@ -277,7 +279,7 @@ class ReceiptScan(models.Model):
         return f"Скан чека №{self.pk} ({self.get_status_display()})"
 
 
-class StockMovement(models.Model):
+class StockMovement(TenantModel):
     """Журнал движений остатка: приход, корректировка, продажа блюда."""
 
     class Kind(models.TextChoices):
@@ -321,7 +323,7 @@ class StockMovement(models.Model):
         return f"{self.item} {self.delta:+}"
 
 
-class RecipeItem(models.Model):
+class RecipeItem(TenantModel):
     """Строка тех карты: сколько товара склада уходит на одну порцию блюда.
 
     Тех карта блюда — это все его строки. Количество в базовой единице товара
@@ -359,7 +361,7 @@ class RecipeItem(models.Model):
         return f"{self.product}: {self.item} × {self.quantity}"
 
 
-class PurchaseList(models.Model):
+class PurchaseList(TenantModel):
     """Закуп на конкретный день: что и сколько нужно купить.
 
     Строки появляются сами (товары, которых мало) и правятся руками. Список на
@@ -379,7 +381,7 @@ class PurchaseList(models.Model):
         return f"Закуп на {self.date:%d.%m.%Y}"
 
 
-class PurchaseLine(models.Model):
+class PurchaseLine(TenantModel):
     """Строка закупа: товар и сколько его взять."""
 
     purchase = models.ForeignKey(

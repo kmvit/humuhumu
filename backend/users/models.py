@@ -1,8 +1,10 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 
+from core.tenancy import TenantMixin
 
-class User(AbstractUser):
+
+class User(AbstractUser, TenantMixin):
     """Пользователь сервиса: клиент, официант, повар, кассир-бармен или админ."""
 
     class Role(models.TextChoices):

@@ -1,7 +1,9 @@
 from django.db import models
 
+from core.tenancy import TenantModel
 
-class Payment(models.Model):
+
+class Payment(TenantModel):
     """Платёж по заказу: наличными на кассе, через терминал или картой онлайн.
 
     provider говорит, кто его провёл: "manual" — касса, имя эквайера
