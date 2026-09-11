@@ -82,6 +82,7 @@ class Command(BaseCommand):
             offset = self._offset()
             self.stdout.write(f"Заведение «{org.name}» (id={org.pk}), смещение ключей {offset}")
 
+            self._clear_singletons(org)
             prepared = [self._shift(r, offset, org) for r in rows]
             prepared = [r for r in prepared if r is not None]
 
@@ -104,6 +105,32 @@ class Command(BaseCommand):
                 return
 
         self._report(org)
+
+    def _clear_singletons(self, org: Organization):
+        """Убрать пустые настройки-заглушки целевого заведения.
+
+        Настройки сайта и смен заводятся сами при первом обращении, и у
+        заведения они уже могут быть — пустые. Дамп везёт настоящие
+        (бренд, реквизиты, ставки), но вставить их мешает ограничение
+        «одна запись на заведение». Заглушки уступают место.
+        """
+        from django.db.models import UniqueConstraint
+
+        for model in django_apps.get_models():
+            if not issubclass(model, TenantMixin):
+                continue
+            singleton = any(
+                isinstance(c, UniqueConstraint) and tuple(c.fields or ()) == ("organization",)
+                for c in model._meta.constraints
+            )
+            if not singleton:
+                continue
+            manager = getattr(model, "all_objects", model._default_manager)
+            removed = manager.filter(organization=org).delete()[0]
+            if removed:
+                self.stdout.write(
+                    f"  заглушка {model._meta.app_label}.{model.__name__} убрана"
+                )
 
     def _is_importable(self, label: str) -> bool:
         label = label.lower()
