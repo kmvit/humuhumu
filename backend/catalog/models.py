@@ -17,7 +17,8 @@ class Category(TenantModel):
 
     name = models.CharField("Название", max_length=100)
     icon = models.ImageField(
-        "Иконка", upload_to=tenant_upload_to("categories"), null=True, blank=True
+        "Иконка", upload_to=tenant_upload_to("categories"), null=True, blank=True,
+        max_length=200
     )
     station = models.CharField(
         "Станция", max_length=8, choices=Station.choices, default=Station.BAR,
@@ -47,12 +48,13 @@ class Product(TenantModel):
     name = models.CharField("Название", max_length=200)
     description = models.TextField("Описание", blank=True)
     image = models.ImageField(
-        "Изображение", upload_to=tenant_upload_to("products"), null=True, blank=True
+        "Изображение", upload_to=tenant_upload_to("products"), null=True, blank=True,
+        max_length=200
     )
     # лёгкое превью (WebP ~256px) — генерируется автоматически, отдаётся в списке
     thumbnail = models.ImageField(
         "Превью", upload_to=tenant_upload_to("products/thumbs"), null=True, blank=True,
-        editable=False
+        editable=False, max_length=200
     )
     price = models.DecimalField("Цена, ₽", max_digits=10, decimal_places=2)
     weight_grams = models.PositiveIntegerField("Вес, г", null=True, blank=True)

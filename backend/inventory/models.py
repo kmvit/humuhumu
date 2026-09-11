@@ -257,7 +257,9 @@ class ReceiptScan(TenantModel):
         FAILED = "failed", "Ошибка"
         CONFIRMED = "confirmed", "Оприходован"
 
-    image = models.ImageField("Фото чека", upload_to=tenant_upload_to("receipt_scans"))
+    image = models.ImageField(
+        "Фото чека", upload_to=tenant_upload_to("receipt_scans"), max_length=200
+    )
     status = models.CharField(
         "Статус", max_length=12, choices=Status.choices, default=Status.PENDING
     )

@@ -83,7 +83,8 @@ class SiteSettings(TenantMixin):
         help_text="Подпись под иконкой на телефоне. Пусто — обрежется из названия",
     )
     logo = models.ImageField(
-        "Логотип", upload_to=tenant_upload_to("site"), null=True, blank=True
+        "Логотип", upload_to=tenant_upload_to("site"), null=True, blank=True,
+        max_length=200
     )
 
     phone = models.CharField("Телефон", max_length=30, blank=True)

@@ -117,6 +117,10 @@ class tenant_upload_to:
     def __init__(self, subdir: str):
         self.subdir = subdir
 
+    #: Поля под такие пути объявляются с max_length=200: префикс заведения
+    #: удлиняет каждый путь, и стандартных 100 символов перестаёт хватать —
+    #: на переезде кафе это обнаружилось скан-чеком ровно в 100 символов.
+
     def __call__(self, instance, filename: str) -> str:
         org_id = getattr(instance, "organization_id", None) or "common"
         return f"org-{org_id}/{self.subdir}/{filename}"
