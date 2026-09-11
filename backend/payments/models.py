@@ -53,14 +53,25 @@ class Payment(TenantModel):
     # создаётся только там. Прежнее "yookassa" в умолчании врало: платёж
     # у кассы приписывался банку, через который не проходил.
     provider = models.CharField("Провайдер", max_length=32, default="manual")
+    # Уникален ВНУТРИ заведения, а не на всю базу: у кафе разные терминалы
+    # и разные договоры с банками, номера платежей у них свои и вполне
+    # могут совпасть. С глобальной уникальностью второй платёж просто не
+    # сохранился бы — деньги пришли, а заказ остался открытым.
     external_id = models.CharField(
-        "ID у провайдера", max_length=128, unique=True, null=True, blank=True
+        "ID у провайдера", max_length=128, null=True, blank=True
     )
     fiscal_receipt = models.CharField("Фискальный чек", max_length=64, blank=True, default="")
     created_at = models.DateTimeField("Создан", auto_now_add=True)
     updated_at = models.DateTimeField("Обновлён", auto_now=True)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "external_id"],
+                condition=~models.Q(external_id=None),
+                name="uniq_payment_external_id_per_org",
+            ),
+        ]
         verbose_name = "Платёж"
         verbose_name_plural = "Платежи"
         ordering = ["-created_at"]

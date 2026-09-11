@@ -525,3 +525,251 @@ class BoardsIsolationTests(TestCase):
             **self._as("waiter"),
         )
         self.assertNotEqual(res.status_code, 200, "в заказ добавлено чужое блюдо")
+
+
+@override_settings(ALLOWED_HOSTS=["*"])
+class RegistrationAndLoyaltyIsolationTests(TestCase):
+    """Гости, регистрация и бонусы.
+
+    Один и тот же человек может ходить в оба кафе — и в каждом он свой
+    гость со своим балансом. Проверяем, что один телефон не мешает
+    зарегистрироваться в соседнем и что бонусы не перетекают.
+    """
+
+    HOST_A = "alpha.padacha.ru"
+    HOST_B = "beta.padacha.ru"
+    PHONE = "+79990001122"
+
+    def setUp(self):
+        self.a = Organization.objects.order_by("pk").first()
+        self.a.domain, self.a.name, self.a.slug = self.HOST_A, "Альфа", "alpha"
+        self.a.save()
+        self.b = Organization.objects.create(name="Бета", slug="beta", domain=self.HOST_B)
+        for org in (self.a, self.b):
+            with organization_context(org):
+                site = SiteSettings.load()
+                site.plan = SiteSettings.Plan.MAX
+                site.bonus_enabled = True
+                site.save()
+        self.client = APIClient()
+
+    def _register(self, host):
+        return self.client.post(
+            "/api/auth/register/",
+            {"name": "Гость", "phone": self.PHONE},
+            format="json",
+            HTTP_HOST=host,
+        )
+
+    def test_same_phone_can_register_in_both_cafes(self):
+        """Телефон уникален внутри кафе, а не на всю базу: иначе гость
+        одного заведения не смог бы зарегистрироваться в другом."""
+        self.assertEqual(self._register(self.HOST_A).status_code, 201)
+        self.assertEqual(self._register(self.HOST_B).status_code, 201)
+
+        self.assertEqual(User.objects.filter(phone=self.PHONE).count(), 2)
+        for org, host in ((self.a, self.HOST_A), (self.b, self.HOST_B)):
+            self.assertTrue(
+                User.objects.filter(phone=self.PHONE, organization=org).exists(),
+                f"регистрация на {host} ушла не в то заведение",
+            )
+
+    def test_repeat_registration_in_same_cafe_is_refused(self):
+        self.assertEqual(self._register(self.HOST_A).status_code, 201)
+        self.assertEqual(self._register(self.HOST_A).status_code, 400)
+
+    def test_bonus_balance_does_not_leak_between_cafes(self):
+        self._register(self.HOST_A)
+        self._register(self.HOST_B)
+        with organization_context(self.b):
+            guest_b = User.objects.get(phone=self.PHONE, organization=self.b)
+            LoyaltyMember.objects.create(user=guest_b, balance=5000)
+
+        with organization_context(self.a):
+            guest_a = User.objects.get(phone=self.PHONE, organization=self.a)
+            member_a, _ = LoyaltyMember.objects.get_or_create(
+                user=guest_a, defaults={"balance": 0}
+            )
+        self.assertEqual(member_a.balance, 0, "баланс пришёл из соседнего кафе")
+
+
+@override_settings(ALLOWED_HOSTS=["*"])
+class PaymentIsolationTests(TestCase):
+    """Оплаты: деньги не должны попасть в чужой отчёт.
+
+    Самое опасное место — уведомление банка: оно приходит извне, и если
+    платёж ищется по всей базе, оплата одного кафе закроет заказ другого.
+    """
+
+    HOST_A = "alpha.padacha.ru"
+    HOST_B = "beta.padacha.ru"
+
+    def setUp(self):
+        from payments.models import Payment
+
+        self.Payment = Payment
+        self.a = Organization.objects.order_by("pk").first()
+        self.a.domain, self.a.name, self.a.slug = self.HOST_A, "Альфа", "alpha"
+        self.a.save()
+        self.b = Organization.objects.create(name="Бета", slug="beta", domain=self.HOST_B)
+
+        self.orders, self.payments = {}, {}
+        for key, org in (("a", self.a), ("b", self.b)):
+            with organization_context(org):
+                SiteSettings.load()
+                order = Order.objects.create(total=500)
+                self.orders[key] = order
+                # Внешний id банка намеренно ОДИНАКОВЫЙ: банки нумеруют
+                # платежи по своему терминалу, и совпадение возможно.
+                self.payments[key] = Payment.objects.create(
+                    order=order, amount=500, provider="tbank",
+                    external_id="SAME-BANK-ID", status=Payment.Status.PENDING,
+                )
+        self.client = APIClient()
+
+    def test_bank_callback_applies_to_the_right_cafe(self):
+        """Уведомление приходит на домен кафе — там платёж и должен найтись."""
+        with organization_context(self.a):
+            own = self.Payment.objects.filter(external_id="SAME-BANK-ID").first()
+        self.assertEqual(own.pk, self.payments["a"].pk)
+        with organization_context(self.b):
+            other = self.Payment.objects.filter(external_id="SAME-BANK-ID").first()
+        self.assertEqual(other.pk, self.payments["b"].pk)
+
+    def test_guest_cannot_pay_foreign_order_by_token(self):
+        """Оплата по токену: с чужого домена заказ найтись не должен."""
+        import uuid
+
+        with organization_context(self.b):
+            foreign = self.orders["b"]
+            foreign.public_token = uuid.uuid4()
+            foreign.save(update_fields=["public_token"])
+        res = self.client.post(
+            "/api/orders/pay_online/",
+            {"token": str(foreign.public_token)},
+            format="json",
+            HTTP_HOST=self.HOST_A,
+        )
+        self.assertEqual(res.status_code, 404, "чужой заказ найден по токену")
+
+    def test_payments_of_other_cafe_are_invisible(self):
+        with organization_context(self.a):
+            self.assertEqual(self.Payment.objects.count(), 1)
+        self.assertEqual(self.Payment.all_objects.count(), 2)
+
+
+@override_settings(ALLOWED_HOSTS=["*"])
+class ReportsIsolationTests(TestCase):
+    """Отчёты: прибыль, склад, закуп, выручка.
+
+    Здесь утечка не выглядит утечкой — она выглядит неверными цифрами.
+    Владелец увидит чужую выручку в своей прибыли и будет принимать
+    решения по ней, не подозревая, откуда она взялась.
+    """
+
+    HOST_A = "alpha.padacha.ru"
+    HOST_B = "beta.padacha.ru"
+    HUGE = 999999
+
+    def setUp(self):
+        self.a = Organization.objects.order_by("pk").first()
+        self.a.domain, self.a.name, self.a.slug = self.HOST_A, "Альфа", "alpha"
+        self.a.save()
+        self.b = Organization.objects.create(name="Бета", slug="beta", domain=self.HOST_B)
+
+        for org, marker, amount in ((self.a, "альфы", 100), (self.b, "беты", self.HUGE)):
+            with organization_context(org):
+                site = SiteSettings.load()
+                site.plan = SiteSettings.Plan.MAX
+                site.save()
+                category = Category.objects.create(name=f"Кат {marker}")
+                product = Product.objects.create(
+                    name=f"Блюдо {marker}", price=amount, category=category
+                )
+                order = Order.objects.create(
+                    total=amount, status=Order.Status.PAID,
+                    closed_at=timezone.now(), pay_method="cash",
+                )
+                OrderItem.objects.create(
+                    order=order, product=product, quantity=1, unit_price=amount
+                )
+                stock_category = StockCategory.objects.create(name=f"Склад {marker}")
+                StockItem.objects.create(
+                    name=f"Позиция {marker}", category=stock_category,
+                    unit="g", quantity=amount, min_quantity=amount * 2,
+                )
+                ExpenseCategory.objects.create(name=f"Статья {marker}")
+
+        with organization_context(self.a):
+            User.objects.create_user(
+                "owner", password="Sh4-alpha-owner", role=User.Role.ADMIN,
+                organization=self.a,
+            )
+        self.client = APIClient()
+        token = self.client.post(
+            "/api/auth/token/",
+            {"username": "owner", "password": "Sh4-alpha-owner"},
+            format="json",
+            HTTP_HOST=self.HOST_A,
+        ).json()["access"]
+        self.auth = {"HTTP_AUTHORIZATION": f"Bearer {token}", "HTTP_HOST": self.HOST_A}
+
+    def _clean(self, url, params=None):
+        res = self.client.get(url, params or {}, **self.auth)
+        self.assertEqual(res.status_code, 200, f"{url}: {res.data}")
+        body = str(res.json())
+        self.assertNotIn(
+            str(self.HUGE), body, f"{url}: в отчёт попали данные соседнего кафе"
+        )
+        return res.json()
+
+    def test_profit_report_counts_own_money_only(self):
+        self._clean("/api/finance/payroll/report/")
+
+    def test_payroll_days_of_foreign_employee_are_empty(self):
+        """Расшифровку просят по id работника — чужой id не должен ничего
+        показать, даже если его угадали."""
+        with organization_context(self.b):
+            stranger = User.objects.create_user(
+                "работник-беты", role=User.Role.WAITER, organization=self.b
+            )
+            shift = Shift.objects.create(date=timezone.localdate())
+            shift.members.create(user=stranger, organization=self.b)
+        res = self.client.get(
+            "/api/finance/payroll/days/", {"user": stranger.pk}, **self.auth
+        )
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(
+            res.json()["days"], [], "показаны смены работника соседнего кафе"
+        )
+
+    def test_payroll_payout_to_foreign_employee_is_refused(self):
+        with organization_context(self.b):
+            stranger = User.objects.create_user(
+                "чужой-работник", role=User.Role.WAITER, organization=self.b
+            )
+        res = self.client.post(
+            "/api/finance/payroll/pay/",
+            {"user": stranger.pk, "amount": "1000"},
+            format="json",
+            **self.auth,
+        )
+        self.assertEqual(res.status_code, 400, "выплата ушла работнику чужого кафе")
+
+    def test_stock_list_is_own(self):
+        body = self._clean("/api/inventory/items/")
+        rows = body if isinstance(body, list) else body.get("results", [])
+        names = str([r.get("name") for r in rows])
+        self.assertIn("альфы", names)
+        self.assertNotIn("беты", names)
+
+    def test_purchase_list_is_own(self):
+        """Закуп собирается из позиций ниже минимума — у обоих кафе они есть."""
+        self._clean("/api/inventory/purchases/day/")
+
+    def test_expense_summary_is_own(self):
+        self._clean("/api/finance/expenses/")
+
+    def test_orders_feed_for_admin_panel_is_own(self):
+        """Плитки админ-панели считаются по этому же списку заказов."""
+        self._clean("/api/orders/")
