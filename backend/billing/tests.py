@@ -152,3 +152,67 @@ class LicenseIssuingTests(TestCase):
 
     def test_get_not_allowed(self):
         self.assertEqual(self.client.get("/api/license/").status_code, 405)
+
+
+class ImportPultTests(TestCase):
+    """Импорт реестра из старого пульта.
+
+    Переезд делается один раз, но ошибиться в нём дорого: потеря ключа
+    лицензии мгновенно заблокирует внешнюю установку, а повторный запуск
+    не должен плодить дубли — переезд обычно повторяют.
+    """
+
+    DUMP = [
+        {"model": "billing.client", "pk": 1,
+         "fields": {"name": "Сеть «Дубль»", "phone": "+7 900 000-00-00",
+                    "contact_person": "", "email": "", "notes": ""}},
+        {"model": "billing.instance", "pk": 7,
+         "fields": {"client": 1, "title": "Точка на набережной",
+                    "domain": "naberezhnaya.padacha.ru",
+                    "license_key": "key-naberezhnaya", "plan": "hall",
+                    "paid_until": "2026-12-31", "grace_days": 5,
+                    "is_internal": False, "notes": "",
+                    "last_seen_at": None, "last_version": ""}},
+        {"model": "billing.payment", "pk": 3,
+         "fields": {"instance": 7, "amount": "2990.00", "months": 1,
+                    "paid_at": "2026-09-01", "comment": "счёт 12"}},
+    ]
+
+    def _run(self):
+        import json
+        import tempfile
+
+        from django.core.management import call_command
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+            json.dump(self.DUMP, fh)
+            path = fh.name
+        call_command("import_pult", path, verbosity=0)
+
+    def test_import_creates_organization_subscription_and_payment(self):
+        self._run()
+        org = Organization.objects.get(domain="naberezhnaya.padacha.ru")
+        self.assertEqual(org.name, "Точка на набережной")
+        # ключ обязан переехать: по нему внешняя установка получает лицензию
+        self.assertEqual(org.license_key, "key-naberezhnaya")
+        self.assertEqual(org.client.name, "Сеть «Дубль»")
+
+        sub = org.subscription
+        self.assertEqual(sub.plan, "hall")
+        self.assertEqual(sub.paid_until, date(2026, 12, 31))
+        self.assertEqual(sub.grace_days, 5)
+        self.assertEqual(sub.payments.count(), 1)
+
+    def test_import_does_not_extend_subscription_by_imported_payment(self):
+        """«Оплачено до» уже посчитано пультом — платёж не должен продлевать
+        его второй раз."""
+        self._run()
+        sub = Subscription.objects.get(organization__domain="naberezhnaya.padacha.ru")
+        self.assertEqual(sub.paid_until, date(2026, 12, 31))
+
+    def test_repeat_import_is_idempotent(self):
+        self._run()
+        self._run()
+        self.assertEqual(Organization.objects.filter(domain="naberezhnaya.padacha.ru").count(), 1)
+        self.assertEqual(Client.objects.filter(name="Сеть «Дубль»").count(), 1)
+        self.assertEqual(Payment.objects.count(), 1)
