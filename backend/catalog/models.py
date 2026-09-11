@@ -4,7 +4,7 @@ from io import BytesIO
 from django.core.files.base import ContentFile
 from django.db import models
 
-from core.tenancy import TenantModel
+from core.tenancy import TenantModel, tenant_upload_to
 from PIL import Image
 
 
@@ -16,7 +16,9 @@ class Category(TenantModel):
         BAR = "bar", "Бар"
 
     name = models.CharField("Название", max_length=100)
-    icon = models.ImageField("Иконка", upload_to="categories/", null=True, blank=True)
+    icon = models.ImageField(
+        "Иконка", upload_to=tenant_upload_to("categories"), null=True, blank=True
+    )
     station = models.CharField(
         "Станция", max_length=8, choices=Station.choices, default=Station.BAR,
         help_text="Куда уходят позиции этой категории: на кухню (еда) или в бар (напитки)",
@@ -44,10 +46,13 @@ class Product(TenantModel):
     )
     name = models.CharField("Название", max_length=200)
     description = models.TextField("Описание", blank=True)
-    image = models.ImageField("Изображение", upload_to="products/", null=True, blank=True)
+    image = models.ImageField(
+        "Изображение", upload_to=tenant_upload_to("products"), null=True, blank=True
+    )
     # лёгкое превью (WebP ~256px) — генерируется автоматически, отдаётся в списке
     thumbnail = models.ImageField(
-        "Превью", upload_to="products/thumbs/", null=True, blank=True, editable=False
+        "Превью", upload_to=tenant_upload_to("products/thumbs"), null=True, blank=True,
+        editable=False
     )
     price = models.DecimalField("Цена, ₽", max_digits=10, decimal_places=2)
     weight_grams = models.PositiveIntegerField("Вес, г", null=True, blank=True)

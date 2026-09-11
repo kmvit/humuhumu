@@ -281,7 +281,7 @@ class RemoveItemCodeTests(OrderFlowBase):
 
     def test_in_progress_item_rejects_wrong_code(self):
         SiteSettings.load()
-        site = SiteSettings.objects.get(pk=1)
+        site = SiteSettings.load()
         site.item_remove_code = "4321"
         site.save()
         order = self.create_order()

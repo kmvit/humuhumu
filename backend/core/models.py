@@ -1,6 +1,6 @@
 from django.db import models
 
-from .tenancy import TenantMixin
+from .tenancy import TenantMixin, tenant_upload_to
 
 
 class Organization(models.Model):
@@ -13,14 +13,45 @@ class Organization(models.Model):
 
     name = models.CharField("Название", max_length=160)
     slug = models.SlugField("Код", max_length=60, unique=True)
+    # По домену заведение и опознаётся в общей установке (см. middleware).
+    # Пусто — для отдельной установки, где заведение одно и опознавать
+    # нечего: там подойдёт любой домен из DJANGO_ALLOWED_HOSTS.
+    domain = models.CharField(
+        "Домен", max_length=200, blank=True, default="", db_index=True,
+        help_text="Напр. moyokafe.padacha.ru — по нему гость попадает именно сюда",
+    )
+    license_key = models.CharField(
+        "Ключ лицензии", max_length=64, blank=True, default="",
+        help_text="Из пульта «Падачи». Пусто — заведение не биллится",
+    )
+    is_active = models.BooleanField(
+        "Активно", default=True,
+        help_text="Выключенное заведение не отвечает по своему домену",
+    )
     created_at = models.DateTimeField("Создано", auto_now_add=True)
 
     class Meta:
         verbose_name = "Заведение"
         verbose_name_plural = "Заведения"
+        constraints = [
+            # Пустой домен допускаем у многих (отдельные установки),
+            # непустой обязан быть уникальным — иначе непонятно, кому
+            # принадлежит запрос.
+            models.UniqueConstraint(
+                fields=["domain"],
+                condition=~models.Q(domain=""),
+                name="unique_organization_domain",
+            ),
+        ]
 
     def __str__(self):
         return self.name
+
+    @staticmethod
+    def normalize_host(host: str) -> str:
+        """Хост запроса → вид, в котором домен хранится у заведения."""
+        host = (host or "").split(":")[0].strip().lower().rstrip(".")
+        return host[4:] if host.startswith("www.") else host
 
 
 class SiteSettings(TenantMixin):
@@ -39,7 +70,9 @@ class SiteSettings(TenantMixin):
         "Короткое имя приложения", max_length=12, blank=True,
         help_text="Подпись под иконкой на телефоне. Пусто — обрежется из названия",
     )
-    logo = models.ImageField("Логотип", upload_to="site/", null=True, blank=True)
+    logo = models.ImageField(
+        "Логотип", upload_to=tenant_upload_to("site"), null=True, blank=True
+    )
 
     phone = models.CharField("Телефон", max_length=30, blank=True)
     email = models.EmailField("Email", blank=True)
@@ -206,17 +239,27 @@ class SiteSettings(TenantMixin):
     class Meta:
         verbose_name = "Настройки сайта"
         verbose_name_plural = "Настройки сайта"
+        constraints = [
+            # одна запись настроек на заведение
+            models.UniqueConstraint(
+                fields=["organization"], name="unique_sitesettings_per_org"
+            ),
+        ]
 
     def __str__(self):
         return self.name
 
-    def save(self, *args, **kwargs):
-        self.pk = 1  # всегда одна запись
-        super().save(*args, **kwargs)
-
     @classmethod
     def load(cls):
-        obj, _ = cls.objects.get_or_create(pk=1)
+        """Настройки текущего заведения; заводятся при первом обращении.
+
+        Раньше здесь была одна запись на базу (pk=1). В общей установке
+        заведений много, и у каждого свои настройки — поэтому запись
+        ищется по заведению, а не по единице.
+        """
+        from core.tenancy import current_organization
+
+        obj, _ = cls.objects.get_or_create(organization=current_organization())
         return obj
 
 
@@ -244,15 +287,25 @@ class LicenseState(TenantMixin):
     class Meta:
         verbose_name = "Лицензия"
         verbose_name_plural = "Лицензия"
+        constraints = [
+            # одна запись настроек на заведение
+            models.UniqueConstraint(
+                fields=["organization"], name="unique_licensestate_per_org"
+            ),
+        ]
 
     def __str__(self):
         return f"Лицензия: {self.plan or '—'} до {self.paid_until or '—'}"
 
-    def save(self, *args, **kwargs):
-        self.pk = 1
-        super().save(*args, **kwargs)
-
     @classmethod
     def load(cls):
-        obj, _ = cls.objects.get_or_create(pk=1)
+        """Настройки текущего заведения; заводятся при первом обращении.
+
+        Раньше здесь была одна запись на базу (pk=1). В общей установке
+        заведений много, и у каждого свои настройки — поэтому запись
+        ищется по заведению, а не по единице.
+        """
+        from core.tenancy import current_organization
+
+        obj, _ = cls.objects.get_or_create(organization=current_organization())
         return obj

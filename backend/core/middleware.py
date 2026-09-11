@@ -18,6 +18,8 @@ import re
 from django.http import JsonResponse
 
 from .license import BLOCKED, effective_status
+from .models import Organization
+from .tenancy import set_current_organization
 
 _OPEN_ALWAYS = (
     "/api/site/",
@@ -53,3 +55,51 @@ class LicenseMiddleware:
         return request.method in ("GET", "HEAD") and bool(
             _OPEN_GET.match(request.path)
         )
+
+
+class TenantMiddleware:
+    """Опознать заведение по домену запроса.
+
+    В общей установке несколько заведений живут в одной базе и различаются
+    доменом: monti.padacha.ru — одно, kofeinya.padacha.ru — другое. Это
+    ЕДИНСТВЕННОЕ место, где заведение выбирается; дальше весь код берёт
+    его из current_organization().
+
+    Отдельная установка (одно заведение в базе) работает как раньше: домен
+    у заведения может быть пуст, и тогда подойдёт любой хост из
+    DJANGO_ALLOWED_HOSTS — иначе после обновления перестали бы открываться
+    уже работающие кафе.
+
+    Стоит ДО LicenseMiddleware: тот проверяет подписку заведения, а какого
+    именно — знает только этот.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        host = Organization.normalize_host(request.get_host())
+        org = Organization.objects.filter(domain=host).first()
+
+        if org is None:
+            # Домен никому не назначен. На отдельной установке это норма —
+            # заведение там одно, его и обслуживаем.
+            only = Organization.objects.order_by("pk")[:2]
+            if len(only) == 1:
+                org = only[0]
+            else:
+                return JsonResponse(
+                    {"detail": "Заведение по этому адресу не найдено.",
+                     "code": "unknown_tenant"},
+                    status=404,
+                )
+
+        if not org.is_active:
+            return JsonResponse(
+                {"detail": "Заведение отключено.", "code": "tenant_disabled"},
+                status=404,
+            )
+
+        set_current_organization(org)
+        request.organization = org
+        return self.get_response(request)

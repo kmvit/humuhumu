@@ -50,10 +50,25 @@ def _verify(data: dict, sign: str, key: str) -> bool:
     return hmac.compare_digest(expected, sign)
 
 
+def license_key() -> str:
+    """Ключ текущего заведения.
+
+    В общей установке ключ свой у каждого заведения (Organization), в
+    отдельной — один на инстанс в .env. Поле заведения главнее: оно
+    появилось позже и заполняется при подключении точки.
+    """
+    from .tenancy import current_organization
+
+    org = current_organization()
+    if org is not None and org.license_key:
+        return org.license_key
+    return settings.LICENSE_KEY
+
+
 def sync_license() -> LicenseState:
     """Сходить на пульт и обновить кэш. Ошибка сети не роняет вызывающего."""
     state = LicenseState.load()
-    key = settings.LICENSE_KEY
+    key = license_key()
     if not key:
         return state
     try:
@@ -96,7 +111,7 @@ def effective_status(today: date | None = None) -> str:
     ни одной успешной сверки — тоже active: новая точка не должна стоять
     из-за того, что beat ещё не добежал.
     """
-    if not settings.LICENSE_KEY:
+    if not license_key():
         return ACTIVE
     state = LicenseState.load()
     # Своя точка не биллится: дата в пульте у неё техническая (триал), и
@@ -126,7 +141,7 @@ def status_payload() -> dict:
     """Что видит персонал в баннере и на экране блокировки."""
     state = LicenseState.load()
     return {
-        "enabled": bool(settings.LICENSE_KEY),
+        "enabled": bool(license_key()),
         "status": effective_status(),
         "internal": state.internal,
         "plan": state.plan or SiteSettings.load().plan,

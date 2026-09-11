@@ -21,38 +21,95 @@
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
+
 from django.apps import apps
 from django.db import models
+from django.utils.deconstruct import deconstructible
 
-#: Кэш «единственной организации» на процесс. Пока организация одна на
-#: базу, ходить за ней в базу на каждый запрос незачем. Когда тенантов
-#: станет много, кэш заменит разбор запроса, и это место уйдёт.
-_current: object | None = None
+#: Заведение текущего запроса. contextvars, а не глобальная переменная:
+#: у gunicorn несколько воркеров и потоков, и заведение соседнего запроса
+#: не должно протечь в наш.
+_current: contextvars.ContextVar = contextvars.ContextVar("organization", default=None)
+
+
+class NoOrganizationSelected(RuntimeError):
+    """Заведений несколько, а какое обслуживаем — не сказано.
+
+    Специально громкая ошибка. Молча вернуть «первое попавшееся» значило
+    бы показать одному заведению данные другого; молча вернуть пустоту —
+    спрятать баг. Фоновым задачам и командам нужно указать заведение
+    явно: `with organization_context(org): ...`
+    """
 
 
 def current_organization():
-    """Организация текущего запроса.
+    """Заведение, которое обслуживаем прямо сейчас.
 
-    Возвращает None, если организации ещё нет: это бывает на пустой базе
-    между миграциями. В этом случае менеджер не фильтрует — иначе
-    migrate и loaddata на чистой установке падали бы.
+    Порядок: явно заданное (middleware по домену или organization_context)
+    → единственное в базе → ошибка, если их несколько.
+
+    Возвращает None только на пустой базе (между миграциями): тогда
+    менеджер не фильтрует, иначе migrate и loaddata не отработали бы.
     """
-    global _current
-    if _current is not None:
-        return _current
+    org = _current.get()
+    if org is not None:
+        return org
     Organization = apps.get_model("core", "Organization")
     try:
-        _current = Organization.objects.order_by("pk").first()
+        first_two = list(Organization.objects.order_by("pk")[:2])
     except Exception:
-        # таблицы ещё нет (первый migrate) — тенанта тоже нет
+        # таблиц ещё нет (первый migrate) — заведений тоже нет
         return None
-    return _current
+    if not first_two:
+        return None
+    if len(first_two) > 1:
+        raise NoOrganizationSelected(
+            "В базе несколько заведений, а текущее не выбрано. Для фоновых "
+            "задач и команд используйте organization_context(org)."
+        )
+    # одно заведение на базу — привычный режим отдельной установки
+    return first_two[0]
 
 
-def reset_organization_cache() -> None:
-    """Сбросить кэш. Нужен тестам и команде, меняющей организацию."""
-    global _current
-    _current = None
+def set_current_organization(org) -> None:
+    """Задать заведение запроса. Зовётся из middleware."""
+    _current.set(org)
+
+
+@contextlib.contextmanager
+def organization_context(org):
+    """Выполнить блок от имени заведения — для команд и celery-задач."""
+    token = _current.set(org)
+    try:
+        yield org
+    finally:
+        _current.reset(token)
+
+
+@deconstructible
+class tenant_upload_to:
+    """Путь загрузки внутри папки заведения: org-<id>/<subdir>/<имя файла>.
+
+    В общей установке том media один на всех, и «logo.png» двух кафе
+    столкнулись бы. Django-то переименует дубликат, но файлы заведений
+    лежали бы вперемешку: не выгрузить и не удалить по-отдельности.
+
+    Класс, а не замыкание: upload_to попадает в миграции, а функцию,
+    созданную внутри другой функции, Django сериализовать не умеет.
+    """
+
+    def __init__(self, subdir: str):
+        self.subdir = subdir
+
+    def __call__(self, instance, filename: str) -> str:
+        org_id = getattr(instance, "organization_id", None) or "common"
+        return f"org-{org_id}/{self.subdir}/{filename}"
+
+    def __eq__(self, other):
+        # Без этого makemigrations видит «изменение» при каждом запуске.
+        return isinstance(other, tenant_upload_to) and other.subdir == self.subdir
 
 
 class TenantQuerySet(models.QuerySet):

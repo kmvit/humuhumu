@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.db import models, transaction
 
-from core.tenancy import TenantModel
+from core.tenancy import TenantModel, tenant_upload_to
 
 
 def normalize_name(text: str) -> str:
@@ -243,7 +243,7 @@ class ReceiptScan(TenantModel):
         FAILED = "failed", "Ошибка"
         CONFIRMED = "confirmed", "Оприходован"
 
-    image = models.ImageField("Фото чека", upload_to="receipt_scans/%Y/%m/")
+    image = models.ImageField("Фото чека", upload_to=tenant_upload_to("receipt_scans"))
     status = models.CharField(
         "Статус", max_length=12, choices=Status.choices, default=Status.PENDING
     )

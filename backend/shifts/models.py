@@ -43,17 +43,27 @@ class ShiftSettings(TenantModel):
     class Meta:
         verbose_name = "Настройки смен и оплаты"
         verbose_name_plural = "Настройки смен и оплаты"
+        constraints = [
+            # одна запись настроек на заведение
+            models.UniqueConstraint(
+                fields=["organization"], name="unique_shiftsettings_per_org"
+            ),
+        ]
 
     def __str__(self):
         return "Настройки смен и оплаты"
 
-    def save(self, *args, **kwargs):
-        self.pk = 1  # всегда одна запись
-        super().save(*args, **kwargs)
-
     @classmethod
     def load(cls):
-        obj, _ = cls.objects.get_or_create(pk=1)
+        """Настройки текущего заведения; заводятся при первом обращении.
+
+        Раньше здесь была одна запись на базу (pk=1). В общей установке
+        заведений много, и у каждого свои настройки — поэтому запись
+        ищется по заведению, а не по единице.
+        """
+        from core.tenancy import current_organization
+
+        obj, _ = cls.objects.get_or_create(organization=current_organization())
         return obj
 
 

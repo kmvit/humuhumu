@@ -45,6 +45,8 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # порядок важен: сначала узнаём заведение, потом проверяем его подписку
+    "core.middleware.TenantMiddleware",
     "core.middleware.LicenseMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
@@ -104,9 +106,17 @@ MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# auth.W004 — «username не уникален». Так и задумано: логин уникален
+# внутри заведения, а вход умеет это учитывать (users/auth.py).
+SILENCED_SYSTEM_CHECKS = ["auth.W004"]
+
+# Вход и токены — в границах заведения: логины уникальны внутри кафе,
+# а не глобально (см. users/auth.py).
+AUTHENTICATION_BACKENDS = ["users.auth.OrganizationBackend"]
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "users.auth.OrganizationJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
