@@ -6,6 +6,8 @@ import mimetypes
 
 from celery import shared_task
 
+from core.tenancy import organization_context
+
 from .models import ReceiptScan
 from .receipt_ai import build_draft, recognize_receipt
 
@@ -18,10 +20,19 @@ def process_receipt_scan(scan_id: int) -> None:
 
     Идемпотентна: работает только со сканами в статусе PENDING.
     """
-    scan = ReceiptScan.objects.filter(pk=scan_id).first()
+    # Задача выполняется в воркере, где заведение никто не выбирал: HTTP-
+    # запроса нет, домена нет. Поэтому скан ищем в обход фильтра (по id),
+    # а дальше работаем строго от имени ЕГО заведения — иначе распознавание
+    # полезло бы в номенклатуру соседнего кафе.
+    scan = ReceiptScan.all_objects.filter(pk=scan_id).first()
     if scan is None or scan.status != ReceiptScan.Status.PENDING:
         return
 
+    with organization_context(scan.organization):
+        _process(scan, scan_id)
+
+
+def _process(scan, scan_id: int) -> None:
     try:
         scan.image.open("rb")
         try:
