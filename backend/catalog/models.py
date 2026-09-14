@@ -178,3 +178,146 @@ class ProductLike(TenantModel):
 
     def __str__(self):
         return f"♥ {self.product_id} · {self.device[:8]}"
+
+class ModifierGroup(TenantModel):
+    """Набор опций к блюду: «Молоко», «Добавки», «Сироп».
+
+    Набор общий, а не свой у каждого блюда: «Молоко» заводится один раз и
+    цепляется ко всем кофе сразу — иначе у кофейни с тринадцатью напитками
+    его пришлось бы заполнять тринадцать раз и править потом тоже везде.
+    Так же устроены modifier sets у Square и Toast.
+
+    Опции — НЕ варианты. Вариант меняет напиток целиком (своя цена, свой
+    состав) и выбирается ровно один; опции набираются поверх выбранного
+    объёма и складываются. Если их смешать, «три объёма × три молока»
+    превратятся в девять позиций меню — ровно та комбинаторика, из-за
+    которой всё и затевалось.
+    """
+
+    name = models.CharField("Название", max_length=100)
+    products = models.ManyToManyField(
+        Product, related_name="modifier_groups", blank=True, verbose_name="Блюда"
+    )
+    # 1 — гость обязан выбрать (молоко в латте), 0 — по желанию (сироп)
+    min_choices = models.PositiveSmallIntegerField("Минимум выбрать", default=0)
+    # 1 — ровно одно из набора, больше — можно набрать несколько
+    max_choices = models.PositiveSmallIntegerField("Максимум выбрать", default=1)
+    sort_order = models.PositiveIntegerField("Порядок сортировки", default=0)
+    is_active = models.BooleanField("Активен", default=True)
+
+    class Meta:
+        verbose_name = "Набор опций"
+        verbose_name_plural = "Наборы опций"
+        ordering = ["sort_order", "name"]
+
+    @property
+    def is_required(self) -> bool:
+        return self.min_choices > 0
+
+    def __str__(self):
+        return self.name
+
+
+class Modifier(TenantModel):
+    """Опция внутри набора: «Овсяное», «+ шот эспрессо», «Без сиропа».
+
+    Цена — надбавка к цене варианта (может быть нулевой и отрицательной).
+    Что опция делает со складом, описывают ModifierEffect.
+    """
+
+    group = models.ForeignKey(
+        ModifierGroup,
+        on_delete=models.CASCADE,
+        related_name="modifiers",
+        verbose_name="Набор",
+    )
+    name = models.CharField("Название", max_length=100)
+    price_delta = models.DecimalField(
+        "Надбавка, ₽", max_digits=10, decimal_places=2, default=0
+    )
+    is_stopped = models.BooleanField("На стопе (временно)", default=False)
+    sort_order = models.PositiveIntegerField("Порядок сортировки", default=0)
+
+    class Meta:
+        verbose_name = "Опция"
+        verbose_name_plural = "Опции"
+        ordering = ["sort_order", "name"]
+
+    def __str__(self):
+        return self.name
+
+
+class ModifierEffect(TenantModel):
+    """Что опция делает со складом. Считается поверх тех карты варианта.
+
+    Три вида, и это не прихоть — дельтами количества обошлись бы только
+    добавки:
+
+    - ДОБАВИТЬ: «+ шот эспрессо» — плюс 18 г зерна, количество фиксированное;
+    - УБРАТЬ: «без сиропа» — сколько сиропа не класть, знает тех карта
+      проданного объёма, а не опция: в 0,33 его 20 мл, в 0,7 — 35;
+    - ЗАМЕНИТЬ: «на овсяном» — коровье на овсяное В ТОМ ЖЕ количестве,
+      какое стоит в карте проданного объёма.
+
+    Поэтому «убрать» и «заменить» хранят ТОВАР (и чем заменить), а не
+    количество: одна опция остаётся верной для всех объёмов и переживает
+    правку рецепта. Конкуренты здесь считают дельтами и вынуждены заводить
+    «овсяное для 0,33», «овсяное для 0,5» — см. память проекта.
+    """
+
+    class Kind(models.TextChoices):
+        ADD = "add", "Добавить"
+        REMOVE = "remove", "Убрать"
+        SWAP = "swap", "Заменить"
+
+    modifier = models.ForeignKey(
+        Modifier,
+        on_delete=models.CASCADE,
+        related_name="effects",
+        verbose_name="Опция",
+    )
+    kind = models.CharField("Действие", max_length=8, choices=Kind.choices)
+    item = models.ForeignKey(
+        "inventory.StockItem",
+        on_delete=models.PROTECT,
+        related_name="modifier_effects",
+        verbose_name="Товар склада",
+    )
+    #: чем заменить — только для «заменить»
+    replacement = models.ForeignKey(
+        "inventory.StockItem",
+        on_delete=models.PROTECT,
+        related_name="modifier_replacements",
+        null=True,
+        blank=True,
+        verbose_name="Заменить на",
+    )
+    #: сколько добавить — только для «добавить»; у остальных берётся из карты
+    quantity = models.DecimalField(
+        "Расход на порцию", max_digits=12, decimal_places=3, null=True, blank=True
+    )
+
+    class Meta:
+        verbose_name = "Действие опции"
+        verbose_name_plural = "Действия опций"
+        ordering = ["id"]
+        constraints = [
+            # Схема сторожит смысл сама: «добавить» без количества и
+            # «заменить» без замены — молчаливо ничего не спишут.
+            models.CheckConstraint(
+                name="modifier_effect_fields_match_kind",
+                check=(
+                    models.Q(kind="add", quantity__isnull=False, replacement__isnull=True)
+                    | models.Q(kind="remove", quantity__isnull=True, replacement__isnull=True)
+                    | models.Q(kind="swap", quantity__isnull=True, replacement__isnull=False)
+                ),
+            )
+        ]
+
+    def __str__(self):
+        if self.kind == self.Kind.SWAP:
+            return f"{self.item} → {self.replacement}"
+        if self.kind == self.Kind.REMOVE:
+            return f"без {self.item}"
+        return f"+{self.quantity} {self.item}"
+
