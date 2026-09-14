@@ -2,6 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { get, post, ApiError } from "../../api";
 import type { Category, Order, Product, ProductVariant } from "../../types";
+import OptionsSheet from "../../components/OptionsSheet";
+import {
+  addLine, cartCount, lineCaption, linePrice, lineKey,
+  needsPicking, removeLine, toPayload, variantCount, type Cart,
+} from "../../cart";
 import Icon, { categoryIcon } from "../../components/Icon";
 import { SceneBanner, WaveRule } from "../../components/Ornaments";
 import Lightbox from "../../components/Lightbox";
@@ -19,10 +24,13 @@ export default function Menu() {
   const [loading, setLoading] = useState(true);
   const [zoom, setZoom] = useState<string | null>(null);
 
-  // ключ — id ВАРИАНТА: «Кис-кис 0,33» и «0,5» лежат в корзине раздельно
-  const [cart, setCart] = useState<Record<number, number>>({});
-  // выбранный объём в каждой карточке: id товара → id варианта
+  // Ключ строки — вариант ВМЕСТЕ с набором опций: латте на коровьем и на
+  // овсяном это разные позиции с разной ценой (см. cart.ts).
+  const [cart, setCart] = useState<Cart>({});
+  // выбранный объём в карточке: id товара → id варианта
   const [picked, setPicked] = useState<Record<number, number>>({});
+  // блюдо, для которого открыт лист выбора объёма и опций
+  const [picking, setPicking] = useState<Product | null>(null);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [comment, setComment] = useState("");
@@ -76,9 +84,14 @@ export default function Menu() {
 
   const total = useMemo(
     () =>
-      Object.entries(cart).reduce((s, [id, q]) => {
-        const found = byVariant.get(Number(id));
-        return s + (found ? Number(found.variant.price) * q : 0);
+      Object.values(cart).reduce((s, line) => {
+        const found = byVariant.get(line.variant);
+        if (!found) return s;
+        return (
+          s +
+          linePrice(found.variant, found.product.modifier_groups, line.modifiers) *
+            line.qty
+        );
       }, 0),
     [cart, byVariant]
   );
@@ -87,7 +100,7 @@ export default function Menu() {
   const pickedFor = (p: Product) => picked[p.id] ?? p.variants[0]?.id;
   const variantOf = (p: Product) =>
     p.variants.find((v) => v.id === pickedFor(p)) ?? p.variants[0];
-  const count = Object.values(cart).reduce((a, b) => a + b, 0);
+  const count = cartCount(cart);
 
   // при появлении/смене своего заказа показываем его карточку сверху страницы
   // (после отправки пользователь остаётся внизу, где была корзина)
@@ -95,13 +108,16 @@ export default function Menu() {
     if (tracked) window.scrollTo(0, 0);
   }, [tracked?.id]);
 
-  const add = (id: number) => setCart((c) => ({ ...c, [id]: (c[id] || 0) + 1 }));
-  const remove = (id: number) =>
-    setCart((c) => {
-      const n = { ...c, [id]: (c[id] || 0) - 1 };
-      if (n[id] <= 0) delete n[id];
-      return n;
-    });
+  const add = (variant: number, modifiers: number[] = []) =>
+    setCart((c) => addLine(c, variant, modifiers));
+  const remove = (key: string) => setCart((c) => removeLine(c, key));
+
+  /** «+» на карточке: у блюда с опциями или объёмами — лист выбора,
+   *  у обычного — сразу в заказ, чтобы не плодить лишний тап. */
+  function tapAdd(p: Product, variant: ProductVariant) {
+    if (needsPicking(p)) setPicking(p);
+    else add(variant.id);
+  }
 
   async function submit() {
     if (!name.trim()) {
@@ -111,10 +127,7 @@ export default function Menu() {
     }
     setSubmitting(true);
     try {
-      const items = Object.entries(cart).map(([variant, quantity]) => ({
-        variant: Number(variant),
-        quantity,
-      }));
+      const items = toPayload(cart);
       const order = await post<Order>("/orders/place/", {
         customer_name: name.trim(),
         comment: comment.trim(),
@@ -231,6 +244,8 @@ export default function Menu() {
               const v = variantOf(p);
               if (!v) return null;  // товар без цен в меню не показываем
               const out = !p.is_available || v.is_stopped;
+              const simple = !needsPicking(p);
+              const inCart = variantCount(cart, v.id);
               return (
               <div className={"menu-row" + (out ? " out" : "")} key={p.id}>
                 <div className="menu-lead">
@@ -268,15 +283,23 @@ export default function Menu() {
                 <div className="menu-add">
                   {v.is_stopped ? (
                     <span className="muted sm">стоп</span>
-                  ) : cart[v.id] ? (
-                    <Stepper value={cart[v.id]} width={96} onDec={() => remove(v.id)} onInc={() => add(v.id)} />
+                  ) : simple && cart[lineKey(v.id, [])] ? (
+                    // Степпер только у простого блюда: у блюда с опциями
+                    // «минус» не знал бы, какую из строк заказа убавлять.
+                    <Stepper
+                      value={cart[lineKey(v.id, [])].qty}
+                      width={96}
+                      onDec={() => remove(lineKey(v.id, []))}
+                      onInc={() => add(v.id)}
+                    />
                   ) : (
                     <button
                       className="btn sm icon"
-                      onClick={() => add(v.id)}
+                      onClick={() => tapAdd(p, v)}
                       disabled={!p.is_available}
                       aria-label={`Добавить «${p.name} ${v.label}`.trim() + "»"}
                     >
+                      {inCart > 0 && <span className="num-badge">{inCart}</span>}
                       <Icon name={p.is_available ? "plus" : "spark"} size={16} />
                     </button>
                   )}
@@ -295,20 +318,28 @@ export default function Menu() {
             <button className="btn sm ghost" onClick={() => setCartOpen(false)}>Свернуть</button>
           </div>
           <ul className="stack list mt-2">
-            {Object.entries(cart).map(([id, qty]) => {
-              const found = byVariant.get(Number(id));
+            {Object.entries(cart).map(([key, line]) => {
+              const found = byVariant.get(line.variant);
               if (!found) return null;
               const { product: p, variant: v } = found;
+              const caption = lineCaption(v, p.modifier_groups, line.modifiers);
+              const each = linePrice(v, p.modifier_groups, line.modifiers);
               return (
-                <li key={id} className="between">
-                  <span>
-                    {p.name}
-                    {v.label && <span className="muted"> · {v.label}</span>}{" "}
-                    <span className="muted sm">#{p.id}</span>
+                <li key={key} className="between">
+                  <span className="row-body">
+                    <span>
+                      {p.name} <span className="muted sm">#{p.id}</span>
+                    </span>
+                    {caption && <span className="muted sm">{caption}</span>}
                   </span>
                   <span className="inline">
-                    <span className="num muted" style={{ minWidth: 62, textAlign: "right" }}>{(Number(v.price) * qty).toLocaleString("ru")} ₽</span>
-                    <Stepper value={qty} width={104} onDec={() => remove(Number(id))} onInc={() => add(Number(id))} />
+                    <span className="num muted" style={{ minWidth: 62, textAlign: "right" }}>{(each * line.qty).toLocaleString("ru")} ₽</span>
+                    <Stepper
+                      value={line.qty}
+                      width={104}
+                      onDec={() => remove(key)}
+                      onInc={() => add(line.variant, line.modifiers)}
+                    />
                   </span>
                 </li>
               );
@@ -373,6 +404,17 @@ export default function Menu() {
             Отправить
           </button>
         </div>
+      )}
+
+      {picking && (
+        <OptionsSheet
+          product={picking}
+          onClose={() => setPicking(null)}
+          onAdd={(variant, modifiers) => {
+            add(variant, modifiers);
+            setPicking(null);
+          }}
+        />
       )}
 
       {zoom && <Lightbox src={zoom} onClose={() => setZoom(null)} />}

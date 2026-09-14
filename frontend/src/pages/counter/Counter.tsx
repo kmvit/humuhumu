@@ -135,6 +135,9 @@ export default function Counter() {
                         <li key={it.id} className="between">
                           <span>
                             {it.product_name} <span className="num muted">× {it.quantity}</span>
+                            {it.options_text && (
+                              <span className="opts block">{it.options_text}</span>
+                            )}
                           </span>
                         </li>
                       ))}

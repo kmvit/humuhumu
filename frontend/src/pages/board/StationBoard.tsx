@@ -122,8 +122,15 @@ export default function StationBoard({ station }: { station: Station }) {
                         <ul className="stack tight list my-3">
                           {its.map((it) => (
                             <li key={it.id} className="between">
-                              <span className={it.status === "ready" ? "strike" : ""}>
-                                {it.product_name} <span className="num muted">× {it.quantity}</span>
+                              <span className={"row-body" + (it.status === "ready" ? " strike" : "")}>
+                                <span>
+                                  {it.product_name} <span className="num muted">× {it.quantity}</span>
+                                </span>
+                                {/* опции повару и бариста нужнее всего: по ним
+                                    готовят, а не по названию блюда */}
+                                {it.options_text && (
+                                  <span className="opts">{it.options_text}</span>
+                                )}
                               </span>
                               {itemControl(o, it)}
                             </li>

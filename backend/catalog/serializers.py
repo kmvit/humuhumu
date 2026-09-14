@@ -1,6 +1,13 @@
 from rest_framework import serializers
 
-from .models import Category, Modifier, ModifierGroup, Product, ProductVariant
+from .models import (
+    Category,
+    Modifier,
+    ModifierEffect,
+    ModifierGroup,
+    Product,
+    ProductVariant,
+)
 
 
 class RelativeImageField(serializers.ImageField):
@@ -32,21 +39,34 @@ class ProductVariantSerializer(serializers.ModelSerializer):
         )
 
 
+class ModifierEffectSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ModifierEffect
+        fields = ("id", "kind", "item", "replacement", "quantity")
+
+
 class ModifierSerializer(serializers.ModelSerializer):
+    """Опция. effects отдаём только владельцу — гостю их знать незачем."""
+
+    effects = ModifierEffectSerializer(many=True, read_only=True)
+
     class Meta:
         model = Modifier
-        fields = ("id", "name", "price_delta", "is_stopped", "sort_order")
+        fields = ("id", "name", "price_delta", "is_stopped", "sort_order", "effects")
 
 
 class ModifierGroupSerializer(serializers.ModelSerializer):
     modifiers = ModifierSerializer(many=True, read_only=True)
     is_required = serializers.BooleanField(read_only=True)
+    products = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=Product.objects, required=False
+    )
 
     class Meta:
         model = ModifierGroup
         fields = (
-            "id", "name", "min_choices", "max_choices",
-            "is_required", "sort_order", "modifiers",
+            "id", "name", "min_choices", "max_choices", "is_required",
+            "sort_order", "is_active", "products", "modifiers",
         )
 
 

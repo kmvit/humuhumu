@@ -5,6 +5,7 @@ import Modal from "../../components/ui/Modal";
 import { useToast } from "../../components/ui/Toast";
 import type { Category, Product, ProductVariant, Station } from "../../types";
 import { decimalInput } from "../../decimal";
+import Modifiers from "./Modifiers";
 
 /** Правка меню прямо в панели владельца, без Django-админки.
 
@@ -93,6 +94,7 @@ const emptyCategory = (): CategoryDraft => ({
 
 export default function Catalog() {
   const notify = useToast();
+  const [tab, setTab] = useState<"menu" | "options">("menu");
   const [cats, setCats] = useState<Category[]>([]);
   const [items, setItems] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -284,24 +286,47 @@ export default function Catalog() {
     <>
       <div className="between">
         <h1 className="h1">Каталог</h1>
-        <div className="wrap">
-          <button className="btn sm ghost" onClick={() => setCDraft(emptyCategory())}>
-            <Icon name="plus" size={15} /> Категория
-          </button>
-          <button
-            className="btn sm"
-            disabled={cats.length === 0}
-            onClick={() => setPDraft(emptyProduct(cats[0]?.id ?? ""))}
-          >
-            <Icon name="plus" size={15} /> Блюдо
-          </button>
-        </div>
+        {tab === "menu" && (
+          <div className="wrap">
+            <button className="btn sm ghost" onClick={() => setCDraft(emptyCategory())}>
+              <Icon name="plus" size={15} /> Категория
+            </button>
+            <button
+              className="btn sm"
+              disabled={cats.length === 0}
+              onClick={() => setPDraft(emptyProduct(cats[0]?.id ?? ""))}
+            >
+              <Icon name="plus" size={15} /> Блюдо
+            </button>
+          </div>
+        )}
       </div>
       <p className="muted subtitle">
         {loading
           ? "Загрузка…"
           : `Меню заведения · ${cats.length} категорий · ${items.length} блюд`}
       </p>
+
+      {/* Опции живут рядом с меню, но отдельной вкладкой: набор общий на
+          несколько блюд, внутри карточки блюда его не отредактируешь. */}
+      <div className="tabs">
+        <button
+          className={"navlink" + (tab === "menu" ? " active" : "")}
+          onClick={() => setTab("menu")}
+        >
+          <Icon name="bowl" size={16} /> Меню
+        </button>
+        <button
+          className={"navlink" + (tab === "options" ? " active" : "")}
+          onClick={() => setTab("options")}
+        >
+          <Icon name="plus" size={16} /> Опции
+        </button>
+      </div>
+
+      {tab === "options" && <Modifiers />}
+      {tab === "menu" && (
+      <>
 
       <div className="card mt-4">
         {!loading && cats.length === 0 && (
@@ -491,6 +516,9 @@ export default function Catalog() {
           })}
         </div>
       </div>
+
+      </>
+      )}
 
       {pDraft && (
         <ProductForm

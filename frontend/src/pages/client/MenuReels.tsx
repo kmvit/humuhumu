@@ -2,6 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { get, post, ApiError } from "../../api";
 import type { Category, Order, Product, ProductVariant } from "../../types";
+import OptionsSheet from "../../components/OptionsSheet";
+import {
+  addLine, cartCount, lineCaption, linePrice, lineKey,
+  needsPicking, removeLine, toPayload, variantCount, type Cart,
+} from "../../cart";
 import Icon, { categoryIcon, type IconName } from "../../components/Icon";
 import Modal from "../../components/ui/Modal";
 import { useToast } from "../../components/ui/Toast";
@@ -30,10 +35,12 @@ export default function MenuReels() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
-  // ключ — id ВАРИАНТА (объёма), а не карточки
-  const [cart, setCart] = useState<Record<number, number>>({});
-  // выбранный объём в каждой карточке: id товара → id варианта
+  // Ключ строки — вариант ВМЕСТЕ с опциями (см. cart.ts)
+  const [cart, setCart] = useState<Cart>({});
+  // выбранный объём в карточке: id товара → id варианта
   const [picked, setPicked] = useState<Record<number, number>>({});
+  // блюдо, для которого открыт лист выбора
+  const [picking, setPicking] = useState<Product | null>(null);
   const [cartOpen, setCartOpen] = useState(false);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -146,21 +153,28 @@ export default function MenuReels() {
     return map;
   }, [products]);
 
-  const priceOf = (vid: number) => Number(byVariant.get(vid)?.variant.price ?? 0);
-  const count = Object.values(cart).reduce((a, b) => a + b, 0);
-  const total = Object.entries(cart).reduce((s, [vid, q]) => s + priceOf(Number(vid)) * q, 0);
+  const priceOf = (vid: number, modifiers: number[] = []) => {
+    const found = byVariant.get(vid);
+    return found ? linePrice(found.variant, found.product.modifier_groups, modifiers) : 0;
+  };
+  const count = cartCount(cart);
+  const total = Object.values(cart).reduce(
+    (s, l) => s + priceOf(l.variant, l.modifiers) * l.qty, 0
+  );
 
   /** Какой объём выбран в карточке. По умолчанию — первый. */
   const variantOf = (p: Product) =>
     p.variants.find((v) => v.id === picked[p.id]) ?? p.variants[0];
 
-  const add = (vid: number) => setCart((c) => ({ ...c, [vid]: (c[vid] || 0) + 1 }));
-  const remove = (vid: number) =>
-    setCart((c) => {
-      const n = { ...c, [vid]: (c[vid] || 0) - 1 };
-      if (n[vid] <= 0) delete n[vid];
-      return n;
-    });
+  const add = (vid: number, modifiers: number[] = []) =>
+    setCart((c) => addLine(c, vid, modifiers));
+  const remove = (key: string) => setCart((c) => removeLine(c, key));
+
+  /** Блюду с опциями или объёмами нужен лист выбора; обычному — один тап. */
+  function tapAdd(p: Product, v: ProductVariant) {
+    if (needsPicking(p)) setPicking(p);
+    else add(v.id);
+  }
 
   function onTrackScroll() {
     const el = trackRef.current;
@@ -186,10 +200,7 @@ export default function MenuReels() {
     }
     setSubmitting(true);
     try {
-      const items = Object.entries(cart).map(([variant, quantity]) => ({
-        variant: Number(variant),
-        quantity,
-      }));
+      const items = toPayload(cart);
       const order = await post<Order>("/orders/place/", {
         customer_name: name.trim(),
         items,
@@ -276,7 +287,8 @@ export default function MenuReels() {
             {s.items.map((p) => {
               const v = variantOf(p);
               if (!v) return null;  // товар без цен не показываем
-              const q = cart[v.id] || 0;
+              const simple = !needsPicking(p);
+              const q = simple ? (cart[lineKey(v.id, [])]?.qty ?? 0) : variantCount(cart, v.id);
               const likeN = likes[p.id] ?? p.likes ?? 0;
               const isLiked = liked.has(p.id);
               return (
@@ -322,14 +334,17 @@ export default function MenuReels() {
                       {v.is_stopped && <span className="stop-badge reel-stop">Sold out</span>}
                     </div>
                     <div className="reel-add-wrap">
-                      {v.is_stopped ? null : q > 0 ? (
+                      {v.is_stopped ? null : simple && q > 0 ? (
+                        // Степпер — только у простого блюда: у блюда с
+                        // опциями «минус» не знал бы, какую строку убавлять.
                         <div className="reel-stepper">
-                          <button onClick={() => remove(v.id)} aria-label="Убрать"><Icon name="minus" size={20} /></button>
+                          <button onClick={() => remove(lineKey(v.id, []))} aria-label="Убрать"><Icon name="minus" size={20} /></button>
                           <span className="num">{q}</span>
                           <button onClick={() => add(v.id)} aria-label="Ещё"><Icon name="plus" size={20} /></button>
                         </div>
                       ) : (
-                        <button className="reel-add" onClick={() => add(v.id)} aria-label={`Добавить «${p.name}»`}>
+                        <button className="reel-add" onClick={() => tapAdd(p, v)} aria-label={`Добавить «${p.name}»`}>
+                          {q > 0 && <span className="num-badge">{q}</span>}
                           <Icon name="plus" size={26} />
                         </button>
                       )}
@@ -413,24 +428,25 @@ export default function MenuReels() {
           }
         >
             <div className="reels-sheet-items">
-              {Object.entries(cart).map(([vid, q]) => {
-                const found = byVariant.get(Number(vid));
+              {Object.entries(cart).map(([key, line]) => {
+                const found = byVariant.get(line.variant);
                 if (!found) return null;
                 const { product: p, variant: v } = found;
+                const caption = lineCaption(v, p.modifier_groups, line.modifiers);
                 return (
-                  <div className="between reels-sheet-row" key={vid}>
-                    <span>
-                      {p.name}
-                      {v.label && <span className="muted"> · {v.label}</span>}
+                  <div className="between reels-sheet-row" key={key}>
+                    <span className="row-body">
+                      <span>{p.name}</span>
+                      {caption && <span className="muted sm">{caption}</span>}
                     </span>
                     <span className="inline">
                       <div className="reel-stepper sm">
-                        <button onClick={() => remove(v.id)} aria-label="Убрать"><Icon name="minus" size={16} /></button>
-                        <span className="num">{q}</span>
-                        <button onClick={() => add(v.id)} aria-label="Ещё"><Icon name="plus" size={16} /></button>
+                        <button onClick={() => remove(key)} aria-label="Убрать"><Icon name="minus" size={16} /></button>
+                        <span className="num">{line.qty}</span>
+                        <button onClick={() => add(line.variant, line.modifiers)} aria-label="Ещё"><Icon name="plus" size={16} /></button>
                       </div>
                       <span className="num" style={{ minWidth: 64, textAlign: "right" }}>
-                        {(priceOf(v.id) * q).toLocaleString("ru")} ₽
+                        {(priceOf(line.variant, line.modifiers) * line.qty).toLocaleString("ru")} ₽
                       </span>
                     </span>
                   </div>
@@ -506,6 +522,17 @@ export default function MenuReels() {
             </button>
           </div>
         </div>
+      )}
+
+      {picking && (
+        <OptionsSheet
+          product={picking}
+          onClose={() => setPicking(null)}
+          onAdd={(variant, modifiers) => {
+            add(variant, modifiers);
+            setPicking(null);
+          }}
+        />
       )}
     </div>
   );

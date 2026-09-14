@@ -6,7 +6,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from catalog.views import CategoryViewSet, ProductViewSet
+from catalog.views import CategoryViewSet, ModifierGroupViewSet, ProductViewSet
 from core.branding import app_icon, manifest
 from finance.views import ExpenseCategoryViewSet, ExpenseViewSet, PayrollViewSet
 from core.views import SiteSettingsView, license_refresh, license_status
@@ -37,6 +37,7 @@ from wallet.views import (
 router = DefaultRouter()
 router.register("categories", CategoryViewSet, basename="category")
 router.register("products", ProductViewSet, basename="product")
+router.register("modifier-groups", ModifierGroupViewSet, basename="modifiergroup")
 router.register("token-packages", TokenPackageViewSet, basename="token-package")
 router.register("orders", OrderViewSet, basename="order")
 router.register("tables", TableViewSet, basename="table")

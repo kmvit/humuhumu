@@ -125,6 +125,28 @@ export interface ProductVariant {
   sort_order: number;
 }
 
+/** Опция внутри набора: «Овсяное», «+ шот», «Без сиропа». */
+export interface Modifier {
+  id: number;
+  name: string;
+  /** Надбавка к цене варианта; может быть нулевой и отрицательной. */
+  price_delta: string;
+  is_stopped: boolean;
+  sort_order: number;
+}
+
+/** Набор опций к блюду. Опции набираются ПОВЕРХ выбранного объёма. */
+export interface ModifierGroup {
+  id: number;
+  name: string;
+  min_choices: number;
+  /** 1 — выбрать одно из набора; больше — можно набрать несколько. */
+  max_choices: number;
+  is_required: boolean;
+  sort_order: number;
+  modifiers: Modifier[];
+}
+
 export interface Product {
   id: number;
   category: number;
@@ -137,6 +159,8 @@ export interface Product {
   sort_order: number;
   /** Минимум один. Гостю приходят только продающиеся. */
   variants: ProductVariant[];
+  /** Наборы опций блюда; пусто — выбирать нечего. */
+  modifier_groups: ModifierGroup[];
   likes?: number;
 }
 
@@ -148,6 +172,14 @@ export function hasSizes(p: Product): boolean {
 /** Самый дешёвый вариант — цена «от» в карточке и выбор по умолчанию. */
 export function baseVariant(p: Product): ProductVariant | undefined {
   return p.variants[0];
+}
+
+/** Выбранная опция в позиции — снимком на момент продажи. */
+export interface OrderItemModifier {
+  id: number;
+  modifier: number;
+  name: string;
+  price_delta: string;
 }
 
 export interface OrderItem {
@@ -164,8 +196,12 @@ export interface OrderItem {
   status: StationStatus;
   guest: number | null;
   quantity: number;
+  /** Цена варианта без надбавок; в subtotal опции уже учтены. */
   unit_price: string;
   subtotal: string;
+  modifiers: OrderItemModifier[];
+  /** «овсяное, без сиропа» — готовая строка для досок и чека. */
+  options_text: string;
 }
 
 export type OrderStatus = "requested" | "open" | "awaiting" | "paid" | "cancelled";

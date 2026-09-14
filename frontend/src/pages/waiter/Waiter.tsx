@@ -374,9 +374,14 @@ export default function Waiter() {
                         <ul className="stack tight list">
                           {o.items.map((it) => (
                             <li key={it.id} className="between">
-                              <span>
-                                {it.product_name}
-                                {it.guest ? <span className="badge open mini ml-2">Гость {it.guest}</span> : null}
+                              <span className="row-body">
+                                <span>
+                                  {it.product_name}
+                                  {it.guest ? <span className="badge open mini ml-2">Гость {it.guest}</span> : null}
+                                </span>
+                                {it.options_text && (
+                                  <span className="muted sm">{it.options_text}</span>
+                                )}
                               </span>
                               <span className="num muted">× {it.quantity} · {Number(it.subtotal).toLocaleString("ru")} ₽</span>
                             </li>
@@ -432,7 +437,12 @@ export default function Waiter() {
                   <ul className="stack tight list my-2">
                     {its.map((it) => (
                       <li key={it.id} className="between">
-                        <span>{it.product_name}</span>
+                        <span className="row-body">
+                          <span>{it.product_name}</span>
+                          {it.options_text && (
+                            <span className="muted sm">{it.options_text}</span>
+                          )}
+                        </span>
                         <span className="num muted">× {it.quantity}</span>
                       </li>
                     ))}
@@ -473,7 +483,12 @@ export default function Waiter() {
                 <ul className="stack tight list my-2">
                   {o.items.map((it) => (
                     <li key={it.id} className="between">
-                      <span>{it.product_name}</span>
+                      <span className="row-body">
+                        <span>{it.product_name}</span>
+                        {it.options_text && (
+                          <span className="muted sm">{it.options_text}</span>
+                        )}
+                      </span>
                       <span className="num muted">× {it.quantity}</span>
                     </li>
                   ))}
@@ -592,7 +607,8 @@ export default function Waiter() {
                           ((it.station === "kitchen" ? o.food_served : o.drinks_served) ? " item-served" : "")
                         }
                       >
-                        <span>
+                        <span className="row-body">
+                          <span>
                           {it.product_name}
                           <span className="station-tag">{it.station === "kitchen" ? "кухня" : "бар"}</span>
                           <button
@@ -608,6 +624,10 @@ export default function Waiter() {
                             <span className={"badge mini ml-2 " + STATUS_CLASS[it.status]}>
                               {STATUS_LABEL[it.status]}
                             </span>
+                          )}
+                          </span>
+                          {it.options_text && (
+                            <span className="muted sm">{it.options_text}</span>
                           )}
                         </span>
                         {confirmId === it.id ? (
@@ -729,7 +749,8 @@ export default function Waiter() {
                                 className={"badge guest-chip" + (moveSel.has(it.id) ? " open" : "")}
                                 onClick={() => toggleMoveSel(it.id)}
                               >
-                                {it.product_name} × {it.quantity}
+                                {it.product_name}
+                                {it.options_text ? ` · ${it.options_text}` : ""} × {it.quantity}
                               </button>
                             ))}
                           </div>

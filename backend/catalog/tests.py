@@ -10,7 +10,7 @@ from rest_framework.test import APITestCase
 from orders.models import Order, OrderItem
 from users.models import User
 
-from .models import Category, Product, ProductVariant
+from .models import Category, Modifier, ModifierGroup, Product, ProductVariant
 
 
 def image_file(name="dish.png"):
@@ -367,3 +367,111 @@ class CategoryCrudTests(CatalogAdminBase):
         self.assertEqual(
             self.client.delete(f"/api/categories/{empty.id}/").status_code, 204
         )
+
+class ModifierGroupApiTests(CatalogAdminBase):
+    """Редактор наборов опций: опции и их действия правятся одной формой."""
+
+    def _create(self, **over):
+        body = {
+            "name": "Молоко", "min_choices": 1, "max_choices": 1,
+            "products": [self.latte.id],
+            "modifiers": [
+                {"name": "Коровье", "price_delta": "0"},
+                {"name": "Овсяное", "price_delta": "60"},
+            ],
+            **over,
+        }
+        return self.client.post("/api/modifier-groups/", body, format="json")
+
+    def setUp(self):
+        super().setUp()
+        from inventory.models import StockCategory, StockItem
+
+        cat = StockCategory.objects.create(name="Бар")
+        self.milk = StockItem.objects.create(category=cat, name="Молоко", unit="ml")
+        self.oat = StockItem.objects.create(category=cat, name="Овсяное", unit="ml")
+
+    def test_admin_creates_group_with_options(self):
+        self.auth(self.admin)
+        res = self._create()
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual([m["name"] for m in res.data["modifiers"]], ["Коровье", "Овсяное"])
+        self.assertTrue(res.data["is_required"])
+        self.assertEqual(res.data["products"], [self.latte.id])
+
+    def test_effects_are_saved_with_the_option(self):
+        self.auth(self.admin)
+        res = self.client.post(
+            "/api/modifier-groups/",
+            {"name": "Молоко", "max_choices": 1, "products": [self.latte.id],
+             "modifiers": [{"name": "Овсяное", "price_delta": "60", "effects": [
+                 {"kind": "swap", "item": self.milk.id, "replacement": self.oat.id}
+             ]}]},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 201)
+        effect = res.data["modifiers"][0]["effects"][0]
+        self.assertEqual(effect["kind"], "swap")
+        self.assertEqual(effect["replacement"], self.oat.id)
+
+    def test_add_without_quantity_is_refused(self):
+        """Иначе опция «+ шот» молча не списала бы ничего."""
+        self.auth(self.admin)
+        res = self.client.post(
+            "/api/modifier-groups/",
+            {"name": "Добавки", "products": [self.latte.id],
+             "modifiers": [{"name": "+ шот", "effects": [
+                 {"kind": "add", "item": self.milk.id}
+             ]}]},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 400)
+
+    def test_swap_without_replacement_is_refused(self):
+        self.auth(self.admin)
+        res = self.client.post(
+            "/api/modifier-groups/",
+            {"name": "Молоко", "products": [self.latte.id],
+             "modifiers": [{"name": "Овсяное", "effects": [
+                 {"kind": "swap", "item": self.milk.id}
+             ]}]},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 400)
+
+    def test_sold_option_is_hidden_not_deleted(self):
+        """Опция из чека не удаляется: по ней считается списание."""
+        from orders.models import Order, OrderItem, OrderItemModifier
+
+        self.auth(self.admin)
+        group_id = self._create().data["id"]
+        modifier_id = ModifierGroup.objects.get(id=group_id).modifiers.first().id
+        order = Order.objects.create(status=Order.Status.OPEN, table="5")
+        item = OrderItem.objects.create(
+            order=order, variant=self.latte_v, quantity=1, unit_price=Decimal("240")
+        )
+        OrderItemModifier.objects.create(
+            order_item=item, modifier_id=modifier_id, name="Коровье",
+            price_delta=Decimal("0"),
+        )
+        res = self.client.patch(
+            f"/api/modifier-groups/{group_id}/",
+            {"modifiers": [{"name": "Овсяное", "price_delta": "60"}]},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200)
+        kept = Modifier.objects.get(id=modifier_id)
+        self.assertTrue(kept.is_stopped)  # спрятана, чек цел
+
+    def test_waiter_cannot_edit_groups(self):
+        self.auth(self.waiter)
+        self.assertEqual(self._create().status_code, 403)
+
+    def test_guest_sees_groups_in_the_menu_only(self):
+        self.auth(self.admin)
+        self._create()
+        self.client.credentials()
+        card = [p for p in self.client.get("/api/products/").data
+                if p["id"] == self.latte.id][0]
+        self.assertEqual(card["modifier_groups"][0]["name"], "Молоко")
+

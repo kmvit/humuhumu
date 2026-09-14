@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { get, post, ApiError } from "../../api";
 import type { Category, Order, Product, ProductVariant } from "../../types";
+import OptionsSheet from "../../components/OptionsSheet";
+import { lineCaption, linePrice, lineKey, needsPicking } from "../../cart";
 import Icon, { categoryIcon } from "../../components/Icon";
 import Lightbox from "../../components/Lightbox";
 import { useToast } from "../../components/ui/Toast";
@@ -28,9 +30,12 @@ export default function Compose({
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [activeCat, setActiveCat] = useState<number | null>(null);
-  const [cart, setCart] = useState<Record<string, number>>({}); // "guest:variantId" -> qty
+  // ключ «гость:вариант|опции» — у официанта к строке добавляется ещё и гость
+  const [cart, setCart] = useState<Record<string, number>>({});
   // выбранный объём в карточке: id товара → id варианта
   const [picked, setPicked] = useState<Record<number, number>>({});
+  // блюдо, для которого открыт лист выбора
+  const [picking, setPicking] = useState<Product | null>(null);
   const [guests, setGuests] = useState(initialGuests); // сколько именованных гостей (0 = только общий)
   const [activeGuest, setActiveGuest] = useState(0); // 0 = общий
   const [comment, setComment] = useState("");
@@ -63,7 +68,6 @@ export default function Compose({
     return map;
   }, [products]);
 
-  const priceOf = (vid: number) => Number(byVariant.get(vid)?.variant.price ?? 0);
   const nameOf = (vid: number) => {
     const found = byVariant.get(vid);
     if (!found) return "";
@@ -73,38 +77,85 @@ export default function Compose({
   const variantOf = (p: Product) =>
     p.variants.find((v) => v.id === picked[p.id]) ?? p.variants[0];
 
-  const key = (g: number, vid: number) => `${g}:${vid}`;
-  const qtyOf = (vid: number) => cart[key(activeGuest, vid)] || 0;
+  /** «2:15|7,9» — гость, вариант и набор опций. */
+  const key = (g: number, vid: number, mods: number[] = []) =>
+    `${g}:${lineKey(vid, mods)}`;
+  /** Разобрать ключ обратно. */
+  const parse = (k: string) => {
+    const [guest, rest] = k.split(":");
+    const [vid, mods] = rest.split("|");
+    return {
+      guest: Number(guest),
+      variant: Number(vid),
+      modifiers: mods ? mods.split(",").map(Number) : [],
+    };
+  };
+  /** Сколько этого объёма у текущего гостя — по всем наборам опций. */
+  const qtyOf = (vid: number) =>
+    Object.entries(cart).reduce((n, [k, q]) => {
+      const l = parse(k);
+      return l.guest === activeGuest && l.variant === vid ? n + q : n;
+    }, 0);
   const count = Object.values(cart).reduce((a, b) => a + b, 0);
-  const total = Object.entries(cart).reduce((s, [k, q]) => s + priceOf(Number(k.split(":")[1])) * q, 0);
+  const total = Object.entries(cart).reduce((s, [k, q]) => {
+    const l = parse(k);
+    const found = byVariant.get(l.variant);
+    return s + (found ? linePrice(found.variant, found.product.modifier_groups, l.modifiers) * q : 0);
+  }, 0);
 
   const guestList = [0, ...Array.from({ length: guests }, (_, i) => i + 1)];
   const guestLabel = (g: number) => (g === 0 ? "Общий" : `Гость ${g}`);
   const guestItems = (g: number) =>
     Object.entries(cart)
-      .filter(([k]) => Number(k.split(":")[0]) === g)
-      .map(([k, qty]) => ({ v: byVariant.get(Number(k.split(":")[1])), qty }))
-      .filter((x): x is { v: { product: Product; variant: ProductVariant }; qty: number } => !!x.v);
+      .filter(([k]) => parse(k).guest === g)
+      .map(([k, qty]) => {
+        const l = parse(k);
+        return { key: k, v: byVariant.get(l.variant), mods: l.modifiers, qty };
+      })
+      .filter(
+        (x): x is {
+          key: string;
+          v: { product: Product; variant: ProductVariant };
+          mods: number[];
+          qty: number;
+        } => !!x.v
+      );
   const guestCount = (g: number) => guestItems(g).reduce((s, x) => s + x.qty, 0);
   const guestTotal = (g: number) =>
-    guestItems(g).reduce((s, x) => s + Number(x.v.variant.price) * x.qty, 0);
+    guestItems(g).reduce(
+      (s, x) => s + linePrice(x.v.variant, x.v.product.modifier_groups, x.mods) * x.qty,
+      0
+    );
 
-  const add = (vid: number) =>
-    setCart((c) => ({ ...c, [key(activeGuest, vid)]: (c[key(activeGuest, vid)] || 0) + 1 }));
-  const remove = (vid: number) =>
+  const add = (vid: number, mods: number[] = []) =>
     setCart((c) => {
-      const k = key(activeGuest, vid);
+      const k = key(activeGuest, vid, mods);
+      return { ...c, [k]: (c[k] || 0) + 1 };
+    });
+  const removeKey = (k: string) =>
+    setCart((c) => {
       const n = { ...c, [k]: (c[k] || 0) - 1 };
       if (n[k] <= 0) delete n[k];
       return n;
     });
 
+  /** Блюду с опциями или объёмами нужен лист выбора; обычному — один тап. */
+  function tapAdd(p: Product, v: ProductVariant) {
+    if (needsPicking(p)) setPicking(p);
+    else add(v.id);
+  }
+
   async function submit() {
     setBusy(true);
     try {
       const items = Object.entries(cart).map(([k, quantity]) => {
-        const [g, vid] = k.split(":").map(Number);
-        return { variant: vid, quantity, guest: g === 0 ? null : g };
+        const l = parse(k);
+        return {
+          variant: l.variant,
+          quantity,
+          guest: l.guest === 0 ? null : l.guest,
+          ...(l.modifiers.length ? { modifiers: l.modifiers } : {}),
+        };
       });
       if (adding) {
         await post<Order>(`/orders/${orderId}/add_items/`, { items });
@@ -208,6 +259,7 @@ export default function Compose({
               const v = variantOf(p);
               if (!v) return null;  // товар без цен не продаём
               const out = !p.is_available || v.is_stopped;
+              const simple = !needsPicking(p);
               return (
               <div className={"menu-row" + (out ? " out" : "")} key={p.id}>
                 <div className="menu-lead">
@@ -249,15 +301,23 @@ export default function Compose({
                 <div className="menu-add">
                   {v.is_stopped ? (
                     <span className="muted sm">стоп</span>
-                  ) : qtyOf(v.id) ? (
-                    <Stepper value={qtyOf(v.id)} width={116} onDec={() => remove(v.id)} onInc={() => add(v.id)} />
+                  ) : simple && qtyOf(v.id) ? (
+                    // Степпер — только у простого блюда: с опциями «минус»
+                    // не знал бы, какую из строк заказа убавлять.
+                    <Stepper
+                      value={qtyOf(v.id)}
+                      width={116}
+                      onDec={() => removeKey(key(activeGuest, v.id))}
+                      onInc={() => add(v.id)}
+                    />
                   ) : (
                     <button
                       className="btn sm icon"
-                      onClick={() => add(v.id)}
+                      onClick={() => tapAdd(p, v)}
                       disabled={!p.is_available}
                       aria-label={`Добавить «${nameOf(v.id)}»`}
                     >
+                      {qtyOf(v.id) > 0 && <span className="num-badge">{qtyOf(v.id)}</span>}
                       <Icon name={p.is_available ? "plus" : "spark"} size={16} />
                     </button>
                   )}
@@ -281,17 +341,20 @@ export default function Compose({
                   <span className="num">{guestTotal(g).toLocaleString("ru")} ₽</span>
                 </div>
                 <ul className="stack tight list mt-2">
-                  {guestItems(g).map((x) => (
-                    <li key={x.v.variant.id} className="between">
-                      <span>
-                        {x.v.product.name}
-                        {x.v.variant.label && (
-                          <span className="muted"> · {x.v.variant.label}</span>
-                        )}
-                      </span>
-                      <span className="num muted">× {x.qty}</span>
-                    </li>
-                  ))}
+                  {guestItems(g).map((x) => {
+                    const caption = lineCaption(
+                      x.v.variant, x.v.product.modifier_groups, x.mods
+                    );
+                    return (
+                      <li key={x.key} className="between">
+                        <span className="row-body">
+                          <span>{x.v.product.name}</span>
+                          {caption && <span className="muted sm">{caption}</span>}
+                        </span>
+                        <span className="num muted">× {x.qty}</span>
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             ))}
@@ -313,6 +376,17 @@ export default function Compose({
             {adding ? "Добавить" : "Отправить"}
           </button>
         </div>
+      )}
+
+      {picking && (
+        <OptionsSheet
+          product={picking}
+          onClose={() => setPicking(null)}
+          onAdd={(variant, modifiers) => {
+            add(variant, modifiers);
+            setPicking(null);
+          }}
+        />
       )}
 
       {zoom && <Lightbox src={zoom} onClose={() => setZoom(null)} />}

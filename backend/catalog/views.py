@@ -9,8 +9,22 @@ from rest_framework.response import Response
 
 from users.permissions import ReadOnlyOrAdmin
 
-from .models import Category, ModifierGroup, Product, ProductLike, ProductVariant
-from .serializers import CategorySerializer, ProductSerializer
+from inventory.models import StockItem
+
+from .models import (
+    Category,
+    Modifier,
+    ModifierEffect,
+    ModifierGroup,
+    Product,
+    ProductLike,
+    ProductVariant,
+)
+from .serializers import (
+    CategorySerializer,
+    ModifierGroupSerializer,
+    ProductSerializer,
+)
 
 
 class ProtectedDeleteMixin:
@@ -275,3 +289,107 @@ class ProductViewSet(ProtectedDeleteMixin, viewsets.ModelViewSet):
         """Топ блюд по лайкам (только с лайками)."""
         qs = self.get_queryset().filter(likes_count__gt=0).order_by("-likes_count")[:12]
         return Response(self.get_serializer(qs, many=True).data)
+
+class ModifierGroupViewSet(ProtectedDeleteMixin, viewsets.ModelViewSet):
+    """Наборы опций: «Молоко», «Добавки». Чтение — всем, запись — админу.
+
+    Сами опции и их действия со складом правятся вложенным списком: набор
+    без опций бессмыслен, а держать их отдельным экраном значило бы гонять
+    владельца туда-сюда на каждую строку.
+    """
+
+    serializer_class = ModifierGroupSerializer
+    permission_classes = [ReadOnlyOrAdmin]
+    protected_message = "Набор используется в заказах — удалить нельзя."
+
+    def get_queryset(self):
+        return ModifierGroup.objects.prefetch_related(
+            "products", "modifiers__effects"
+        ).order_by("sort_order", "name")
+
+    class _EffectRow(serializers.Serializer):
+        kind = serializers.ChoiceField(choices=ModifierEffect.Kind.choices)
+        item = serializers.PrimaryKeyRelatedField(queryset=StockItem.objects)
+        replacement = serializers.PrimaryKeyRelatedField(
+            queryset=StockItem.objects, required=False, allow_null=True
+        )
+        quantity = serializers.DecimalField(
+            max_digits=12, decimal_places=3, required=False, allow_null=True
+        )
+
+        def validate(self, attrs):
+            kind = attrs["kind"]
+            if kind == ModifierEffect.Kind.ADD and not attrs.get("quantity"):
+                raise serializers.ValidationError("Для «добавить» укажите количество")
+            if kind == ModifierEffect.Kind.SWAP and not attrs.get("replacement"):
+                raise serializers.ValidationError("Для «заменить» укажите, на что")
+            # Лишнее гасим, иначе запись не пройдёт проверку схемы.
+            if kind != ModifierEffect.Kind.ADD:
+                attrs["quantity"] = None
+            if kind != ModifierEffect.Kind.SWAP:
+                attrs["replacement"] = None
+            return attrs
+
+    class _ModifierRow(serializers.Serializer):
+        id = serializers.IntegerField(required=False)
+        name = serializers.CharField(max_length=100)
+        price_delta = serializers.DecimalField(
+            max_digits=10, decimal_places=2, required=False, default=0
+        )
+        is_stopped = serializers.BooleanField(required=False, default=False)
+
+    def _sync_modifiers(self, group, raw):
+        """Привести опции набора к присланному списку — как варианты товара."""
+        rows = self._ModifierRow(data=raw, many=True)
+        rows.is_valid(raise_exception=True)
+
+        existing = {m.id: m for m in group.modifiers.all()}
+        keep = set()
+        for order, (row, sent) in enumerate(zip(rows.validated_data, raw)):
+            modifier = existing.get(row.get("id")) or Modifier(group=group)
+            modifier.name = row["name"].strip()
+            modifier.price_delta = row["price_delta"]
+            modifier.is_stopped = row["is_stopped"]
+            modifier.sort_order = order
+            modifier.save()
+            keep.add(modifier.id)
+            if "effects" in sent:
+                effects = self._EffectRow(data=sent["effects"], many=True)
+                effects.is_valid(raise_exception=True)
+                modifier.effects.all().delete()
+                for e in effects.validated_data:
+                    ModifierEffect.objects.create(modifier=modifier, **e)
+
+        for modifier in group.modifiers.exclude(id__in=keep):
+            try:
+                with transaction.atomic():
+                    modifier.delete()
+            except ProtectedError:
+                # опция уже продавалась — прячем, история чека дороже
+                modifier.is_stopped = True
+                modifier.save(update_fields=["is_stopped"])
+
+    def _save(self, serializer, request, status_code):
+        with transaction.atomic():
+            group = serializer.save()
+            if "modifiers" in request.data:
+                self._sync_modifiers(group, request.data["modifiers"])
+        group = self.get_queryset().get(pk=group.pk)
+        return Response(self.get_serializer(group).data, status=status_code)
+
+    def create(self, request, *args, **kwargs):
+        ser = self.get_serializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        return self._save(ser, request, status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        ser = self.get_serializer(
+            self.get_object(), data=request.data, partial=kwargs.pop("partial", False)
+        )
+        ser.is_valid(raise_exception=True)
+        return self._save(ser, request, status.HTTP_200_OK)
+
+    def partial_update(self, request, *args, **kwargs):
+        kwargs["partial"] = True
+        return self.update(request, *args, **kwargs)
+

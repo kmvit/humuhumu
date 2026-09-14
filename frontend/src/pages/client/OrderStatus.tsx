@@ -110,7 +110,12 @@ export default function OrderStatus({
         <ul className="stack tight list mt-4">
           {order.items.map((it) => (
             <li key={it.id} className="between">
-              <span>{it.product_name}</span>
+              <span className="row-body">
+                <span>{it.product_name}</span>
+                {it.options_text && (
+                  <span className="muted sm">{it.options_text}</span>
+                )}
+              </span>
               <span className="num muted">× {it.quantity}</span>
             </li>
           ))}
