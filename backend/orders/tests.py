@@ -2,7 +2,13 @@ from decimal import Decimal
 
 from rest_framework.test import APITestCase
 
-from catalog.models import Category, Product, ProductVariant
+from catalog.models import (
+    Category,
+    Modifier,
+    ModifierGroup,
+    Product,
+    ProductVariant,
+)
 from core.models import SiteSettings
 from users.models import User
 
@@ -312,3 +318,110 @@ class RemoveItemCodeTests(OrderFlowBase):
         self.auth(admin)
         res = self.remove(order, item)
         self.assertEqual(res.status_code, 200)
+
+class ModifierOrderTests(APITestCase):
+    """Опции в заказе: цена с надбавкой и проверки выбора на сервере."""
+
+    def setUp(self):
+        cat = Category.objects.create(name="Кофе", station="bar")
+        self.product = Product.objects.create(category=cat, name="Латте")
+        self.variant = ProductVariant.objects.create(
+            product=self.product, price=Decimal("300")
+        )
+        self.milk = ModifierGroup.objects.create(
+            name="Молоко", min_choices=1, max_choices=1
+        )
+        self.milk.products.add(self.product)
+        self.cow = Modifier.objects.create(group=self.milk, name="Коровье")
+        self.oat = Modifier.objects.create(
+            group=self.milk, name="Овсяное", price_delta=Decimal("60")
+        )
+        extras = ModifierGroup.objects.create(name="Добавки", max_choices=2)
+        extras.products.add(self.product)
+        self.shot = Modifier.objects.create(
+            group=extras, name="+ шот", price_delta=Decimal("80")
+        )
+        # опция чужого блюда — её подставлять нельзя
+        other = Product.objects.create(category=cat, name="Чай")
+        ProductVariant.objects.create(product=other, price=Decimal("200"))
+        alien_group = ModifierGroup.objects.create(name="Чайное", max_choices=1)
+        alien_group.products.add(other)
+        self.alien = Modifier.objects.create(
+            group=alien_group, name="Лимон", price_delta=Decimal("-500")
+        )
+
+    def _place(self, modifiers, quantity=1):
+        return self.client.post(
+            "/api/orders/place/",
+            {"customer_name": "Гость", "table": "5",
+             "items": [{"variant": self.variant.id, "quantity": quantity,
+                        "modifiers": modifiers}]},
+            format="json",
+        )
+
+    def test_price_includes_options(self):
+        res = self._place([self.oat.id, self.shot.id])
+        self.assertEqual(res.status_code, 201)
+        order = Order.objects.latest("id")
+        item = order.items.get()
+        self.assertEqual(item.unit_price, Decimal("300"))     # цена варианта как была
+        self.assertEqual(item.modifiers_total, Decimal("140"))
+        self.assertEqual(item.subtotal, Decimal("440"))
+        self.assertEqual(order.total, Decimal("440"))
+
+    def test_options_multiply_with_quantity(self):
+        self._place([self.oat.id], quantity=3)
+        self.assertEqual(Order.objects.latest("id").total, Decimal("1080"))  # (300+60)×3
+
+    def test_required_group_must_be_chosen(self):
+        res = self._place([])
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("Молоко", str(res.data))
+
+    def test_only_one_from_exclusive_group(self):
+        res = self._place([self.cow.id, self.oat.id])
+        self.assertEqual(res.status_code, 400)
+
+    def test_option_of_another_dish_is_refused(self):
+        """Иначе подставленная опция чужого блюда стоила бы заведению денег."""
+        res = self._place([self.cow.id, self.alien.id])
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(Order.objects.count(), 0)
+
+    def test_stopped_option_is_refused(self):
+        self.oat.is_stopped = True
+        self.oat.save(update_fields=["is_stopped"])
+        res = self._place([self.oat.id])
+        self.assertEqual(res.status_code, 400)
+
+    def test_snapshot_survives_price_change(self):
+        self._place([self.cow.id, self.shot.id])
+        item = Order.objects.latest("id").items.get()
+        self.shot.price_delta = Decimal("120")
+        self.shot.name = "+ двойной шот"
+        self.shot.save()
+        item.refresh_from_db()
+        chosen = item.modifiers.get(modifier=self.shot)
+        self.assertEqual(chosen.price_delta, Decimal("80"))   # чек не поехал
+        self.assertEqual(chosen.name, "+ шот")
+
+    def test_guest_sees_his_options_in_the_order(self):
+        self._place([self.oat.id])
+        order = Order.objects.latest("id")
+        res = self.client.get(f"/api/orders/track/?token={order.public_token}")
+        self.assertEqual(res.status_code, 200)
+        item = res.data["items"][0]
+        self.assertEqual(item["options_text"], "Овсяное")
+        self.assertEqual(item["subtotal"], "360.00")
+
+    def test_menu_carries_option_groups(self):
+        res = self.client.get("/api/products/")
+        card = [p for p in res.data if p["id"] == self.product.id][0]
+        groups = {g["name"]: g for g in card["modifier_groups"]}
+        self.assertEqual(set(groups), {"Молоко", "Добавки"})
+        self.assertTrue(groups["Молоко"]["is_required"])
+        self.assertEqual(
+            sorted(m["name"] for m in groups["Молоко"]["modifiers"]),
+            ["Коровье", "Овсяное"],
+        )
+

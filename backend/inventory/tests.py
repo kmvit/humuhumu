@@ -3,7 +3,17 @@ from decimal import Decimal
 from django.test import TestCase
 from rest_framework.test import APITestCase
 
-from catalog.models import Category, Product, ProductVariant
+from catalog.models import (
+    Category,
+    Modifier,
+    ModifierEffect,
+    ModifierGroup,
+    Product,
+    ProductVariant,
+)
+from orders.models import Order, OrderItem, OrderItemModifier
+
+from .services import return_order_item, write_off_order_item
 from core.models import SiteSettings
 from users.models import User
 
@@ -303,3 +313,129 @@ class ReceiptScanUnitsTests(TestCase):
              "unit_cost": None, "line_total": None}
         ])
         self.assertIsNone(d["lines"][0]["unit_cost"])
+
+class ModifierWriteOffTests(APITestCase):
+    """Списание с опциями: добавка, снятие и замена.
+
+    Проверяем главное обещание модели: «на овсяном» описано ОДИН раз и
+    остаётся верным для любого объёма, потому что количество берётся из
+    тех карты проданного варианта, а не из самой опции.
+    """
+
+    def setUp(self):
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.MAX
+        site.save()
+        cat = StockCategory.objects.create(name="Бар")
+        self.milk = StockItem.objects.create(category=cat, name="Молоко коровье", unit="ml")
+        self.oat = StockItem.objects.create(category=cat, name="Молоко овсяное", unit="ml")
+        self.beans = StockItem.objects.create(category=cat, name="Зерно", unit="g")
+        self.syrup = StockItem.objects.create(category=cat, name="Сироп", unit="ml")
+        for item in (self.milk, self.oat, self.beans, self.syrup):
+            item.apply_movement(Decimal("10000"), StockMovement.Kind.RECEIPT)
+
+        menu = Category.objects.create(name="Кофе", station="bar")
+        self.product = Product.objects.create(category=menu, name="Латте")
+        self.small = ProductVariant.objects.create(
+            product=self.product, label="0,3 л", price=Decimal("300")
+        )
+        self.big = ProductVariant.objects.create(
+            product=self.product, label="0,5 л", price=Decimal("400"), sort_order=1
+        )
+        # расход нелинейный — ровно поэтому опции не могут хранить количество
+        for variant, milk_ml, syrup_ml in ((self.small, 200, 20), (self.big, 350, 35)):
+            RecipeItem.objects.create(variant=variant, item=self.milk, quantity=Decimal(milk_ml))
+            RecipeItem.objects.create(variant=variant, item=self.beans, quantity=Decimal("18"))
+            RecipeItem.objects.create(variant=variant, item=self.syrup, quantity=Decimal(syrup_ml))
+
+        self.group = ModifierGroup.objects.create(name="Молоко", min_choices=0, max_choices=1)
+        self.group.products.add(self.product)
+        self.oat_mod = Modifier.objects.create(
+            group=self.group, name="Овсяное", price_delta=Decimal("60")
+        )
+        ModifierEffect.objects.create(
+            modifier=self.oat_mod, kind=ModifierEffect.Kind.SWAP,
+            item=self.milk, replacement=self.oat,
+        )
+        extras = ModifierGroup.objects.create(name="Добавки", max_choices=3)
+        extras.products.add(self.product)
+        self.shot = Modifier.objects.create(
+            group=extras, name="+ шот эспрессо", price_delta=Decimal("80")
+        )
+        ModifierEffect.objects.create(
+            modifier=self.shot, kind=ModifierEffect.Kind.ADD,
+            item=self.beans, quantity=Decimal("18"),
+        )
+        self.no_syrup = Modifier.objects.create(group=extras, name="Без сиропа")
+        ModifierEffect.objects.create(
+            modifier=self.no_syrup, kind=ModifierEffect.Kind.REMOVE, item=self.syrup
+        )
+
+    def _sell(self, variant, modifiers=(), quantity=1):
+        order = Order.objects.create(status=Order.Status.OPEN, table="5")
+        item = OrderItem.objects.create(
+            order=order, variant=variant, quantity=quantity, unit_price=variant.price
+        )
+        for m in modifiers:
+            OrderItemModifier.objects.create(
+                order_item=item, modifier=m, name=m.name, price_delta=m.price_delta
+            )
+        return item
+
+    def _left(self, item):
+        item.refresh_from_db()
+        return item.quantity
+
+    def test_without_options_card_rules(self):
+        write_off_order_item(self._sell(self.small))
+        self.assertEqual(self._left(self.milk), Decimal("9800.000"))
+        self.assertEqual(self._left(self.oat), Decimal("10000.000"))
+
+    def test_swap_takes_quantity_from_the_sold_size(self):
+        """Одна опция «Овсяное» — верна и для 0,3, и для 0,5."""
+        write_off_order_item(self._sell(self.small, [self.oat_mod]))
+        self.assertEqual(self._left(self.milk), Decimal("10000.000"))  # коровье не тронуто
+        self.assertEqual(self._left(self.oat), Decimal("9800.000"))    # 200 мл — из карты 0,3
+
+        write_off_order_item(self._sell(self.big, [self.oat_mod]))
+        self.assertEqual(self._left(self.oat), Decimal("9450.000"))    # ещё 350 мл — из карты 0,5
+
+    def test_add_is_a_fixed_amount(self):
+        write_off_order_item(self._sell(self.small, [self.shot]))
+        self.assertEqual(self._left(self.beans), Decimal("9964.000"))  # 18 из карты + 18 опции
+
+    def test_remove_drops_the_ingredient(self):
+        write_off_order_item(self._sell(self.small, [self.no_syrup]))
+        self.assertEqual(self._left(self.syrup), Decimal("10000.000"))
+        self.assertEqual(self._left(self.milk), Decimal("9800.000"))  # остальное на месте
+
+    def test_options_stack(self):
+        write_off_order_item(self._sell(self.big, [self.oat_mod, self.shot, self.no_syrup]))
+        self.assertEqual(self._left(self.milk), Decimal("10000.000"))
+        self.assertEqual(self._left(self.oat), Decimal("9650.000"))    # 350 вместо коровьего
+        self.assertEqual(self._left(self.beans), Decimal("9964.000"))  # 18 + 18
+        self.assertEqual(self._left(self.syrup), Decimal("10000.000"))
+
+    def test_quantity_multiplies_options_too(self):
+        write_off_order_item(self._sell(self.small, [self.shot], quantity=3))
+        self.assertEqual(self._left(self.beans), Decimal("9892.000"))  # (18+18) × 3
+
+    def test_swap_of_missing_ingredient_adds_nothing(self):
+        """Заменять нечего — подставлять замену «из воздуха» нельзя."""
+        RecipeItem.objects.filter(variant=self.small, item=self.milk).delete()
+        write_off_order_item(self._sell(self.small, [self.oat_mod]))
+        self.assertEqual(self._left(self.oat), Decimal("10000.000"))
+
+    def test_return_gives_back_exactly_what_was_taken(self):
+        item = self._sell(self.big, [self.oat_mod, self.shot])
+        write_off_order_item(item)
+        return_order_item(item)
+        for stock in (self.milk, self.oat, self.beans, self.syrup):
+            self.assertEqual(self._left(stock), Decimal("10000.000"), stock.name)
+
+    def test_movement_comment_names_the_options(self):
+        write_off_order_item(self._sell(self.small, [self.oat_mod]))
+        comment = StockMovement.objects.filter(kind="sale").latest("id").comment
+        self.assertIn("Латте 0,3 л", comment)
+        self.assertIn("Овсяное", comment)
+

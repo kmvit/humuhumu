@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.db.models import DecimalField, ExpressionWrapper, F, Sum, Value
 from django.db.models.functions import Concat, Trim
 
-from .models import Order, OrderItem, Table
+from .models import Order, OrderItem, OrderItemModifier, Table
 
 # выручка позиции = цена × количество (для агрегатов, subtotal — это property)
 REVENUE = ExpressionWrapper(
@@ -35,6 +35,14 @@ class TableAdmin(admin.ModelAdmin):
     ordering = ("sort_order", "name")
 
 
+class OrderItemModifierInline(admin.TabularInline):
+    model = OrderItemModifier
+    extra = 0
+    # снимок на момент продажи — задним числом не правим
+    readonly_fields = ("modifier", "name", "price_delta")
+    can_delete = False
+
+
 class OrderItemInline(admin.TabularInline):
     model = OrderItem
     extra = 0
@@ -57,6 +65,7 @@ class OrderItemAdmin(admin.ModelAdmin):
     )
     date_hierarchy = "order__created_at"
     list_select_related = ("variant__product", "order")
+    inlines = [OrderItemModifierInline]
     change_list_template = "admin/orders/orderitem/change_list.html"
 
     @admin.display(description="Сумма")

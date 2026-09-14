@@ -9,7 +9,7 @@ from rest_framework.response import Response
 
 from users.permissions import ReadOnlyOrAdmin
 
-from .models import Category, Product, ProductLike, ProductVariant
+from .models import Category, ModifierGroup, Product, ProductLike, ProductVariant
 from .serializers import CategorySerializer, ProductSerializer
 
 
@@ -74,15 +74,22 @@ class ProductViewSet(ProtectedDeleteMixin, viewsets.ModelViewSet):
         )
         # клиентам и гостям показываем только доступные товары, а из
         # вариантов — только продающиеся: снятый размер гостю не предлагаем
+        groups = Prefetch(
+            "modifier_groups",
+            queryset=ModifierGroup.objects.filter(is_active=True).prefetch_related(
+                "modifiers"
+            ),
+        )
         if getattr(self.request.user, "role", None) != "admin":
             qs = qs.filter(is_available=True).prefetch_related(
                 Prefetch(
                     "variants",
                     queryset=ProductVariant.objects.filter(is_active=True),
-                )
+                ),
+                groups,
             )
         else:
-            qs = qs.prefetch_related("variants")
+            qs = qs.prefetch_related("variants", groups)
         category = self.request.query_params.get("category")
         if category:
             qs = qs.filter(category_id=category)

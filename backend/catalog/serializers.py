@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Category, Product, ProductVariant
+from .models import Category, Modifier, ModifierGroup, Product, ProductVariant
 
 
 class RelativeImageField(serializers.ImageField):
@@ -32,6 +32,24 @@ class ProductVariantSerializer(serializers.ModelSerializer):
         )
 
 
+class ModifierSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Modifier
+        fields = ("id", "name", "price_delta", "is_stopped", "sort_order")
+
+
+class ModifierGroupSerializer(serializers.ModelSerializer):
+    modifiers = ModifierSerializer(many=True, read_only=True)
+    is_required = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = ModifierGroup
+        fields = (
+            "id", "name", "min_choices", "max_choices",
+            "is_required", "sort_order", "modifiers",
+        )
+
+
 class ProductSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     image = RelativeImageField(required=False, allow_null=True)
@@ -42,6 +60,9 @@ class ProductSerializer(serializers.ModelSerializer):
     # вьюху (sync_variants): в multipart с картинкой вложенный список не
     # передать иначе как JSON-строкой.
     variants = ProductVariantSerializer(many=True, read_only=True)
+    # Опции едут вместе с блюдом: гость выбирает их в той же карточке, и
+    # отдельный запрос за ними только добавил бы мигание в меню.
+    modifier_groups = ModifierGroupSerializer(many=True, read_only=True)
 
     # ——— совместимость со старым бандлом ———
     # PWA кэширует свой js, и после деплоя на планшете барриста какое-то
@@ -67,6 +88,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "is_available",
             "sort_order",
             "variants",
+            "modifier_groups",
             "likes",
             "price",
             "weight_grams",

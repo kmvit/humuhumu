@@ -7,6 +7,8 @@ from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 
+from catalog.models import ModifierEffect
+
 from .models import (
     PurchaseLine,
     PurchaseList,
@@ -32,9 +34,60 @@ def last_unit_costs(item_ids) -> dict[int, Decimal]:
     return costs
 
 
+def portion_consumption(order_item) -> dict[int, tuple[StockItem, Decimal]]:
+    """Расход на ОДНУ порцию позиции: тех карта варианта плюс опции.
+
+    Считается в три шага, и порядок важен:
+
+    1. состав проданного объёма — тех карта варианта;
+    2. «заменить» и «убрать» правят уже набранный состав. Количество они
+       берут отсюда же, а не из себя: «на овсяном» верно и для 0,33, и для
+       0,7, и переживёт правку рецепта;
+    3. «добавить» прибавляет своё фиксированное количество — «+ шот
+       эспрессо» это 18 г зерна независимо от объёма напитка.
+
+    Возвращает {id товара: (товар, количество)}.
+    """
+    из_карты = {
+        line.item_id: (line.item, line.quantity)
+        for line in RecipeItem.objects.filter(
+            variant_id=order_item.variant_id
+        ).select_related("item")
+    }
+
+    effects = list(
+        ModifierEffect.objects.filter(
+            modifier__orderitemmodifier__order_item=order_item
+        ).select_related("item", "replacement")
+    )
+
+    # сначала замены и снятия — они опираются на состав из карты
+    for effect in effects:
+        if effect.kind == ModifierEffect.Kind.REMOVE:
+            из_карты.pop(effect.item_id, None)
+        elif effect.kind == ModifierEffect.Kind.SWAP:
+            было = из_карты.pop(effect.item_id, None)
+            if было is None:
+                # в карте этого объёма товара нет — заменять нечего, и
+                # подставлять замену «из воздуха» нельзя: списали бы то,
+                # чего в напитке не было
+                continue
+            _, qty = было
+            item, prev = из_карты.get(effect.replacement_id, (effect.replacement, Decimal("0")))
+            из_карты[effect.replacement_id] = (item, prev + qty)
+
+    for effect in effects:
+        if effect.kind != ModifierEffect.Kind.ADD:
+            continue
+        item, prev = из_карты.get(effect.item_id, (effect.item, Decimal("0")))
+        из_карты[effect.item_id] = (item, prev + effect.quantity)
+
+    return из_карты
+
+
 @transaction.atomic
 def write_off_order_item(order_item, user=None) -> list[StockItem]:
-    """Списать ингредиенты позиции заказа по тех карте блюда.
+    """Списать ингредиенты позиции заказа: тех карта варианта плюс опции.
 
     Идемпотентно: повторный перевод позиции в «готово» ничего не спишет.
     Остаток может уйти в минус — это видно в остатках и чинится инвентаризацией;
@@ -44,17 +97,19 @@ def write_off_order_item(order_item, user=None) -> list[StockItem]:
     if order_item.stock_written_off_at:
         return []
 
-    lines = RecipeItem.objects.filter(
-        variant_id=order_item.variant_id
-    ).select_related("item")
     comment = f"Заказ №{order_item.order_id} · {order_item.display_name}"
+    options = order_item.options_text
+    if options:
+        comment += f" ({options})"
     short: list[StockItem] = []
 
-    for line in lines:
-        need = line.quantity * order_item.quantity
-        if line.item.quantity < need:
-            short.append(line.item)
-        line.item.apply_movement(
+    for item, per_portion in portion_consumption(order_item).values():
+        need = per_portion * order_item.quantity
+        if not need:
+            continue
+        if item.quantity < need:
+            short.append(item)
+        item.apply_movement(
             -need, StockMovement.Kind.SALE, user=user, comment=comment
         )
 
@@ -69,14 +124,17 @@ def return_order_item(order_item, user=None) -> None:
     if not order_item.stock_written_off_at:
         return
 
-    lines = RecipeItem.objects.filter(
-        variant_id=order_item.variant_id
-    ).select_related("item")
     comment = f"Возврат: заказ №{order_item.order_id} · {order_item.display_name}"
+    options = order_item.options_text
+    if options:
+        comment += f" ({options})"
 
-    for line in lines:
-        line.item.apply_movement(
-            line.quantity * order_item.quantity,
+    # Возвращаем ровно то, что списали: тот же расчёт с теми же опциями.
+    for item, per_portion in portion_consumption(order_item).values():
+        if not per_portion:
+            continue
+        item.apply_movement(
+            per_portion * order_item.quantity,
             StockMovement.Kind.RETURN,
             user=user,
             comment=comment,

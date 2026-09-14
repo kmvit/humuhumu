@@ -1,6 +1,12 @@
 from rest_framework import serializers
 
-from .models import Order, OrderItem, Table
+from .models import Order, OrderItem, OrderItemModifier, Table
+
+
+class OrderItemModifierSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrderItemModifier
+        fields = ("id", "modifier", "name", "price_delta")
 
 
 class TableSerializer(serializers.ModelSerializer):
@@ -17,12 +23,16 @@ class OrderItemSerializer(serializers.ModelSerializer):
     variant_label = serializers.CharField(source="variant.label", read_only=True)
     subtotal = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     station = serializers.CharField(read_only=True)
+    modifiers = OrderItemModifierSerializer(many=True, read_only=True)
+    # «овсяное, без сиропа» — кухне и бару важнее строки, чем список объектов
+    options_text = serializers.CharField(read_only=True)
 
     class Meta:
         model = OrderItem
         fields = (
             "id", "variant", "variant_label", "product", "product_name",
             "station", "status", "guest", "quantity", "unit_price", "subtotal",
+            "modifiers", "options_text",
         )
         read_only_fields = ("unit_price",)
 
@@ -95,6 +105,10 @@ class OrderItemCreateSerializer(serializers.Serializer):
     product = serializers.IntegerField(required=False)
     quantity = serializers.IntegerField(min_value=1, default=1)
     guest = serializers.IntegerField(min_value=1, required=False, allow_null=True)
+    #: id выбранных опций; что они значат и можно ли их вместе — решает сервер
+    modifiers = serializers.ListField(
+        child=serializers.IntegerField(), required=False, allow_empty=True
+    )
 
     def validate(self, attrs):
         if not attrs.get("variant") and not attrs.get("product"):

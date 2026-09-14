@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.conf import settings
 from django.db import models
 
@@ -206,7 +208,12 @@ class OrderItem(TenantModel):
     def subtotal(self):
         # None-safe: у незаполненной позиции (пустая форма-шаблон в админке)
         # unit_price ещё не задан — считаем сумму нулём, а не падаем.
-        return (self.unit_price or 0) * (self.quantity or 0)
+        return ((self.unit_price or 0) + self.modifiers_total) * (self.quantity or 0)
+
+    @property
+    def modifiers_total(self):
+        """Надбавка выбранных опций за одну порцию (может быть и минусом)."""
+        return sum((m.price_delta for m in self.modifiers.all()), start=Decimal("0"))
 
     @property
     def station(self):
@@ -218,5 +225,45 @@ class OrderItem(TenantModel):
         """Название для чека и досок: «Кис-кис 0,33 л»."""
         return self.variant.full_name
 
+    @property
+    def options_text(self) -> str:
+        """Выбранные опции строкой: «овсяное, без сиропа» — для кухни и чека."""
+        return ", ".join(m.name for m in self.modifiers.all())
+
     def __str__(self):
         return f"{self.variant} × {self.quantity}"
+
+class OrderItemModifier(TenantModel):
+    """Выбранная опция в позиции заказа — снимком.
+
+    Название и надбавку копируем, как unit_price у самой позиции: через
+    полгода опция может подорожать или называться иначе, а чек обязан
+    остаться тем, что гость видел на кассе.
+    """
+
+    order_item = models.ForeignKey(
+        OrderItem,
+        on_delete=models.CASCADE,
+        related_name="modifiers",
+        verbose_name="Позиция",
+    )
+    # PROTECT: по опции считается списание склада, ссылку рвать нельзя
+    modifier = models.ForeignKey(
+        "catalog.Modifier", on_delete=models.PROTECT, verbose_name="Опция"
+    )
+    name = models.CharField("Название", max_length=100)
+    price_delta = models.DecimalField("Надбавка, ₽", max_digits=10, decimal_places=2)
+
+    class Meta:
+        verbose_name = "Опция позиции"
+        verbose_name_plural = "Опции позиций"
+        ordering = ["id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["order_item", "modifier"], name="uniq_modifier_per_order_item"
+            )
+        ]
+
+    def __str__(self):
+        return self.name
+

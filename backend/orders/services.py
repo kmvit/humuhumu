@@ -3,9 +3,9 @@ import uuid
 
 from django.db import transaction
 
-from catalog.models import ProductVariant
+from catalog.models import Modifier, ProductVariant
 
-from .models import Order, OrderItem
+from .models import Order, OrderItem, OrderItemModifier
 
 
 class OrderError(Exception):
@@ -33,6 +33,41 @@ def _resolve_variant(line: dict) -> ProductVariant:
     return variant
 
 
+def _resolve_modifiers(variant: ProductVariant, ids) -> list[Modifier]:
+    """Проверить выбранные опции и вернуть их.
+
+    Проверяем на сервере, а не доверяем клиенту: цена позиции считается из
+    надбавок, и подставленная опция чужого блюда стоила бы заведению денег.
+    Заодно ловим нарушение «выбрать ровно одно» — иначе в чек уехали бы и
+    коровье, и овсяное разом.
+    """
+    if not ids:
+        chosen = []
+    else:
+        chosen = list(
+            Modifier.objects.filter(
+                id__in=list(ids), group__products=variant.product_id, group__is_active=True
+            ).select_related("group")
+        )
+        if len(chosen) != len(set(ids)):
+            raise OrderError("Опция недоступна для этого блюда")
+        for modifier in chosen:
+            if modifier.is_stopped:
+                raise OrderError(f"«{modifier.name}» временно недоступно (на стопе)")
+
+    picked = {}
+    for modifier in chosen:
+        picked.setdefault(modifier.group_id, []).append(modifier)
+
+    for group in variant.product.modifier_groups.filter(is_active=True):
+        n = len(picked.get(group.id, []))
+        if n < group.min_choices:
+            raise OrderError(f"Выберите: {group.name}")
+        if group.max_choices and n > group.max_choices:
+            raise OrderError(f"«{group.name}» — можно выбрать не больше {group.max_choices}")
+    return chosen
+
+
 def _add_items(order: Order, items: list[dict]) -> None:
     """Добавить позиции к заказу, беря цены с сервера."""
     for line in items:
@@ -42,13 +77,25 @@ def _add_items(order: Order, items: list[dict]) -> None:
         quantity = int(line.get("quantity", 1))
         if quantity < 1:
             raise OrderError("Количество должно быть положительным")
+        modifiers = _resolve_modifiers(variant, line.get("modifiers") or [])
         guest = line.get("guest")
-        OrderItem.objects.create(
+        item = OrderItem.objects.create(
             order=order,
             variant=variant,
             quantity=quantity,
             unit_price=variant.price,  # фиксируем цену на момент покупки
             guest=guest if guest else None,  # 0/None → общий
+        )
+        # Название и надбавку снимаем сейчас: через полгода опция может
+        # подорожать, а чек обязан остаться тем, что видел гость.
+        OrderItemModifier.objects.bulk_create(
+            OrderItemModifier(
+                order_item=item,
+                modifier=modifier,
+                name=modifier.name,
+                price_delta=modifier.price_delta,
+            )
+            for modifier in modifiers
         )
 
 
@@ -105,10 +152,16 @@ def next_daily_number() -> int:
     return (last or 0) + 1
 
 
+@transaction.atomic
 def create_request(
     *, customer_name: str, items: list[dict], table: str = "", comment: str = "", client=None
 ) -> Order:
     """Заказ от гостя без авторизации.
+
+    В транзакции, как и заказ официанта: строка позиции может не пройти
+    проверку (стоп, чужая опция, недоступное блюдо), и без отката в базе
+    оставался бы пустой заказ — он же занял бы номер выдачи и повис бы у
+    официанта в заявках.
 
     В зале это заявка: официант подтверждает её на стол, который пришёл из
     QR-кода. На стойке подтверждать некому и стола нет — заказ сразу уходит
