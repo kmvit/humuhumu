@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { get, post, ApiError } from "../../api";
-import type { Category, Order, Product } from "../../types";
+import type { Category, Order, Product, ProductVariant } from "../../types";
 import Icon, { categoryIcon } from "../../components/Icon";
 import { SceneBanner, WaveRule } from "../../components/Ornaments";
 import Lightbox from "../../components/Lightbox";
@@ -19,7 +19,10 @@ export default function Menu() {
   const [loading, setLoading] = useState(true);
   const [zoom, setZoom] = useState<string | null>(null);
 
+  // ключ — id ВАРИАНТА: «Кис-кис 0,33» и «0,5» лежат в корзине раздельно
   const [cart, setCart] = useState<Record<number, number>>({});
+  // выбранный объём в каждой карточке: id товара → id варианта
+  const [picked, setPicked] = useState<Record<number, number>>({});
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [comment, setComment] = useState("");
@@ -63,14 +66,27 @@ export default function Menu() {
       .filter((s) => s.items.length > 0);
     return activeCat ? all.filter((s) => s.cat.id === activeCat) : all;
   }, [categories, products, activeCat]);
+  /** Корзина держится на вариантах: продаётся объём, а не карточка. */
+  const byVariant = useMemo(() => {
+    const map = new Map<number, { product: Product; variant: ProductVariant }>();
+    for (const product of products)
+      for (const variant of product.variants) map.set(variant.id, { product, variant });
+    return map;
+  }, [products]);
+
   const total = useMemo(
     () =>
       Object.entries(cart).reduce((s, [id, q]) => {
-        const p = products.find((x) => x.id === Number(id));
-        return s + (p ? Number(p.price) * q : 0);
+        const found = byVariant.get(Number(id));
+        return s + (found ? Number(found.variant.price) * q : 0);
       }, 0),
-    [cart, products]
+    [cart, byVariant]
   );
+
+  /** Какой объём выбран в карточке. По умолчанию — первый (самый ходовой). */
+  const pickedFor = (p: Product) => picked[p.id] ?? p.variants[0]?.id;
+  const variantOf = (p: Product) =>
+    p.variants.find((v) => v.id === pickedFor(p)) ?? p.variants[0];
   const count = Object.values(cart).reduce((a, b) => a + b, 0);
 
   // при появлении/смене своего заказа показываем его карточку сверху страницы
@@ -95,8 +111,8 @@ export default function Menu() {
     }
     setSubmitting(true);
     try {
-      const items = Object.entries(cart).map(([product, quantity]) => ({
-        product: Number(product),
+      const items = Object.entries(cart).map(([variant, quantity]) => ({
+        variant: Number(variant),
         quantity,
       }));
       const order = await post<Order>("/orders/place/", {
@@ -211,8 +227,12 @@ export default function Menu() {
               <span className="unit">руб</span>
             </div>
 
-            {items.map((p) => (
-              <div className={"menu-row" + (p.is_available && !p.is_stopped ? "" : " out")} key={p.id}>
+            {items.map((p) => {
+              const v = variantOf(p);
+              if (!v) return null;  // товар без цен в меню не показываем
+              const out = !p.is_available || v.is_stopped;
+              return (
+              <div className={"menu-row" + (out ? " out" : "")} key={p.id}>
                 <div className="menu-lead">
                   {p.thumbnail && (
                     <img
@@ -226,28 +246,44 @@ export default function Menu() {
                   <div className="menu-item">
                     <h3>{p.name} <span className="muted sm">#{p.id}</span></h3>
                     {p.description && <p className="menu-desc">{p.description}</p>}
-                    {p.is_stopped && <span className="stop-badge">Sold out</span>}
+                    {p.variants.length > 1 && (
+                      <div className="size-row" role="group" aria-label="Объём">
+                        {p.variants.map((opt) => (
+                          <button
+                            key={opt.id}
+                            className={"size-chip" + (opt.id === v.id ? " active" : "")}
+                            aria-pressed={opt.id === v.id}
+                            onClick={() => setPicked((s) => ({ ...s, [p.id]: opt.id }))}
+                          >
+                            {opt.label}
+                            {opt.is_stopped && <span className="size-out"> · стоп</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {v.is_stopped && <span className="stop-badge">Sold out</span>}
                   </div>
                 </div>
-                <span className="menu-price num">{Number(p.price).toLocaleString("ru")}</span>
+                <span className="menu-price num">{Number(v.price).toLocaleString("ru")}</span>
                 <div className="menu-add">
-                  {p.is_stopped ? (
+                  {v.is_stopped ? (
                     <span className="muted sm">стоп</span>
-                  ) : cart[p.id] ? (
-                    <Stepper value={cart[p.id]} width={96} onDec={() => remove(p.id)} onInc={() => add(p.id)} />
+                  ) : cart[v.id] ? (
+                    <Stepper value={cart[v.id]} width={96} onDec={() => remove(v.id)} onInc={() => add(v.id)} />
                   ) : (
                     <button
                       className="btn sm icon"
-                      onClick={() => add(p.id)}
+                      onClick={() => add(v.id)}
                       disabled={!p.is_available}
-                      aria-label={`Добавить «${p.name}»`}
+                      aria-label={`Добавить «${p.name} ${v.label}`.trim() + "»"}
                     >
                       <Icon name={p.is_available ? "plus" : "spark"} size={16} />
                     </button>
                   )}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </section>
         ))
       )}
@@ -260,13 +296,18 @@ export default function Menu() {
           </div>
           <ul className="stack list mt-2">
             {Object.entries(cart).map(([id, qty]) => {
-              const p = products.find((x) => x.id === Number(id));
-              if (!p) return null;
+              const found = byVariant.get(Number(id));
+              if (!found) return null;
+              const { product: p, variant: v } = found;
               return (
                 <li key={id} className="between">
-                  <span>{p.name} <span className="muted sm">#{p.id}</span></span>
+                  <span>
+                    {p.name}
+                    {v.label && <span className="muted"> · {v.label}</span>}{" "}
+                    <span className="muted sm">#{p.id}</span>
+                  </span>
                   <span className="inline">
-                    <span className="num muted" style={{ minWidth: 62, textAlign: "right" }}>{(Number(p.price) * qty).toLocaleString("ru")} ₽</span>
+                    <span className="num muted" style={{ minWidth: 62, textAlign: "right" }}>{(Number(v.price) * qty).toLocaleString("ru")} ₽</span>
                     <Stepper value={qty} width={104} onDec={() => remove(Number(id))} onInc={() => add(Number(id))} />
                   </span>
                 </li>

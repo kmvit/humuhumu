@@ -21,7 +21,7 @@
           <tbody>
             {% for row in sold_breakdown %}
               <tr>
-                <td>{{ row.product__name }}</td>
+                <td>{{ row.sold_name }}</td>
                 <td style="text-align: right;"><strong>{{ row.qty }}</strong></td>
                 <td style="text-align: right;">{{ row.revenue|floatformat:2 }} ₽</td>
               </tr>

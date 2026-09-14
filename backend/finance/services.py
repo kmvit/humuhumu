@@ -118,10 +118,11 @@ def user_days(period: date_cls, user_id: int) -> list[dict]:
 # Отчёт о прибыли за месяц
 # ─────────────────────────────────────────────────────────────────────────
 
-def _cost_per_portion(product_ids) -> tuple[dict[int, Decimal], set[int]]:
-    """Себестоимость порции по тех. карте и множество блюд с полной картой.
+def _cost_per_portion(variant_ids) -> tuple[dict[int, Decimal], set[int]]:
+    """Себестоимость порции по тех. карте и множество вариантов с полной картой.
 
-    Блюдо считается покрытым, только если у него есть тех. карта И у всех её
+    Карты живут на вариантах блюд — у «0,33» и «0,7» расход свой. Вариант
+    считается покрытым, только если у него есть тех. карта И у всех её
     товаров известна цена закупа. Иначе себестоимость занижена, и говорить
     о прибыли как о факте нельзя.
     """
@@ -129,22 +130,22 @@ def _cost_per_portion(product_ids) -> tuple[dict[int, Decimal], set[int]]:
     from inventory.services import last_unit_costs
 
     rows = list(
-        RecipeItem.objects.filter(product_id__in=list(product_ids))
-        .values("product_id", "item_id", "quantity")
+        RecipeItem.objects.filter(variant_id__in=list(variant_ids))
+        .values("variant_id", "item_id", "quantity")
     )
     costs = last_unit_costs({r["item_id"] for r in rows})
 
-    per_product: dict[int, Decimal] = {}
+    per_variant: dict[int, Decimal] = {}
     complete: dict[int, bool] = {}
     for r in rows:
         unit = costs.get(r["item_id"])
-        per_product[r["product_id"]] = per_product.get(
-            r["product_id"], Decimal("0")
+        per_variant[r["variant_id"]] = per_variant.get(
+            r["variant_id"], Decimal("0")
         ) + (r["quantity"] * (unit or Decimal("0")))
-        complete[r["product_id"]] = complete.get(r["product_id"], True) and unit is not None
+        complete[r["variant_id"]] = complete.get(r["variant_id"], True) and unit is not None
 
-    covered = {pid for pid, ok in complete.items() if ok}
-    return per_product, covered
+    covered = {vid for vid, ok in complete.items() if ok}
+    return per_variant, covered
 
 
 def report(period: date_cls) -> dict:
@@ -196,17 +197,17 @@ def report(period: date_cls) -> dict:
     # ——— себестоимость проданного ———
     sold = list(
         OrderItem.objects.filter(order__in=orders)
-        .values("product_id")
+        .values("variant_id")
         .annotate(qty=Sum("quantity"), sum=Sum(F("unit_price") * F("quantity")))
     )
-    per_portion, covered_ids = _cost_per_portion([s["product_id"] for s in sold])
+    per_portion, covered_ids = _cost_per_portion([s["variant_id"] for s in sold])
 
     cogs = money(0)
     covered_revenue = money(0)
     for s in sold:
-        pid = s["product_id"]
-        if pid in covered_ids:
-            cogs += per_portion.get(pid, D("0")) * s["qty"]
+        vid = s["variant_id"]
+        if vid in covered_ids:
+            cogs += per_portion.get(vid, D("0")) * s["qty"]
             covered_revenue += money(s["sum"])
     cogs = money(cogs)
 

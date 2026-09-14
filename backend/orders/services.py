@@ -3,7 +3,7 @@ import uuid
 
 from django.db import transaction
 
-from catalog.models import Product
+from catalog.models import ProductVariant
 
 from .models import Order, OrderItem
 
@@ -12,24 +12,42 @@ class OrderError(Exception):
     pass
 
 
+def _resolve_variant(line: dict) -> ProductVariant:
+    """Вариант из строки заказа: по variant, или по product старого клиента.
+
+    Товар без варианта однозначен, пока вариант один; закэшированный бандл
+    с многовариантным товаром получит первый по порядку — это осознанная
+    цена совместимости на переходный период.
+    """
+    qs = ProductVariant.objects.filter(
+        is_active=True, product__is_available=True
+    ).select_related("product")
+    if line.get("variant"):
+        variant = qs.filter(pk=line["variant"]).first()
+    else:
+        variant = qs.filter(product_id=line["product"]).order_by(
+            "sort_order", "id"
+        ).first()
+    if variant is None:
+        raise OrderError("Товар недоступен или не найден")
+    return variant
+
+
 def _add_items(order: Order, items: list[dict]) -> None:
     """Добавить позиции к заказу, беря цены с сервера."""
     for line in items:
-        try:
-            product = Product.objects.get(pk=line["product"], is_available=True)
-        except Product.DoesNotExist:
-            raise OrderError("Товар недоступен или не найден")
-        if product.is_stopped:
-            raise OrderError(f"«{product.name}» временно недоступно (на стопе)")
+        variant = _resolve_variant(line)
+        if variant.is_stopped:
+            raise OrderError(f"«{variant.full_name}» временно недоступно (на стопе)")
         quantity = int(line.get("quantity", 1))
         if quantity < 1:
             raise OrderError("Количество должно быть положительным")
         guest = line.get("guest")
         OrderItem.objects.create(
             order=order,
-            product=product,
+            variant=variant,
             quantity=quantity,
-            unit_price=product.price,  # фиксируем цену на момент покупки
+            unit_price=variant.price,  # фиксируем цену на момент покупки
             guest=guest if guest else None,  # 0/None → общий
         )
 

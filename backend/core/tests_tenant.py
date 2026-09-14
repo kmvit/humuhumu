@@ -35,12 +35,12 @@ class TwoOrganizationsTests(TestCase):
         with organization_context(self.a):
             self.cat_a = Category.objects.create(name="Кофе Альфы")
             self.product_a = Product.objects.create(
-                name="Латте Альфы", price=300, category=self.cat_a
+                name="Латте Альфы", category=self.cat_a
             )
         with organization_context(self.b):
             self.cat_b = Category.objects.create(name="Кофе Беты")
             self.product_b = Product.objects.create(
-                name="Латте Беты", price=400, category=self.cat_b
+                name="Латте Беты", category=self.cat_b
             )
 
     def test_each_sees_only_its_own(self):
@@ -125,7 +125,7 @@ class TenantByDomainTests(TestCase):
     def test_menu_is_per_domain(self):
         with organization_context(self.a):
             cat = Category.objects.create(name="Кофе")
-            Product.objects.create(name="Латте Альфы", price=300, category=cat)
+            Product.objects.create(name="Латте Альфы", category=cat)
         names = [
             p["name"]
             for p in self.client.get("/api/products/", HTTP_HOST="alpha.padacha.ru").json()
@@ -188,7 +188,7 @@ class CrossTenantAuthTests(TestCase):
     def test_orders_of_another_cafe_are_invisible(self):
         with organization_context(self.b):
             cat = Category.objects.create(name="Кофе Беты")
-            product = Product.objects.create(name="Латте", price=100, category=cat)
+            product = Product.objects.create(name="Латте", category=cat)
             Order.objects.create(total=100, client=None)
         token = self._token("alpha.padacha.ru").json()["access"]
         res = self.client.get(
@@ -232,7 +232,7 @@ class ImportInstanceTests(TestCase):
         self.home.save()
         with organization_context(self.home):
             cat = Category.objects.create(name="Свой кофе")
-            self.own = Product.objects.create(name="Свой раф", price=300, category=cat)
+            self.own = Product.objects.create(name="Свой раф", category=cat)
 
     def _import(self, domain="pereezd.padacha.ru"):
         import json
@@ -258,6 +258,11 @@ class ImportInstanceTests(TestCase):
             )
             # связь внутри дампа осталась связной
             self.assertEqual(Product.objects.first().category.name, "Кофе")
+            # дамп старше вариантов: цена лежала на товаре и должна была
+            # развернуться в единственный вариант, иначе блюдо непродаваемо
+            variant = Product.objects.first().variants.get()
+            self.assertEqual(str(variant.price), "350.00")
+            self.assertEqual(variant.label, "")
             # настройки переехали вместе с данными
             self.assertEqual(SiteSettings.load().service_mode, "counter")
 
@@ -272,7 +277,7 @@ class ImportInstanceTests(TestCase):
         self._import()
         with organization_context(self.home):
             cat = Category.objects.first()
-            fresh = Product.objects.create(name="Новый", price=100, category=cat)
+            fresh = Product.objects.create(name="Новый", category=cat)
         self.assertTrue(Product.all_objects.filter(pk=fresh.pk).count() == 1)
 
     def test_repeat_import_is_refused(self):
@@ -313,7 +318,7 @@ class ImportInstanceTests(TestCase):
         self.home.save()
         with organization_context(self.home):
             cat = Category.objects.create(name="Свой кофе")
-            self.own = Product.objects.create(name="Свой раф", price=300, category=cat)
+            self.own = Product.objects.create(name="Свой раф", category=cat)
 
     def _import(self, domain="pereezd.padacha.ru"):
         import json
@@ -339,6 +344,11 @@ class ImportInstanceTests(TestCase):
             )
             # связь внутри дампа осталась связной
             self.assertEqual(Product.objects.first().category.name, "Кофе")
+            # дамп старше вариантов: цена лежала на товаре и должна была
+            # развернуться в единственный вариант, иначе блюдо непродаваемо
+            variant = Product.objects.first().variants.get()
+            self.assertEqual(str(variant.price), "350.00")
+            self.assertEqual(variant.label, "")
             # настройки переехали вместе с данными
             self.assertEqual(SiteSettings.load().service_mode, "counter")
 
@@ -353,7 +363,7 @@ class ImportInstanceTests(TestCase):
         self._import()
         with organization_context(self.home):
             cat = Category.objects.first()
-            fresh = Product.objects.create(name="Новый", price=100, category=cat)
+            fresh = Product.objects.create(name="Новый", category=cat)
         self.assertTrue(Product.all_objects.filter(pk=fresh.pk).count() == 1)
 
     def test_repeat_import_is_refused(self):

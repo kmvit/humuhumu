@@ -1,5 +1,6 @@
 from django.contrib import admin
-from django.db.models import DecimalField, ExpressionWrapper, F, Sum
+from django.db.models import DecimalField, ExpressionWrapper, F, Sum, Value
+from django.db.models.functions import Concat, Trim
 
 from .models import Order, OrderItem, Table
 
@@ -22,7 +23,7 @@ class StationFilter(admin.SimpleListFilter):
     def queryset(self, request, queryset):
         if self.value() in ("kitchen", "bar"):
             return queryset.filter(
-                items__product__category__station=self.value()
+                items__variant__product__category__station=self.value()
             ).distinct()
         return queryset
 
@@ -38,7 +39,7 @@ class OrderItemInline(admin.TabularInline):
     model = OrderItem
     extra = 0
     readonly_fields = ("subtotal",)
-    fields = ("product", "quantity", "unit_price", "guest", "status", "subtotal")
+    fields = ("variant", "quantity", "unit_price", "guest", "status", "subtotal")
 
 
 @admin.register(OrderItem)
@@ -46,13 +47,16 @@ class OrderItemAdmin(admin.ModelAdmin):
     """Проданные позиции: фильтр по блюду/статусу/дате + сводка «сколько продано»."""
 
     list_display = (
-        "product", "quantity", "unit_price", "subtotal_display",
+        "variant", "quantity", "unit_price", "subtotal_display",
         "order_table", "order_status", "order_created",
     )
-    list_filter = ("product", "order__status", "order__created_at")
-    search_fields = ("product__name", "order__table", "order__customer_name")
+    list_filter = ("variant", "order__status", "order__created_at")
+    search_fields = (
+        "variant__product__name", "variant__label",
+        "order__table", "order__customer_name",
+    )
     date_hierarchy = "order__created_at"
-    list_select_related = ("product", "order")
+    list_select_related = ("variant__product", "order")
     change_list_template = "admin/orders/orderitem/change_list.html"
 
     @admin.display(description="Сумма")
@@ -81,7 +85,12 @@ class OrderItemAdmin(admin.ModelAdmin):
         agg = qs.aggregate(qty=Sum("quantity"), revenue=Sum(REVENUE))
         # разбивка по блюдам для текущей выборки фильтров
         breakdown = list(
-            qs.values("product__name")
+            qs.annotate(
+                sold_name=Trim(
+                    Concat("variant__product__name", Value(" "), "variant__label")
+                )
+            )
+            .values("sold_name")
             .annotate(qty=Sum("quantity"), revenue=Sum(REVENUE))
             .order_by("-qty")
         )

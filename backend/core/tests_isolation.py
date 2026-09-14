@@ -17,7 +17,7 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from catalog.models import Category, Product
+from catalog.models import Category, Product, ProductVariant
 from core.models import Organization, SiteSettings
 from core.tenancy import organization_context
 from finance.models import Expense, ExpenseCategory
@@ -37,12 +37,11 @@ def build_cafe(org, marker: str):
         site.save()
 
         category = Category.objects.create(name=f"Категория {marker}")
-        product = Product.objects.create(
-            name=f"Блюдо {marker}", price=100, category=category
-        )
+        product = Product.objects.create(name=f"Блюдо {marker}", category=category)
+        variant = ProductVariant.objects.create(product=product, price=100)
         table = Table.objects.create(name=f"Стол {marker}")
         order = Order.objects.create(total=100, table=table.name)
-        OrderItem.objects.create(order=order, product=product, quantity=1, unit_price=100)
+        OrderItem.objects.create(order=order, variant=variant, quantity=1, unit_price=100)
 
         stock_category = StockCategory.objects.create(name=f"Склад {marker}")
         stock_item = StockItem.objects.create(
@@ -266,14 +265,15 @@ class CrossTenantReportsTests(TestCase):
                 site.save()
                 category = Category.objects.create(name=f"Кат {marker}")
                 product = Product.objects.create(
-                    name=f"Блюдо {marker}", price=total, category=category
+                    name=f"Блюдо {marker}", category=category
                 )
+                variant = ProductVariant.objects.create(product=product, price=total)
                 order = Order.objects.create(
                     total=total, status=Order.Status.PAID,
                     closed_at=timezone.now(), pay_method="cash",
                 )
                 OrderItem.objects.create(
-                    order=order, product=product, quantity=1, unit_price=total
+                    order=order, variant=variant, quantity=1, unit_price=total
                 )
                 worker = User.objects.create_user(
                     f"работник-{marker}", role=User.Role.WAITER, organization=org
@@ -349,7 +349,12 @@ class GuestSideIsolationTests(TestCase):
                 site.name = f"Кафе {marker}"
                 site.save()
                 cat = Category.objects.create(name=f"Кат {marker}")
-                Product.objects.create(name=f"Блюдо {marker}", price=100, category=cat)
+                ProductVariant.objects.create(
+                    product=Product.objects.create(
+                        name=f"Блюдо {marker}", category=cat
+                    ),
+                    price=100,
+                )
         import uuid
 
         with organization_context(self.b):
@@ -411,12 +416,18 @@ class BoardsIsolationTests(TestCase):
             site.save()
             kitchen = Category.objects.create(name=f"Кухня {marker}", station="kitchen")
             bar = Category.objects.create(name=f"Бар {marker}", station="bar")
-            food = Product.objects.create(name=f"Суп {marker}", price=300, category=kitchen)
-            drink = Product.objects.create(name=f"Чай {marker}", price=100, category=bar)
+            food = ProductVariant.objects.create(
+                product=Product.objects.create(name=f"Суп {marker}", category=kitchen),
+                price=300,
+            )
+            drink = ProductVariant.objects.create(
+                product=Product.objects.create(name=f"Чай {marker}", category=bar),
+                price=100,
+            )
             Table.objects.create(name="Стол 5")
             order = Order.objects.create(total=400, table="Стол 5")
-            OrderItem.objects.create(order=order, product=food, quantity=1, unit_price=300)
-            OrderItem.objects.create(order=order, product=drink, quantity=1, unit_price=100)
+            OrderItem.objects.create(order=order, variant=food, quantity=1, unit_price=300)
+            OrderItem.objects.create(order=order, variant=drink, quantity=1, unit_price=100)
             staff = {
                 role: User.objects.create_user(
                     f"{role}-{marker}", password="Sh4-board-pass",
@@ -684,14 +695,15 @@ class ReportsIsolationTests(TestCase):
                 site.save()
                 category = Category.objects.create(name=f"Кат {marker}")
                 product = Product.objects.create(
-                    name=f"Блюдо {marker}", price=amount, category=category
+                    name=f"Блюдо {marker}", category=category
                 )
+                variant = ProductVariant.objects.create(product=product, price=amount)
                 order = Order.objects.create(
                     total=amount, status=Order.Status.PAID,
                     closed_at=timezone.now(), pay_method="cash",
                 )
                 OrderItem.objects.create(
-                    order=order, product=product, quantity=1, unit_price=amount
+                    order=order, variant=variant, quantity=1, unit_price=amount
                 )
                 stock_category = StockCategory.objects.create(name=f"Склад {marker}")
                 StockItem.objects.create(

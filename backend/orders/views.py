@@ -82,7 +82,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         return [IsAuthenticated()]
 
     def get_queryset(self):
-        qs = Order.objects.prefetch_related("items__product__category")
+        qs = Order.objects.prefetch_related("items__variant__product__category")
         params = self.request.query_params
         # активные заказы: открытые + оплаченные сегодня (оплата вперёд — кухня
         # ещё готовит). Историю оплаченных не тянем, чтобы не залить доску.
@@ -107,7 +107,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 )
             )
             return qs.filter(
-                board, items__product__category__station=st
+                board, items__variant__product__category__station=st
             ).distinct()
         # лента «К подаче» у официанта: станция готова, но ещё не отнесена (served).
         # Отдельный механизм — кнопка «Подал» не зависит от досок.
@@ -205,7 +205,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         order = None
         if token:
             order = (
-                Order.objects.prefetch_related("items__product__category")
+                Order.objects.prefetch_related("items__variant__product__category")
                 .filter(public_token=token)
                 .first()
             )
@@ -441,12 +441,12 @@ class OrderViewSet(viewsets.ModelViewSet):
             OrderItem.objects.bulk_update(items, ["order"])
             # у обоих заказов изменился состав — заново суммы и таймстемпы станций
             for pk_ in (order.pk, target.pk):
-                o = Order.objects.prefetch_related("items__product__category").get(pk=pk_)
+                o = Order.objects.prefetch_related("items__variant__product__category").get(pk=pk_)
                 o.recalc_total()
                 o.save(update_fields=["total"])
                 self._sync_times(o, Category.Station.KITCHEN)
                 self._sync_times(o, Category.Station.BAR)
-        order = Order.objects.prefetch_related("items__product__category").get(pk=order.pk)
+        order = Order.objects.prefetch_related("items__variant__product__category").get(pk=order.pk)
         return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["patch"])
@@ -498,7 +498,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             order.save(update_fields=changed)
 
     def _reload_and_respond(self, pk, *stations):
-        order = Order.objects.prefetch_related("items__product__category").get(pk=pk)
+        order = Order.objects.prefetch_related("items__variant__product__category").get(pk=pk)
         for st in stations:
             self._sync_times(order, st)
         return Response(OrderSerializer(order).data)
@@ -613,7 +613,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         except OrderError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         # новые позиции идут со статусом «новый» — освежаем агрегаты/таймстемпы станций
-        order = Order.objects.prefetch_related("items__product__category").get(pk=order.pk)
+        order = Order.objects.prefetch_related("items__variant__product__category").get(pk=order.pk)
         self._sync_times(order, Category.Station.KITCHEN)
         self._sync_times(order, Category.Station.BAR)
         return Response(OrderSerializer(order).data)
@@ -642,7 +642,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         # Если по позиции уже списали склад — возвращаем продукты обратно.
         return_order_item(item, user=request.user)
         item.delete()
-        order = Order.objects.prefetch_related("items__product__category").get(pk=order.pk)
+        order = Order.objects.prefetch_related("items__variant__product__category").get(pk=order.pk)
         if order.items.exists():
             order.recalc_total()
             order.save(update_fields=["total"])
@@ -678,7 +678,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         guest = request.data.get("guest")
         item.guest = int(guest) if guest else None
         item.save(update_fields=["guest"])
-        order = Order.objects.prefetch_related("items__product__category").get(pk=order.pk)
+        order = Order.objects.prefetch_related("items__variant__product__category").get(pk=order.pk)
         return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["patch"], url_path="item_qty")
@@ -718,7 +718,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         else:
             item.quantity = qty
             item.save(update_fields=["quantity"])
-        order = Order.objects.prefetch_related("items__product__category").get(pk=order.pk)
+        order = Order.objects.prefetch_related("items__variant__product__category").get(pk=order.pk)
         order.recalc_total()
         order.save(update_fields=["total"])
         return Response(OrderSerializer(order).data)

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { get, post, ApiError } from "../../api";
-import type { Category, Order, Product } from "../../types";
+import type { Category, Order, Product, ProductVariant } from "../../types";
 import Icon, { categoryIcon } from "../../components/Icon";
 import Lightbox from "../../components/Lightbox";
 import { useToast } from "../../components/ui/Toast";
@@ -28,7 +28,9 @@ export default function Compose({
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [activeCat, setActiveCat] = useState<number | null>(null);
-  const [cart, setCart] = useState<Record<string, number>>({}); // "guest:productId" -> qty
+  const [cart, setCart] = useState<Record<string, number>>({}); // "guest:variantId" -> qty
+  // выбранный объём в карточке: id товара → id варианта
+  const [picked, setPicked] = useState<Record<number, number>>({});
   const [guests, setGuests] = useState(initialGuests); // сколько именованных гостей (0 = только общий)
   const [activeGuest, setActiveGuest] = useState(0); // 0 = общий
   const [comment, setComment] = useState("");
@@ -53,9 +55,26 @@ export default function Compose({
     return activeCat ? all.filter((s) => s.cat.id === activeCat) : all;
   }, [categories, products, activeCat]);
 
-  const priceOf = (pid: number) => Number(products.find((x) => x.id === pid)?.price ?? 0);
-  const key = (g: number, pid: number) => `${g}:${pid}`;
-  const qtyOf = (pid: number) => cart[key(activeGuest, pid)] || 0;
+  /** Корзина держится на вариантах: продаётся объём, а не карточка. */
+  const byVariant = useMemo(() => {
+    const map = new Map<number, { product: Product; variant: ProductVariant }>();
+    for (const product of products)
+      for (const variant of product.variants) map.set(variant.id, { product, variant });
+    return map;
+  }, [products]);
+
+  const priceOf = (vid: number) => Number(byVariant.get(vid)?.variant.price ?? 0);
+  const nameOf = (vid: number) => {
+    const found = byVariant.get(vid);
+    if (!found) return "";
+    return `${found.product.name} ${found.variant.label}`.trim();
+  };
+  /** Какой объём выбран в карточке. По умолчанию — первый. */
+  const variantOf = (p: Product) =>
+    p.variants.find((v) => v.id === picked[p.id]) ?? p.variants[0];
+
+  const key = (g: number, vid: number) => `${g}:${vid}`;
+  const qtyOf = (vid: number) => cart[key(activeGuest, vid)] || 0;
   const count = Object.values(cart).reduce((a, b) => a + b, 0);
   const total = Object.entries(cart).reduce((s, [k, q]) => s + priceOf(Number(k.split(":")[1])) * q, 0);
 
@@ -64,16 +83,17 @@ export default function Compose({
   const guestItems = (g: number) =>
     Object.entries(cart)
       .filter(([k]) => Number(k.split(":")[0]) === g)
-      .map(([k, qty]) => ({ p: products.find((x) => x.id === Number(k.split(":")[1])), qty }))
-      .filter((x): x is { p: Product; qty: number } => !!x.p);
+      .map(([k, qty]) => ({ v: byVariant.get(Number(k.split(":")[1])), qty }))
+      .filter((x): x is { v: { product: Product; variant: ProductVariant }; qty: number } => !!x.v);
   const guestCount = (g: number) => guestItems(g).reduce((s, x) => s + x.qty, 0);
-  const guestTotal = (g: number) => guestItems(g).reduce((s, x) => s + Number(x.p.price) * x.qty, 0);
+  const guestTotal = (g: number) =>
+    guestItems(g).reduce((s, x) => s + Number(x.v.variant.price) * x.qty, 0);
 
-  const add = (pid: number) =>
-    setCart((c) => ({ ...c, [key(activeGuest, pid)]: (c[key(activeGuest, pid)] || 0) + 1 }));
-  const remove = (pid: number) =>
+  const add = (vid: number) =>
+    setCart((c) => ({ ...c, [key(activeGuest, vid)]: (c[key(activeGuest, vid)] || 0) + 1 }));
+  const remove = (vid: number) =>
     setCart((c) => {
-      const k = key(activeGuest, pid);
+      const k = key(activeGuest, vid);
       const n = { ...c, [k]: (c[k] || 0) - 1 };
       if (n[k] <= 0) delete n[k];
       return n;
@@ -83,8 +103,8 @@ export default function Compose({
     setBusy(true);
     try {
       const items = Object.entries(cart).map(([k, quantity]) => {
-        const [g, pid] = k.split(":").map(Number);
-        return { product: pid, quantity, guest: g === 0 ? null : g };
+        const [g, vid] = k.split(":").map(Number);
+        return { variant: vid, quantity, guest: g === 0 ? null : g };
       });
       if (adding) {
         await post<Order>(`/orders/${orderId}/add_items/`, { items });
@@ -184,8 +204,12 @@ export default function Compose({
               <span className="unit">руб</span>
             </div>
 
-            {items.map((p) => (
-              <div className={"menu-row" + (p.is_available && !p.is_stopped ? "" : " out")} key={p.id}>
+            {items.map((p) => {
+              const v = variantOf(p);
+              if (!v) return null;  // товар без цен не продаём
+              const out = !p.is_available || v.is_stopped;
+              return (
+              <div className={"menu-row" + (out ? " out" : "")} key={p.id}>
                 <div className="menu-lead">
                   {p.thumbnail && (
                     <img
@@ -199,28 +223,48 @@ export default function Compose({
                   <div className="menu-item">
                     <h3>{p.name} <span className="muted sm">#{p.id}</span></h3>
                     {p.description && <p className="menu-desc">{p.description}</p>}
-                    {p.is_stopped && <span className="stop-badge">Sold out</span>}
+                    {/* Размер — первый выбор, дальше «+» уже про него.
+                        Чипы в строку: в час пик тап должен остаться один. */}
+                    {p.variants.length > 1 && (
+                      <div className="size-row" role="group" aria-label="Объём">
+                        {p.variants.map((opt) => (
+                          <button
+                            key={opt.id}
+                            className={"size-chip" + (opt.id === v.id ? " active" : "")}
+                            aria-pressed={opt.id === v.id}
+                            onClick={() => setPicked((st) => ({ ...st, [p.id]: opt.id }))}
+                          >
+                            {opt.label}
+                            {qtyOf(opt.id) > 0 && (
+                              <span className="size-n"> · {qtyOf(opt.id)}</span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {v.is_stopped && <span className="stop-badge">Sold out</span>}
                   </div>
                 </div>
-                <span className="menu-price num">{Number(p.price).toLocaleString("ru")}</span>
+                <span className="menu-price num">{Number(v.price).toLocaleString("ru")}</span>
                 <div className="menu-add">
-                  {p.is_stopped ? (
+                  {v.is_stopped ? (
                     <span className="muted sm">стоп</span>
-                  ) : qtyOf(p.id) ? (
-                    <Stepper value={qtyOf(p.id)} width={116} onDec={() => remove(p.id)} onInc={() => add(p.id)} />
+                  ) : qtyOf(v.id) ? (
+                    <Stepper value={qtyOf(v.id)} width={116} onDec={() => remove(v.id)} onInc={() => add(v.id)} />
                   ) : (
                     <button
                       className="btn sm icon"
-                      onClick={() => add(p.id)}
+                      onClick={() => add(v.id)}
                       disabled={!p.is_available}
-                      aria-label={`Добавить «${p.name}»`}
+                      aria-label={`Добавить «${nameOf(v.id)}»`}
                     >
                       <Icon name={p.is_available ? "plus" : "spark"} size={16} />
                     </button>
                   )}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </section>
         ))
       )}
@@ -238,8 +282,13 @@ export default function Compose({
                 </div>
                 <ul className="stack tight list mt-2">
                   {guestItems(g).map((x) => (
-                    <li key={x.p.id} className="between">
-                      <span>{x.p.name}</span>
+                    <li key={x.v.variant.id} className="between">
+                      <span>
+                        {x.v.product.name}
+                        {x.v.variant.label && (
+                          <span className="muted"> · {x.v.variant.label}</span>
+                        )}
+                      </span>
                       <span className="num muted">× {x.qty}</span>
                     </li>
                   ))}
