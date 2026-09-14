@@ -7,6 +7,9 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from rest_framework.test import APITestCase
 
+from django.core.management import call_command
+
+from core.models import Organization
 from orders.models import Order, OrderItem
 from users.models import User
 
@@ -366,4 +369,132 @@ class CategoryCrudTests(CatalogAdminBase):
         self.auth(self.admin)
         self.assertEqual(
             self.client.delete(f"/api/categories/{empty.id}/").status_code, 204
+        )
+
+class MergeSizesTests(APITestCase):
+    """Схлопывание блюд, отличающихся объёмом, в одно с вариантами.
+
+    Меню Монти заводилось до вариантов: «КИС-КИС 0.33/0.5/0.7» — три
+    карточки. Команда собирает их в одну, и история заказов обязана
+    пережить это без единой правки: позиции ссылаются на вариант.
+    """
+
+    def setUp(self):
+        self.org = Organization.objects.order_by("pk").first()
+        self.org.domain = "monti.test"
+        self.org.save()
+        self.cat = Category.objects.create(name="Тапиока", station="bar")
+
+    def _dish(self, name, price, **kw):
+        p = Product.objects.create(category=self.cat, name=name, **kw)
+        ProductVariant.objects.create(product=p, price=Decimal(price))
+        return p
+
+    def _run(self, **kw):
+        call_command("merge_sizes", domain="monti.test", verbosity=0, **kw)
+
+    def test_dry_run_changes_nothing(self):
+        self._dish("КИС-КИС 0.33", "390")
+        self._dish("КИС-КИС 0.5", "500")
+        self._run()
+        self.assertEqual(Product.objects.count(), 2)
+
+    def test_sizes_become_variants_of_one_dish(self):
+        small = self._dish("КИС-КИС 0.33", "390")
+        self._dish("КИС-КИС 0.7", "650")
+        self._dish("КИС-КИС 0.5", "500")
+        self._run(apply=True)
+
+        self.assertEqual(Product.objects.count(), 1)
+        dish = Product.objects.get()
+        self.assertEqual(dish.id, small.id)  # остаётся наименьший объём
+        self.assertEqual(dish.name, "КИС-КИС")
+        self.assertEqual(
+            [(v.label, str(v.price)) for v in dish.variants.order_by("sort_order")],
+            [("0,33 л", "390.00"), ("0,5 л", "500.00"), ("0,7 л", "650.00")],
+        )
+
+    def test_order_history_survives(self):
+        small = self._dish("КИС-КИС 0.33", "390")
+        big = self._dish("КИС-КИС 0.7", "650")
+        order = Order.objects.create(status=Order.Status.PAID, table="5", total=1040)
+        OrderItem.objects.create(
+            order=order, variant=small.variants.get(), quantity=1,
+            unit_price=Decimal("390"),
+        )
+        OrderItem.objects.create(
+            order=order, variant=big.variants.get(), quantity=1,
+            unit_price=Decimal("650"),
+        )
+        self._run(apply=True)
+
+        names = sorted(i.display_name for i in order.items.all())
+        self.assertEqual(names, ["КИС-КИС 0,33 л", "КИС-КИС 0,7 л"])
+        revenue = sum(i.unit_price * i.quantity for i in order.items.all())
+        self.assertEqual(revenue, Decimal("1040"))  # выручка не поехала
+
+    def test_recipes_follow_their_size(self):
+        from inventory.models import RecipeItem, StockCategory, StockItem
+
+        item = StockItem.objects.create(
+            category=StockCategory.objects.create(name="Бакалея"),
+            name="Тапиока", unit=StockItem.Unit.GRAM,
+        )
+        small = self._dish("КИС-КИС 0.33", "390")
+        big = self._dish("КИС-КИС 0.7", "650")
+        RecipeItem.objects.create(
+            variant=small.variants.get(), item=item, quantity=Decimal("50")
+        )
+        RecipeItem.objects.create(
+            variant=big.variants.get(), item=item, quantity=Decimal("80")
+        )
+        self._run(apply=True)
+
+        cards = {
+            r.variant.label: r.quantity
+            for r in RecipeItem.objects.select_related("variant")
+        }
+        self.assertEqual(cards, {"0,33 л": Decimal("50.000"), "0,7 л": Decimal("80.000")})
+
+    def test_lonely_size_is_left_alone(self):
+        """Один объём — не группа: имя с хвостом трогать не за что."""
+        self._dish("ТОПИЛОТУС BISCOFF 0.5", "450")
+        self._run(apply=True)
+        self.assertEqual(Product.objects.get().name, "ТОПИЛОТУС BISCOFF 0.5")
+
+    def test_flavours_are_not_sizes(self):
+        """«| АПЕЛЬСИН» и «| ВИШНЯ» — разные напитки, а не объёмы."""
+        self._dish("БАМБЛ НА СОКЕ | АПЕЛЬСИН", "330")
+        self._dish("БАМБЛ НА СОКЕ | ВИШНЯ", "330")
+        self._run(apply=True)
+        self.assertEqual(Product.objects.count(), 2)
+
+    def test_hand_made_variants_are_not_touched(self):
+        """Блюдо, которому владелец уже завёл объёмы, команда обходит."""
+        dish = self._dish("ЛАТТЕ 0.3", "300")
+        dish.variants.update(label="0,3 л")
+        self._dish("ЛАТТЕ 0.4", "350")
+        self._run(apply=True)
+        self.assertEqual(Product.objects.count(), 2)
+
+    def test_different_categories_do_not_merge(self):
+        self._dish("ЛАТТЕ 0.3", "300")
+        other = Category.objects.create(name="Кухня", station="kitchen")
+        p = Product.objects.create(category=other, name="ЛАТТЕ 0.4")
+        ProductVariant.objects.create(product=p, price=Decimal("350"))
+        self._run(apply=True)
+        self.assertEqual(Product.objects.count(), 2)
+
+    def test_photo_and_description_are_carried_over(self):
+        self._dish("КИС-КИС 0.33", "390")
+        self._dish("КИС-КИС 0.7", "650", description="Тапиока и молоко")
+        self._run(apply=True)
+        self.assertEqual(Product.objects.get().description, "Тапиока и молоко")
+
+    def test_unit_can_be_dropped(self):
+        self._dish("КАПУЧИНО 0.2", "220")
+        self._dish("КАПУЧИНО 0.3", "260")
+        self._run(apply=True, unit="")
+        self.assertEqual(
+            sorted(v.label for v in ProductVariant.objects.all()), ["0,2", "0,3"]
         )
