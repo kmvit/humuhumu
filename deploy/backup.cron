@@ -1,0 +1,13 @@
+# Ночной бэкап «Падачи». Ставится так:
+#   sudo cp deploy/backup.cron /etc/cron.d/padacha-backup
+#   sudo chmod 644 /etc/cron.d/padacha-backup
+#
+# База — каждую ночь, файлы — по воскресеньям (см. deploy/backup.sh).
+# OFFSITE — второй сервер, куда уезжает копия: бэкап рядом с базой не
+# спасает от потери самого сервера.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+OFFSITE=root@b5971f2535c5.vps.myjino.ru:/opt/backups-padacha
+OFFSITE_PORT=49294
+
+17 3 * * * root /opt/padacha-app/deploy/backup.sh >> /var/log/padacha-backup.log 2>&1
