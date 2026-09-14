@@ -154,6 +154,59 @@ class ProductViewSet(ProtectedDeleteMixin, viewsets.ModelViewSet):
                 variant.is_active = False
                 variant.save(update_fields=["is_active"])
 
+    #: Поля, которыми старый бандл описывает цену прямо у товара.
+    LEGACY_FIELDS = ("price", "weight_grams", "prep_minutes", "is_stopped")
+
+    def _legacy_variants(self, request, product=None):
+        """Собрать variants из полей старого бандла — или вернуть None.
+
+        Планшет держит свой js в кэше, и после выката владелец какое-то
+        время правит меню прежней формой: она шлёт price/weight_grams у
+        товара и ничего не знает о вариантах. Без этого сохранение падало
+        бы с 400 посреди рабочего дня. Снести вместе с остальной
+        совместимостью — когда прежние бандлы вымоются из кэшей.
+        """
+        data = request.data
+        if not any(f in data for f in self.LEGACY_FIELDS):
+            return None
+
+        current = list(product.variants.all()) if product else []
+        # У многовариантного товара правим ПЕРВЫЙ объём: старая форма
+        # другого и не показывала. Остальные не трогаем.
+        rest = [
+            {
+                "id": v.id, "label": v.label, "price": v.price,
+                "weight_grams": v.weight_grams, "prep_minutes": v.prep_minutes,
+                "is_stopped": v.is_stopped,
+            }
+            for v in current[1:]
+        ]
+        head = current[0] if current else None
+
+        def pick(field, fallback):
+            return data[field] if field in data else fallback
+
+        stopped = pick("is_stopped", head.is_stopped if head else False)
+        first = {
+            "label": head.label if head else "",
+            "price": pick("price", head.price if head else None),
+            "weight_grams": pick("weight_grams", head.weight_grams if head else None),
+            "prep_minutes": pick("prep_minutes", head.prep_minutes if head else None),
+            "is_stopped": stopped,
+        }
+        if head:
+            first["id"] = head.id
+        if first["price"] in (None, ""):
+            return None  # цены нет ни в запросе, ни в базе — не наш случай
+
+        # Старая форма знает один стоп на товар: ставя его, гасим все
+        # объёмы разом — иначе владелец нажал бы «стоп», а блюдо осталось
+        # бы в продаже в других объёмах.
+        if "is_stopped" in data:
+            for r in rest:
+                r["is_stopped"] = stopped
+        return [first] + rest
+
     def _respond_with(self, product, status_code=status.HTTP_200_OK):
         product = self.get_queryset().get(pk=product.pk)
         return Response(self.get_serializer(product).data, status=status_code)
@@ -161,11 +214,12 @@ class ProductViewSet(ProtectedDeleteMixin, viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         ser = self.get_serializer(data=request.data)
         ser.is_valid(raise_exception=True)
-        if "variants" not in request.data:
+        rows = request.data.get("variants") or self._legacy_variants(request)
+        if not rows:
             raise serializers.ValidationError({"variants": "Укажите цену товара."})
         with transaction.atomic():
             product = ser.save()
-            self._sync_variants(product, request.data["variants"])
+            self._sync_variants(product, rows)
         return self._respond_with(product, status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
@@ -174,10 +228,11 @@ class ProductViewSet(ProtectedDeleteMixin, viewsets.ModelViewSet):
             product, data=request.data, partial=kwargs.pop("partial", False)
         )
         ser.is_valid(raise_exception=True)
+        rows = request.data.get("variants") or self._legacy_variants(request, product)
         with transaction.atomic():
             product = ser.save()
-            if "variants" in request.data:
-                self._sync_variants(product, request.data["variants"])
+            if rows:
+                self._sync_variants(product, rows)
         return self._respond_with(product)
 
     def partial_update(self, request, *args, **kwargs):

@@ -200,6 +200,67 @@ class LegacyClientTests(CatalogAdminBase):
         card = [x for x in res.data if x["id"] == self.latte.id][0]
         self.assertTrue(card["is_stopped"])
 
+    def test_old_form_creates_product_with_price(self):
+        """Старый бандл админки шлёт price у товара — сохранение должно пройти."""
+        self.auth(self.admin)
+        res = self.client.post(
+            "/api/products/",
+            {"category": self.cat.id, "name": "Раф", "price": "320",
+             "weight_grams": 300, "is_stopped": False},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 201)
+        v = Product.objects.get(name="Раф").variants.get()
+        self.assertEqual(v.price, Decimal("320"))
+        self.assertEqual(v.weight_grams, 300)
+        self.assertEqual(v.label, "")
+
+    def test_old_form_edits_price(self):
+        self.auth(self.admin)
+        res = self.client.patch(
+            f"/api/products/{self.latte.id}/", {"price": "265"}, format="json"
+        )
+        self.assertEqual(res.status_code, 200)
+        self.latte_v.refresh_from_db()
+        self.assertEqual(self.latte_v.price, Decimal("265"))
+
+    def test_old_form_stop_covers_every_size(self):
+        """Старая форма знает один стоп на товар — гасим все объёмы разом."""
+        big = ProductVariant.objects.create(
+            product=self.latte, label="0,5 л", price=Decimal("300"), sort_order=1
+        )
+        self.auth(self.admin)
+        self.client.patch(
+            f"/api/products/{self.latte.id}/", {"is_stopped": True}, format="json"
+        )
+        self.latte_v.refresh_from_db(); big.refresh_from_db()
+        self.assertTrue(self.latte_v.is_stopped)
+        self.assertTrue(big.is_stopped)  # иначе «стоп» нажат, а блюдо продаётся
+
+    def test_old_form_does_not_drop_other_sizes(self):
+        """Правка ценой из старой формы не должна снести объёмы, которых она не видит."""
+        big = ProductVariant.objects.create(
+            product=self.latte, label="0,5 л", price=Decimal("300"), sort_order=1
+        )
+        self.auth(self.admin)
+        self.client.patch(
+            f"/api/products/{self.latte.id}/", {"price": "265"}, format="json"
+        )
+        self.assertEqual(self.latte.variants.count(), 2)
+        big.refresh_from_db()
+        self.assertEqual(big.price, Decimal("300"))  # второй объём цел
+
+    def test_edit_without_price_keeps_variants(self):
+        """Правка одного описания не должна трогать цены."""
+        self.auth(self.admin)
+        res = self.client.patch(
+            f"/api/products/{self.latte.id}/", {"description": "Мягкий"}, format="json"
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(self.latte.variants.count(), 1)
+        self.latte_v.refresh_from_db()
+        self.assertEqual(self.latte_v.price, Decimal("240"))
+
     def test_order_by_product_is_still_accepted(self):
         """Старый бандл шлёт product без варианта — заказ должен пройти."""
         res = self.client.post(
