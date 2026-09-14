@@ -439,3 +439,84 @@ class ModifierWriteOffTests(APITestCase):
         self.assertIn("Латте 0,3 л", comment)
         self.assertIn("Овсяное", comment)
 
+class StockCategoryCrudTests(APITestCase):
+    """Категории склада: переименование и удаление прямо в интерфейсе."""
+
+    def setUp(self):
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.MAX
+        site.save()
+        User.objects.create_user(
+            username="manager", password="pw", role=User.Role.WAREHOUSE
+        )
+        res = self.client.post(
+            "/api/auth/token/", {"username": "manager", "password": "pw"}, format="json"
+        )
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {res.data['access']}")
+        self.cat = StockCategory.objects.create(name="Бакалея")
+
+    def test_rename(self):
+        res = self.client.patch(
+            f"/api/inventory/categories/{self.cat.id}/", {"name": "Крупы"}, format="json"
+        )
+        self.assertEqual(res.status_code, 200)
+        self.cat.refresh_from_db()
+        self.assertEqual(self.cat.name, "Крупы")
+
+    def test_empty_category_is_deleted(self):
+        res = self.client.delete(f"/api/inventory/categories/{self.cat.id}/")
+        self.assertEqual(res.status_code, 204)
+        self.assertFalse(StockCategory.objects.filter(id=self.cat.id).exists())
+
+    def test_category_with_items_is_refused(self):
+        """Прятать её вместо удаления нельзя: товары исчезли бы из остатков."""
+        StockItem.objects.create(
+            category=self.cat, name="Рис", unit=StockItem.Unit.GRAM
+        )
+        res = self.client.delete(f"/api/inventory/categories/{self.cat.id}/")
+        self.assertEqual(res.status_code, 409)
+        self.assertIn("перенесите", res.data["detail"])
+        self.assertTrue(StockCategory.objects.filter(id=self.cat.id).exists())
+
+    def test_list_reports_how_many_items_inside(self):
+        StockItem.objects.create(
+            category=self.cat, name="Рис", unit=StockItem.Unit.GRAM
+        )
+        res = self.client.get("/api/inventory/categories/")
+        row = [c for c in res.data if c["id"] == self.cat.id][0]
+        self.assertEqual(row["items_count"], 1)
+
+    def test_item_can_be_moved_to_another_category(self):
+        """Путь, который предлагает сообщение об отказе, должен работать."""
+        other = StockCategory.objects.create(name="Напитки")
+        item = StockItem.objects.create(
+            category=self.cat, name="Рис", unit=StockItem.Unit.GRAM
+        )
+        res = self.client.patch(
+            f"/api/inventory/items/{item.id}/", {"category": other.id}, format="json"
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(
+            self.client.delete(f"/api/inventory/categories/{self.cat.id}/").status_code,
+            204,
+        )
+
+    def test_waiter_cannot_touch_categories(self):
+        waiter = User.objects.create_user(
+            username="w", password="pw", role=User.Role.WAITER
+        )
+        res = self.client.post(
+            "/api/auth/token/", {"username": "w", "password": "pw"}, format="json"
+        )
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {res.data['access']}")
+        self.assertEqual(
+            self.client.patch(
+                f"/api/inventory/categories/{self.cat.id}/", {"name": "X"}, format="json"
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.delete(f"/api/inventory/categories/{self.cat.id}/").status_code,
+            403,
+        )
+

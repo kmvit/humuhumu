@@ -270,6 +270,8 @@ export interface StockCategory {
   name: string;
   sort_order: number;
   is_active: boolean;
+  /** Сколько товаров внутри: непустую категорию удалить нельзя. */
+  items_count: number;
 }
 
 /** Вариант товара: как его называют при закупке и пишут в чеках. */

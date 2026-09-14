@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
-import { get, post, del, postForm, ApiError } from "../../api";
+import { get, post, patch, del, postForm, ApiError } from "../../api";
 import { decimalInput } from "../../decimal";
 import type {
   StockCategory,
@@ -77,9 +77,11 @@ export default function Warehouse() {
   const [varItem, setVarItem] = useState<number | null>(null);
   const [varName, setVarName] = useState("");
 
-  // новая категория
+  // панель категорий: добавление, переименование, удаление
   const [catOpen, setCatOpen] = useState(false);
   const [newCatName, setNewCatName] = useState("");
+  const [catEdit, setCatEdit] = useState<{ id: number; name: string } | null>(null);
+  const [delCat, setDelCat] = useState<number | null>(null);
 
   // корректировка
   const [adjustId, setAdjustId] = useState<number | null>(null);
@@ -370,8 +372,41 @@ export default function Warehouse() {
       });
       await load();
       setNewCatName("");
-      setCatOpen(false);
       notify("Категория добавлена", "ok");
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Ошибка", "bad");
+    }
+  }
+
+  async function renameCategory() {
+    if (!catEdit || !catEdit.name.trim()) return;
+    try {
+      await patch(`/inventory/categories/${catEdit.id}/`, { name: catEdit.name.trim() });
+      await load();
+      setCatEdit(null);
+      notify("Категория переименована", "ok");
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Ошибка", "bad");
+    }
+  }
+
+  async function removeCategory(id: number) {
+    try {
+      await del(`/inventory/categories/${id}/`);
+      await load();
+      setDelCat(null);
+      notify("Категория удалена", "ok");
+    } catch (e) {
+      // 409 — внутри есть товары; текст с подсказкой приходит с сервера
+      notify(e instanceof ApiError ? e.message : "Ошибка", "bad");
+    }
+  }
+
+  /** Спрятать категорию из выбора, не трогая её товары. */
+  async function toggleCategory(cat: StockCategory) {
+    try {
+      await patch(`/inventory/categories/${cat.id}/`, { is_active: !cat.is_active });
+      await load();
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "Ошибка", "bad");
     }
@@ -605,15 +640,104 @@ export default function Warehouse() {
               <Icon name="plus" size={15} /> Товар
             </button>
             <button className="btn sm ghost" onClick={() => setCatOpen((v) => !v)}>
-              <Icon name="plus" size={15} /> Категория
+              <Icon name="box" size={15} /> Категории
             </button>
           </div>
 
           {catOpen && (
             <div className="card enter mb-3">
-              <div className="wrap">
-                <input className="input grow" value={newCatName} onChange={(e) => setNewCatName(e.target.value)} placeholder="Название категории" />
-                <button className="btn sm" onClick={createCategory}><Icon name="check" size={16} /> Добавить</button>
+              <strong className="title">Категории склада</strong>
+              <p className="muted sm subtitle">
+                Назначение позиции: «Бакалея», «Молочка», «Химия». Категорию с
+                товарами удалить нельзя — сначала перенесите их.
+              </p>
+
+              <ul className="stack tight list mt-3">
+                {cats.map((c) => (
+                  <li key={c.id} className="between">
+                    {catEdit?.id === c.id ? (
+                      <span className="inline grow">
+                        <input
+                          className="input grow"
+                          value={catEdit.name}
+                          autoFocus
+                          onChange={(e) => setCatEdit({ ...catEdit, name: e.target.value })}
+                          onKeyDown={(e) => e.key === "Enter" && renameCategory()}
+                        />
+                        <button className="icon-btn" onClick={renameCategory} aria-label="Сохранить">
+                          <Icon name="check" size={16} />
+                        </button>
+                        <button className="icon-btn" onClick={() => setCatEdit(null)} aria-label="Отмена">
+                          <Icon name="close" size={16} />
+                        </button>
+                      </span>
+                    ) : (
+                      <>
+                        <span className="row-body">
+                          <strong>
+                            {c.name}
+                            {!c.is_active && <span className="badge mini ml-2">скрыта</span>}
+                          </strong>
+                          <span className="muted sm">
+                            {c.items_count
+                              ? `${c.items_count} товаров`
+                              : "пустая — можно удалить"}
+                          </span>
+                        </span>
+                        <span className="inline tight">
+                          <button
+                            className={"btn sm" + (c.is_active ? " ghost" : "")}
+                            title={c.is_active
+                              ? "Скрыть из выбора при заведении товара"
+                              : "Вернуть в выбор"}
+                            onClick={() => toggleCategory(c)}
+                          >
+                            {c.is_active ? "скрыть" : "вернуть"}
+                          </button>
+                          <button
+                            className="icon-btn"
+                            aria-label="Переименовать"
+                            onClick={() => setCatEdit({ id: c.id, name: c.name })}
+                          >
+                            <Icon name="edit" size={16} />
+                          </button>
+                          {delCat === c.id ? (
+                            <>
+                              <span className="muted sm">Удалить?</span>
+                              <button className="icon-btn danger" onClick={() => removeCategory(c.id)} aria-label="Да, удалить">
+                                <Icon name="check" size={16} />
+                              </button>
+                              <button className="icon-btn" onClick={() => setDelCat(null)} aria-label="Отмена">
+                                <Icon name="close" size={16} />
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              className="icon-btn danger"
+                              aria-label="Удалить категорию"
+                              onClick={() => { setDelCat(c.id); setCatEdit(null); }}
+                            >
+                              <Icon name="trash" size={16} />
+                            </button>
+                          )}
+                        </span>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+
+              <div className="wrap mt-3">
+                <input
+                  className="input grow"
+                  value={newCatName}
+                  onChange={(e) => setNewCatName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && createCategory()}
+                  placeholder="Название новой категории"
+                />
+                <button className="btn sm" onClick={createCategory}>
+                  <Icon name="plus" size={16} /> Добавить
+                </button>
               </div>
             </div>
           )}
@@ -676,13 +800,18 @@ export default function Warehouse() {
             </div>
           )}
 
-          {activeCats.map((cat) => {
+          {/* Идём по ВСЕМ категориям, а не только активным: у скрытой могли
+              остаться товары, и они пропали бы из остатков вместе с ней. */}
+          {cats.map((cat) => {
             const catItems = items.filter((i) => i.category === cat.id);
             if (!catItems.length) return null;
             return (
               <section className="menu-section" key={cat.id}>
                 <div className="menu-head">
-                  <h2><Icon name="box" size={18} /> {cat.name}</h2>
+                  <h2>
+                    <Icon name="box" size={18} /> {cat.name}
+                    {!cat.is_active && <span className="badge mini ml-2">скрыта</span>}
+                  </h2>
                 </div>
                 {catItems.map((it) => (
                   <div key={it.id}>

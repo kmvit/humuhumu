@@ -19,9 +19,12 @@ from .models import (
 
 
 class StockCategorySerializer(serializers.ModelSerializer):
+    # Сколько товаров внутри — по нему интерфейс понимает, можно ли удалять
+    items_count = serializers.IntegerField(read_only=True)
+
     class Meta:
         model = StockCategory
-        fields = ("id", "name", "sort_order", "is_active")
+        fields = ("id", "name", "sort_order", "is_active", "items_count")
 
 
 class StockItemSerializer(serializers.ModelSerializer):
