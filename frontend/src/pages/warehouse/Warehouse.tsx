@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import { get, post, del, postForm, ApiError } from "../../api";
+import { decimalInput } from "../../decimal";
 import type {
   StockCategory,
   StockItem,
@@ -403,7 +404,7 @@ export default function Warehouse() {
           className="input"
           inputMode="decimal"
           value={adjustQty}
-          onChange={(e) => setAdjustQty(e.target.value)}
+          onChange={(e) => setAdjustQty(decimalInput(e.target.value))}
           style={{ width: 92 }}
           autoFocus
         />
@@ -556,14 +557,14 @@ export default function Warehouse() {
                     className="input"
                     inputMode="decimal"
                     value={l.quantity}
-                    onChange={(e) => setLine(idx, { quantity: e.target.value })}
+                    onChange={(e) => setLine(idx, { quantity: decimalInput(e.target.value) })}
                     placeholder={it ? `кол-во, ${it.unit_display}` : "кол-во"}
                   />
                   <input
                     className="input"
                     inputMode="decimal"
                     value={l.amount}
-                    onChange={(e) => setLine(idx, { amount: e.target.value })}
+                    onChange={(e) => setLine(idx, { amount: decimalInput(e.target.value) })}
                     // Сумма по строке — то, что напечатано в чеке. Цену за
                     // грамм считаем сами, из неё берётся себестоимость блюда.
                     placeholder="сумма, ₽"
@@ -656,7 +657,7 @@ export default function Warehouse() {
                 </div>
                 <label className="field">
                   <span className="label">Порог «заканчивается»</span>
-                  <input className="input" inputMode="decimal" value={niMin} onChange={(e) => setNiMin(e.target.value)} placeholder="необязательно" />
+                  <input className="input" inputMode="decimal" value={niMin} onChange={(e) => setNiMin(decimalInput(e.target.value))} placeholder="необязательно" />
                 </label>
               </div>
               <label className="field mt-3">
@@ -665,7 +666,7 @@ export default function Warehouse() {
                   className="input"
                   inputMode="decimal"
                   value={niTarget}
-                  onChange={(e) => setNiTarget(e.target.value)}
+                  onChange={(e) => setNiTarget(decimalInput(e.target.value))}
                   placeholder="до этого остатка закупаем; пусто — два порога"
                 />
               </label>

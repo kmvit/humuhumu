@@ -289,3 +289,22 @@ class TenancyGuardTests(TestCase):
 
         category = Category.objects.create(name="Напитки")
         self.assertEqual(category.organization, current_organization())
+
+    def test_bulk_create_accepts_a_generator(self):
+        """Генератор на входе — не повод молча ничего не создать.
+
+        TenantQuerySet.bulk_create проходит по объектам, чтобы проставить
+        заведение. Пока он делал это по исходной последовательности,
+        генератор к моменту вставки был исчерпан: запрос отвечал 200, а
+        строк не появлялось. Так пропадали сохранённые тех карты.
+        """
+        from catalog.models import Category
+        from core.tenancy import current_organization
+
+        Category.objects.bulk_create(
+            Category(name=name) for name in ("Супы", "Десерты")
+        )
+        created = Category.objects.filter(name__in=("Супы", "Десерты"))
+        self.assertEqual(created.count(), 2)
+        for category in created:
+            self.assertEqual(category.organization, current_organization())

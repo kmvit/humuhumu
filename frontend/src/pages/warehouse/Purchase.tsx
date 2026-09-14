@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { get, post, patch, del, ApiError } from "../../api";
+import { decimalInput } from "../../decimal";
 import type { PurchaseList, PurchaseLine, StockItem } from "../../types";
 import Icon from "../../components/Icon";
 import { useToast } from "../../components/ui/Toast";
@@ -175,7 +176,7 @@ export default function Purchase({ items, onReceive }: Props) {
                 className="input"
                 inputMode="decimal"
                 value={editQty}
-                onChange={(e) => setEditQty(e.target.value)}
+                onChange={(e) => setEditQty(decimalInput(e.target.value))}
                 style={{ width: 92 }}
                 autoFocus
               />
@@ -236,7 +237,7 @@ export default function Purchase({ items, onReceive }: Props) {
               inputMode="decimal"
               style={{ width: 110 }}
               value={addQty}
-              onChange={(e) => setAddQty(e.target.value)}
+              onChange={(e) => setAddQty(decimalInput(e.target.value))}
               placeholder="кол-во"
             />
             <button className="btn sm" onClick={addLine}>

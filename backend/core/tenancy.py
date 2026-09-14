@@ -149,6 +149,10 @@ class TenantQuerySet(models.QuerySet):
     """
 
     def bulk_create(self, objs, *args, **kwargs):
+        # Список, а не как пришло: вызывающий вправе передать генератор, а
+        # проход по нему здесь оставил бы super() пустую последовательность —
+        # запрос отработал бы «успешно», не создав ни строки.
+        objs = list(objs)
         org = current_organization()
         if org is not None:
             for obj in objs:

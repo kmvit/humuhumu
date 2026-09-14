@@ -151,6 +151,74 @@ class ReceiptDeleteTests(APITestCase):
         self.assertTrue(Receipt.objects.filter(id=receipt.id).exists())
 
 
+class RecipeApiTests(APITestCase):
+    """Тех карта блюда: сохранили — значит она есть и в списке, и в блюде."""
+
+    def setUp(self):
+        # тесты писались до тарифов и проверяют функционал «Максимума»
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.MAX
+        site.save()
+        User.objects.create_user(
+            username="manager", password="pw", role=User.Role.WAREHOUSE
+        )
+        res = self.client.post(
+            "/api/auth/token/", {"username": "manager", "password": "pw"}, format="json"
+        )
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {res.data['access']}")
+
+        self.item = StockItem.objects.create(
+            category=StockCategory.objects.create(name="Бакалея"),
+            name="Рис",
+            unit=StockItem.Unit.GRAM,
+        )
+        self.product = Product.objects.create(
+            category=Category.objects.create(name="Горячее"),
+            name="Боул",
+            price=Decimal("500"),
+        )
+
+    def _save(self, lines):
+        return self.client.put(
+            f"/api/inventory/recipes/{self.product.id}/", {"lines": lines}, format="json"
+        )
+
+    def _card(self, data):
+        return next(c for c in data if c["product"] == self.product.id)
+
+    def test_saved_card_comes_back_everywhere(self):
+        res = self._save([{"item": self.item.id, "quantity": "150"}])
+        self.assertEqual(res.status_code, 200)
+        # ответ на сохранение, список и само блюдо обязаны совпадать: карта
+        # «сохранилась», но нигде не показалась — это и был баг bulk_create
+        self.assertEqual(len(res.data["lines"]), 1)
+        self.assertEqual(RecipeItem.objects.count(), 1)
+
+        listed = self._card(self.client.get("/api/inventory/recipes/").data)
+        self.assertEqual(len(listed["lines"]), 1)
+        one = self.client.get(f"/api/inventory/recipes/{self.product.id}/")
+        self.assertEqual(len(one.data["lines"]), 1)
+        self.assertEqual(Decimal(one.data["lines"][0]["quantity"]), Decimal("150"))
+
+    def test_saving_again_replaces_the_composition(self):
+        self._save([{"item": self.item.id, "quantity": "150"}])
+        other = StockItem.objects.create(
+            category=self.item.category, name="Креветки", unit=StockItem.Unit.GRAM
+        )
+        res = self._save([{"item": other.id, "quantity": "80"}])
+        self.assertEqual(
+            [line["item"] for line in res.data["lines"]], [other.id]
+        )
+        self.assertEqual(RecipeItem.objects.count(), 1)
+
+    def test_empty_lines_clear_the_card(self):
+        self._save([{"item": self.item.id, "quantity": "150"}])
+        res = self._save([])
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["lines"], [])
+        self.assertEqual(RecipeItem.objects.count(), 0)
+
+
 class ReceiptScanUnitsTests(TestCase):
     """Распознавание чека: цена должна приводиться к базовой единице.
 

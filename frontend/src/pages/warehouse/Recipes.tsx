@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { get, put, ApiError } from "../../api";
+import { decimalInput } from "../../decimal";
 import type { Recipe, StockItem } from "../../types";
 import Icon from "../../components/Icon";
 import { useToast } from "../../components/ui/Toast";
@@ -188,7 +189,9 @@ export default function Recipes({ items }: Props) {
                       value={d.quantity}
                       onChange={(e) =>
                         setDraft((ds) =>
-                          ds.map((x, i) => (i === idx ? { ...x, quantity: e.target.value } : x))
+                          ds.map((x, i) =>
+                            i === idx ? { ...x, quantity: decimalInput(e.target.value) } : x
+                          )
                         )
                       }
                       placeholder={it ? it.unit_display : "кол-во"}
