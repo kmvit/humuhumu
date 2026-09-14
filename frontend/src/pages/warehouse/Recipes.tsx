@@ -53,8 +53,30 @@ export default function Recipes({ items }: Props) {
 
   const filled = cards.filter((c) => c.lines.length > 0).length;
 
+  /** Другие объёмы этого же блюда, у которых состав уже заполнен.
+   *
+   *  Коэффициента между объёмами нет и быть не может: лёд, тапиока и
+   *  стакан масштабируются не так, как молоко. Поэтому не считаем, а
+   *  копируем — заполнил 0,33, скопировал в 0,5, поправил цифры. */
+  function siblings(card: Recipe): Recipe[] {
+    return cards.filter(
+      (c) => c.product === card.product && c.variant !== card.variant && c.lines.length > 0
+    );
+  }
+
+  function copyFrom(source: Recipe) {
+    setDraft(
+      source.lines.map((l) => ({
+        item: l.item,
+        quantity: String(Number(l.quantity)),
+        comment: l.comment,
+      }))
+    );
+    notify(`Состав скопирован из «${source.product_name}»`, "ok");
+  }
+
   function startEdit(card: Recipe) {
-    setEditId(card.product);
+    setEditId(card.variant);
     setDraft(
       card.lines.length
         ? card.lines.map((l) => ({
@@ -66,7 +88,7 @@ export default function Recipes({ items }: Props) {
     );
   }
 
-  async function save(productId: number) {
+  async function save(variantId: number) {
     const lines = draft
       .filter((d) => d.item !== "" && Number(d.quantity) > 0)
       .map((d) => ({
@@ -76,8 +98,8 @@ export default function Recipes({ items }: Props) {
       }));
     setSaving(true);
     try {
-      const saved = await put<Recipe>(`/inventory/recipes/${productId}/`, { lines });
-      setCards((cs) => cs.map((c) => (c.product === productId ? saved : c)));
+      const saved = await put<Recipe>(`/inventory/recipes/${variantId}/`, { lines });
+      setCards((cs) => cs.map((c) => (c.variant === variantId ? saved : c)));
       setEditId(null);
       notify(lines.length ? "Тех карта сохранена" : "Тех карта очищена", "ok");
     } catch (e) {
@@ -115,7 +137,7 @@ export default function Recipes({ items }: Props) {
         ))}
 
       {shown.map((card) => (
-        <div className="card" key={card.product}>
+        <div className="card" key={card.variant}>
           <div className="between">
             <div className="row-body">
               <strong className="title">
@@ -132,7 +154,7 @@ export default function Recipes({ items }: Props) {
                     : " · цены закупки неизвестны"}
               </span>
             </div>
-            {editId !== card.product && (
+            {editId !== card.variant && (
               <button className="btn sm ghost" onClick={() => startEdit(card)}>
                 <Icon name="edit" size={15} /> {card.lines.length ? "Изменить" : "Составить"}
               </button>
@@ -140,7 +162,7 @@ export default function Recipes({ items }: Props) {
           </div>
 
           {/* просмотр */}
-          {editId !== card.product && card.lines.length > 0 && (
+          {editId !== card.variant && card.lines.length > 0 && (
             <ul className="stack tight list mt-3">
               {card.lines.map((l) => (
                 <li key={l.id} className="between">
@@ -159,7 +181,7 @@ export default function Recipes({ items }: Props) {
           )}
 
           {/* редактор */}
-          {editId === card.product && (
+          {editId === card.variant && (
             <div className="stack mt-3">
               {draft.map((d, idx) => {
                 const it = items.find((i) => i.id === d.item);
@@ -228,7 +250,7 @@ export default function Recipes({ items }: Props) {
                 </button>
                 <button
                   className="btn sm"
-                  onClick={() => save(card.product)}
+                  onClick={() => save(card.variant)}
                   disabled={saving}
                 >
                   <Icon name={saving ? "spark" : "check"} size={16} /> Сохранить
@@ -237,6 +259,22 @@ export default function Recipes({ items }: Props) {
                   Отмена
                 </button>
               </div>
+
+              {siblings(card).length > 0 && (
+                <div className="wrap" style={{ alignItems: "center" }}>
+                  <span className="muted sm">Скопировать состав из:</span>
+                  {siblings(card).map((sib) => (
+                    <button
+                      key={sib.variant}
+                      className="btn sm ghost"
+                      onClick={() => copyFrom(sib)}
+                      title="Подставит состав целиком — количества поправьте под этот объём"
+                    >
+                      <Icon name="copy" size={14} /> {sib.product_name}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>

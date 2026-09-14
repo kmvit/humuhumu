@@ -10,15 +10,19 @@ class TableSerializer(serializers.ModelSerializer):
 
 
 class OrderItemSerializer(serializers.ModelSerializer):
-    product_name = serializers.CharField(source="product.name", read_only=True)
+    # product — id карточки меню (для группировок на фронте), product_name —
+    # полное имя с вариантом: доскам и чекам не нужно собирать его самим
+    product = serializers.IntegerField(source="variant.product_id", read_only=True)
+    product_name = serializers.CharField(source="display_name", read_only=True)
+    variant_label = serializers.CharField(source="variant.label", read_only=True)
     subtotal = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     station = serializers.CharField(read_only=True)
 
     class Meta:
         model = OrderItem
         fields = (
-            "id", "product", "product_name", "station", "status", "guest",
-            "quantity", "unit_price", "subtotal",
+            "id", "variant", "variant_label", "product", "product_name",
+            "station", "status", "guest", "quantity", "unit_price", "subtotal",
         )
         read_only_fields = ("unit_price",)
 
@@ -84,9 +88,18 @@ class OrderSerializer(serializers.ModelSerializer):
 
 
 class OrderItemCreateSerializer(serializers.Serializer):
-    product = serializers.IntegerField()
+    variant = serializers.IntegerField(required=False)
+    # Старые клиенты (закэшированный PWA-бандл) шлют товар, не вариант.
+    # Пока у товара один вариант, это однозначно; поле — на снос, когда
+    # прошлые бандлы вымоются из кэшей.
+    product = serializers.IntegerField(required=False)
     quantity = serializers.IntegerField(min_value=1, default=1)
     guest = serializers.IntegerField(min_value=1, required=False, allow_null=True)
+
+    def validate(self, attrs):
+        if not attrs.get("variant") and not attrs.get("product"):
+            raise serializers.ValidationError("Укажите variant")
+        return attrs
 
 
 class OrderCreateSerializer(serializers.Serializer):

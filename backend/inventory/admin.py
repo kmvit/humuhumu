@@ -45,9 +45,9 @@ class RecipeItemInline(admin.TabularInline):
 
 @admin.register(RecipeItem)
 class RecipeItemAdmin(admin.ModelAdmin):
-    list_display = ("product", "item", "quantity", "comment")
-    list_filter = ("product__category",)
-    search_fields = ("product__name", "item__name")
+    list_display = ("variant", "item", "quantity", "comment")
+    list_filter = ("variant__product__category",)
+    search_fields = ("variant__product__name", "item__name")
 
 
 class PurchaseLineInline(admin.TabularInline):

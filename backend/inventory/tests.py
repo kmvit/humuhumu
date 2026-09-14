@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.test import TestCase
 from rest_framework.test import APITestCase
 
-from catalog.models import Category, Product
+from catalog.models import Category, Product, ProductVariant
 from core.models import SiteSettings
 from users.models import User
 
@@ -54,10 +54,9 @@ class StockItemDeleteTests(APITestCase):
     def test_item_in_recipe_is_deactivated(self):
         item = self._item()
         menu_cat = Category.objects.create(name="Кофе")
-        product = Product.objects.create(
-            category=menu_cat, name="Латте", price=Decimal("300")
-        )
-        RecipeItem.objects.create(product=product, item=item, quantity=Decimal("50"))
+        product = Product.objects.create(category=menu_cat, name="Латте")
+        variant = ProductVariant.objects.create(product=product, price=Decimal("300"))
+        RecipeItem.objects.create(variant=variant, item=item, quantity=Decimal("50"))
         res = self.client.delete(f"/api/inventory/items/{item.id}/")
         self.assertEqual(res.status_code, 200)
         item.refresh_from_db()
@@ -173,18 +172,21 @@ class RecipeApiTests(APITestCase):
             unit=StockItem.Unit.GRAM,
         )
         self.product = Product.objects.create(
-            category=Category.objects.create(name="Горячее"),
-            name="Боул",
-            price=Decimal("500"),
+            category=Category.objects.create(name="Горячее"), name="Боул"
+        )
+        self.variant = ProductVariant.objects.create(
+            product=self.product, price=Decimal("500")
         )
 
-    def _save(self, lines):
+    def _save(self, lines, variant=None):
+        vid = (variant or self.variant).id
         return self.client.put(
-            f"/api/inventory/recipes/{self.product.id}/", {"lines": lines}, format="json"
+            f"/api/inventory/recipes/{vid}/", {"lines": lines}, format="json"
         )
 
-    def _card(self, data):
-        return next(c for c in data if c["product"] == self.product.id)
+    def _card(self, data, variant=None):
+        vid = (variant or self.variant).id
+        return next(c for c in data if c["variant"] == vid)
 
     def test_saved_card_comes_back_everywhere(self):
         res = self._save([{"item": self.item.id, "quantity": "150"}])
@@ -196,7 +198,7 @@ class RecipeApiTests(APITestCase):
 
         listed = self._card(self.client.get("/api/inventory/recipes/").data)
         self.assertEqual(len(listed["lines"]), 1)
-        one = self.client.get(f"/api/inventory/recipes/{self.product.id}/")
+        one = self.client.get(f"/api/inventory/recipes/{self.variant.id}/")
         self.assertEqual(len(one.data["lines"]), 1)
         self.assertEqual(Decimal(one.data["lines"][0]["quantity"]), Decimal("150"))
 
@@ -210,6 +212,22 @@ class RecipeApiTests(APITestCase):
             [line["item"] for line in res.data["lines"]], [other.id]
         )
         self.assertEqual(RecipeItem.objects.count(), 1)
+
+    def test_sizes_keep_separate_cards(self):
+        """У объёмов состав свой: правка 0,5 не трогает 0,33."""
+        big = ProductVariant.objects.create(
+            product=self.product, label="0,5", price=Decimal("700")
+        )
+        self._save([{"item": self.item.id, "quantity": "150"}])
+        self._save([{"item": self.item.id, "quantity": "250"}], variant=big)
+
+        listed = self.client.get("/api/inventory/recipes/").data
+        small_card = self._card(listed)
+        big_card = self._card(listed, variant=big)
+        self.assertEqual(Decimal(small_card["lines"][0]["quantity"]), Decimal("150"))
+        self.assertEqual(Decimal(big_card["lines"][0]["quantity"]), Decimal("250"))
+        # обе карты принадлежат одной карточке меню — фронт их сгруппирует
+        self.assertEqual(small_card["product"], big_card["product"])
 
     def test_empty_lines_clear_the_card(self):
         self._save([{"item": self.item.id, "quantity": "150"}])

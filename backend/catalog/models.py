@@ -37,7 +37,11 @@ class Category(TenantModel):
 
 
 class Product(TenantModel):
-    """Товар. Цена в рублях; при курсе 1 токен = 1 ₽ она же — цена в токенах."""
+    """Карточка меню: название, фото, описание.
+
+    Цена, вес и стоп живут в вариантах (ProductVariant) — у «0,33» и «0,7»
+    они свои. Продаётся всегда вариант, товар — то, что видит гость.
+    """
 
     category = models.ForeignKey(
         Category,
@@ -56,14 +60,7 @@ class Product(TenantModel):
         "Превью", upload_to=tenant_upload_to("products/thumbs"), null=True, blank=True,
         editable=False, max_length=200
     )
-    price = models.DecimalField("Цена, ₽", max_digits=10, decimal_places=2)
-    weight_grams = models.PositiveIntegerField("Вес, г", null=True, blank=True)
-    prep_minutes = models.PositiveIntegerField(
-        "Время приготовления, мин", null=True, blank=True
-    )
     is_available = models.BooleanField("В наличии", default=True)
-    # на стопе: блюдо видно в меню, но временно нельзя заказать (кончилось)
-    is_stopped = models.BooleanField("На стопе (временно)", default=False)
     sort_order = models.PositiveIntegerField("Порядок сортировки", default=0)
 
     class Meta:
@@ -110,6 +107,55 @@ class Product(TenantModel):
             self.thumbnail.delete(save=False)
             super().save(update_fields=["thumbnail"])
         self._orig_image = current
+
+
+class ProductVariant(TenantModel):
+    """Вариант товара — то, что реально кладут в заказ: объём или размер.
+
+    У товара всегда есть хотя бы один вариант; единственный вариант без
+    метки интерфейс не показывает — карточка выглядит как обычное блюдо.
+    Позиции заказов и тех карты ссылаются на вариант, поэтому цена, вес,
+    стоп и состав у каждого объёма свои. Решение и сравнение с рынком —
+    в памяти проекта (humu-variants-modifiers).
+    """
+
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name="variants",
+        verbose_name="Товар",
+    )
+    #: «0,33 л», «большая» — пусто у единственного варианта
+    label = models.CharField("Вариант", max_length=40, blank=True)
+    price = models.DecimalField("Цена, ₽", max_digits=10, decimal_places=2)
+    weight_grams = models.PositiveIntegerField("Вес, г", null=True, blank=True)
+    prep_minutes = models.PositiveIntegerField(
+        "Время приготовления, мин", null=True, blank=True
+    )
+    # на стопе: вариант виден в меню, но временно нельзя заказать (кончилось)
+    is_stopped = models.BooleanField("На стопе (временно)", default=False)
+    # Снят с продажи насовсем. Не удаление: на проданный вариант ссылается
+    # история заказов (PROTECT), и вместо ошибки владельцу он прячется.
+    is_active = models.BooleanField("Продаётся", default=True)
+    sort_order = models.PositiveIntegerField("Порядок сортировки", default=0)
+
+    class Meta:
+        verbose_name = "Вариант товара"
+        verbose_name_plural = "Варианты товаров"
+        ordering = ["sort_order", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["product", "label"], name="uniq_variant_label_per_product"
+            )
+        ]
+
+    @property
+    def full_name(self) -> str:
+        """Название для чека, кухни и отчётов: «Кис-кис 0,33 л»."""
+        return f"{self.product.name} {self.label}".strip()
+
+    def __str__(self):
+        return self.full_name
 
 
 class ProductLike(TenantModel):

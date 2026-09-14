@@ -277,7 +277,7 @@ class ProfitReportTests(APITestCase):
         site = SiteSettings.load()
         site.plan = SiteSettings.Plan.MAX
         site.save()
-        from catalog.models import Category, Product
+        from catalog.models import Category, Product, ProductVariant
         from inventory.models import (
             Receipt,
             ReceiptItem,
@@ -293,11 +293,13 @@ class ProfitReportTests(APITestCase):
         self.month = self.today.strftime("%Y-%m")
 
         cat = Category.objects.create(name="Кухня", station="kitchen")
-        self.burger = Product.objects.create(
-            category=cat, name="Бургер", price=Decimal("500")
+        burger = Product.objects.create(category=cat, name="Бургер")
+        salad = Product.objects.create(category=cat, name="Салат")
+        self.burger = ProductVariant.objects.create(
+            product=burger, price=Decimal("500")
         )
-        self.salad = Product.objects.create(
-            category=cat, name="Салат", price=Decimal("300")
+        self.salad = ProductVariant.objects.create(
+            product=salad, price=Decimal("300")
         )
 
         # у бургера тех. карта и известная цена закупа, у салата — ничего
@@ -306,7 +308,7 @@ class ProfitReportTests(APITestCase):
             name="Мясо", unit="g", category=stock_cat
         )
         RecipeItem.objects.create(
-            product=self.burger, item=self.meat, quantity=Decimal("100")
+            variant=self.burger, item=self.meat, quantity=Decimal("100")
         )
         receipt = Receipt.objects.create()
         ReceiptItem.objects.create(
@@ -322,7 +324,7 @@ class ProfitReportTests(APITestCase):
         )
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {res.data['access']}")
 
-    def sell(self, product, qty, method="cash"):
+    def sell(self, variant, qty, method="cash"):
         from orders.models import Order, OrderItem
 
         order = Order.objects.create(
@@ -330,9 +332,9 @@ class ProfitReportTests(APITestCase):
             closed_at=timezone.now(), pay_method=method,
         )
         OrderItem.objects.create(
-            order=order, product=product, quantity=qty, unit_price=product.price
+            order=order, variant=variant, quantity=qty, unit_price=variant.price
         )
-        order.total = product.price * qty
+        order.total = variant.price * qty
         order.save(update_fields=["total"])
         return order
 

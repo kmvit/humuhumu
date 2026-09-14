@@ -340,17 +340,18 @@ class StockMovement(TenantModel):
 
 
 class RecipeItem(TenantModel):
-    """Строка тех карты: сколько товара склада уходит на одну порцию блюда.
+    """Строка тех карты: сколько товара склада уходит на одну порцию.
 
-    Тех карта блюда — это все его строки. Количество в базовой единице товара
-    (г/мл/шт): «Боул с креветкой» → «Креветки 80 г», «Рис 150 г».
+    Тех карта принадлежит варианту блюда — у «0,33» и «0,7» расход свой,
+    и коэффициентом из одного объёма другой не получить (лёд и стакан
+    нелинейны). Количество в базовой единице товара (г/мл/шт).
     """
 
-    product = models.ForeignKey(
-        "catalog.Product",
+    variant = models.ForeignKey(
+        "catalog.ProductVariant",
         on_delete=models.CASCADE,
         related_name="recipe",
-        verbose_name="Блюдо",
+        verbose_name="Вариант блюда",
     )
     item = models.ForeignKey(
         StockItem,
@@ -366,15 +367,15 @@ class RecipeItem(TenantModel):
     class Meta:
         verbose_name = "Строка тех карты"
         verbose_name_plural = "Тех карты блюд"
-        ordering = ["product__name", "item__name"]
+        ordering = ["variant__product__name", "item__name"]
         constraints = [
             models.UniqueConstraint(
-                fields=["product", "item"], name="uniq_recipeitem_per_product"
+                fields=["variant", "item"], name="uniq_recipeitem_per_variant"
             )
         ]
 
     def __str__(self):
-        return f"{self.product}: {self.item} × {self.quantity}"
+        return f"{self.variant}: {self.item} × {self.quantity}"
 
 
 class PurchaseList(TenantModel):

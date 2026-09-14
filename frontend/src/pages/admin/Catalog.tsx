@@ -3,7 +3,8 @@ import { del, get, patch, patchForm, post, postForm, ApiError } from "../../api"
 import Icon from "../../components/Icon";
 import Modal from "../../components/ui/Modal";
 import { useToast } from "../../components/ui/Toast";
-import type { Category, Product, Station } from "../../types";
+import type { Category, Product, ProductVariant, Station } from "../../types";
+import { decimalInput } from "../../decimal";
 
 /** Правка меню прямо в панели владельца, без Django-админки.
 
@@ -13,22 +14,34 @@ import type { Category, Product, Station } from "../../types";
 
 const STATION_LABEL: Record<Station, string> = { kitchen: "кухня", bar: "бар" };
 
+/** Строка редактора объёмов. id есть у уже сохранённого варианта. */
+type VariantDraft = {
+  id?: number;
+  label: string;
+  price: string;
+  weight_grams: string;
+  prep_minutes: string;
+  is_stopped: boolean;
+};
+
 type ProductDraft = {
   id?: number;
   category: number | "";
   name: string;
   description: string;
-  price: string;
-  weight_grams: string;
-  prep_minutes: string;
+  /** Минимум одна строка: товар без цены продать нельзя. */
+  variants: VariantDraft[];
   is_available: boolean;
-  is_stopped: boolean;
   sort_order: string;
   image: string | null;
   imageFile?: File | null;
   /** Снять текущую картинку при сохранении. */
   dropImage?: boolean;
 };
+
+const emptyVariant = (): VariantDraft => ({
+  label: "", price: "", weight_grams: "", prep_minutes: "", is_stopped: false,
+});
 
 type CategoryDraft = {
   id?: number;
@@ -42,13 +55,32 @@ const emptyProduct = (category: number | ""): ProductDraft => ({
   category,
   name: "",
   description: "",
-  price: "",
-  weight_grams: "",
-  prep_minutes: "",
+  variants: [emptyVariant()],
   is_available: true,
-  is_stopped: false,
   sort_order: "0",
   image: null,
+  imageFile: null,
+});
+
+/** Товар в черновик редактора. Варианты приходят с сервера в своём порядке. */
+const draftFrom = (p: Product): ProductDraft => ({
+  id: p.id,
+  category: p.category,
+  name: p.name,
+  description: p.description,
+  variants: p.variants.length
+    ? p.variants.map((v) => ({
+        id: v.id,
+        label: v.label,
+        price: String(v.price),
+        weight_grams: v.weight_grams ? String(v.weight_grams) : "",
+        prep_minutes: v.prep_minutes ? String(v.prep_minutes) : "",
+        is_stopped: v.is_stopped,
+      }))
+    : [emptyVariant()],
+  is_available: p.is_available,
+  sort_order: String(p.sort_order),
+  image: p.image,
   imageFile: null,
 });
 
@@ -115,26 +147,40 @@ export default function Catalog() {
     if (!pDraft) return;
     if (!pDraft.name.trim()) return notify("Укажите название", "bad");
     if (!pDraft.category) return notify("Выберите категорию", "bad");
-    if (!pDraft.price.trim()) return notify("Укажите цену", "bad");
+    const rows = pDraft.variants.filter((v) => v.price.trim() !== "");
+    if (!rows.length) return notify("Укажите цену", "bad");
+    if (rows.length > 1 && rows.some((v) => !v.label.trim()))
+      return notify("У каждого объёма должно быть название", "bad");
+    const labels = rows.map((v) => v.label.trim());
+    if (new Set(labels).size !== labels.length)
+      return notify("Объёмы не должны повторяться", "bad");
+
     setSaving(true);
     try {
+      const variants = rows.map((v) => ({
+        ...(v.id ? { id: v.id } : {}),
+        label: v.label.trim(),
+        price: v.price,
+        weight_grams: v.weight_grams === "" ? null : Number(v.weight_grams),
+        prep_minutes: v.prep_minutes === "" ? null : Number(v.prep_minutes),
+        is_stopped: v.is_stopped,
+      }));
       const body: Record<string, unknown> = {
         category: pDraft.category,
         name: pDraft.name.trim(),
         description: pDraft.description.trim(),
-        price: pDraft.price,
-        weight_grams: pDraft.weight_grams === "" ? null : pDraft.weight_grams,
-        prep_minutes: pDraft.prep_minutes === "" ? null : pDraft.prep_minutes,
         is_available: pDraft.is_available,
-        is_stopped: pDraft.is_stopped,
         sort_order: pDraft.sort_order || 0,
+        variants,
       };
       // Картинку шлём только когда её выбрали: multipart на каждое сохранение
       // гонял бы файл заново при правке одной цены.
       if (pDraft.imageFile) {
         const form = new FormData();
         for (const [k, v] of Object.entries(body)) {
-          if (v !== null) form.append(k, String(v));
+          if (v === null) continue;
+          // вложенный список в multipart не передать иначе как JSON-строкой
+          form.append(k, k === "variants" ? JSON.stringify(v) : String(v));
         }
         form.append("image", pDraft.imageFile);
         pDraft.id
@@ -171,11 +217,21 @@ export default function Catalog() {
     }
   }
 
-  /** Быстрые переключатели прямо в списке — частые действия дня. */
-  async function toggleProduct(p: Product, field: "is_available" | "is_stopped") {
+  /** Стоп ставится на ОБЪЁМ: кончились большие стаканы — 0,7 снят, 0,33 продаётся.
+   *  Если объём один, кнопка в списке снимает стоп с него же. */
+  async function toggleStop(p: Product, variant: ProductVariant) {
     setBusy(p.id);
     try {
-      await patch(`/products/${p.id}/`, { [field]: !p[field] });
+      await patch(`/products/${p.id}/`, {
+        variants: p.variants.map((v) => ({
+          id: v.id,
+          label: v.label,
+          price: v.price,
+          weight_grams: v.weight_grams,
+          prep_minutes: v.prep_minutes,
+          is_stopped: v.id === variant.id ? !v.is_stopped : v.is_stopped,
+        })),
+      });
       await load();
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "Не удалось сохранить", "bad");
@@ -351,43 +407,44 @@ export default function Catalog() {
                               {!p.is_available && (
                                 <span className="badge mini ml-2">не в меню</span>
                               )}
-                              {p.is_stopped && (
-                                <span className="badge mini ml-2">стоп</span>
-                              )}
                             </strong>
                             <span className="muted">
-                              {Number(p.price).toLocaleString("ru")} ₽
-                              {p.weight_grams ? ` · ${p.weight_grams} г` : ""}
+                              {p.variants.map((v, i) => (
+                                <span key={v.id}>
+                                  {i > 0 && " · "}
+                                  {v.label && `${v.label} `}
+                                  {Number(v.price).toLocaleString("ru")} ₽
+                                  {v.is_stopped && (
+                                    <span className="badge mini ml-1">стоп</span>
+                                  )}
+                                </span>
+                              ))}
                             </span>
                           </div>
-                          <button
-                            className={"btn sm" + (p.is_stopped ? " danger" : " ghost")}
-                            disabled={busy === p.id}
-                            title="Временно закончилось"
-                            onClick={() => toggleProduct(p, "is_stopped")}
-                          >
-                            стоп
-                          </button>
+                          {/* Стоп — по объёму. Пока объём один, кнопка ведёт
+                              себя как раньше; при нескольких их столько же. */}
+                          <span className="inline tight">
+                            {p.variants.map((v) => (
+                              <button
+                                key={v.id}
+                                className={"btn sm" + (v.is_stopped ? " danger" : " ghost")}
+                                disabled={busy === p.id}
+                                title={
+                                  v.label
+                                    ? `Временно закончился объём ${v.label}`
+                                    : "Временно закончилось"
+                                }
+                                onClick={() => toggleStop(p, v)}
+                              >
+                                {v.label || "стоп"}
+                              </button>
+                            ))}
+                          </span>
                           <button
                             className="icon-btn"
                             aria-label="Изменить блюдо"
                             title="Изменить блюдо"
-                            onClick={() =>
-                              setPDraft({
-                                id: p.id,
-                                category: p.category,
-                                name: p.name,
-                                description: p.description,
-                                price: String(p.price),
-                                weight_grams: p.weight_grams ? String(p.weight_grams) : "",
-                                prep_minutes: p.prep_minutes ? String(p.prep_minutes) : "",
-                                is_available: p.is_available,
-                                is_stopped: p.is_stopped,
-                                sort_order: String(p.sort_order),
-                                image: p.image,
-                                imageFile: null,
-                              })
-                            }
+                            onClick={() => setPDraft(draftFrom(p))}
                           >
                             <Icon name="edit" size={16} />
                           </button>
@@ -474,6 +531,18 @@ function ProductForm({
   // выбранный файл показываем сразу, до сохранения
   const preview = draft.imageFile ? URL.createObjectURL(draft.imageFile) : draft.image;
 
+  /** Объёмов больше одного — показываем названия и кнопку «убрать». */
+  const multi = draft.variants.length > 1;
+
+  const setVariant = (idx: number, patch: Partial<VariantDraft>) =>
+    set(
+      "variants",
+      draft.variants.map((v, i) => (i === idx ? { ...v, ...patch } : v))
+    );
+
+  const dropVariant = (idx: number) =>
+    set("variants", draft.variants.filter((_, i) => i !== idx));
+
   return (
     <Modal
       onClose={onClose}
@@ -511,16 +580,6 @@ function ProductForm({
             ))}
           </select>
         </label>
-        <label className="field">
-          <span className="label">Цена, ₽</span>
-          <input
-            className="input"
-            value={draft.price}
-            onChange={(e) => set("price", e.target.value.replace(",", "."))}
-            inputMode="decimal"
-            placeholder="240"
-          />
-        </label>
       </div>
 
       <label className="field">
@@ -534,27 +593,83 @@ function ProductForm({
         />
       </label>
 
-      <div className="grid cols-2">
-        <label className="field">
-          <span className="label">Вес, г</span>
-          <input
-            className="input"
-            value={draft.weight_grams}
-            onChange={(e) => set("weight_grams", e.target.value.replace(/\D/g, ""))}
-            inputMode="numeric"
-            placeholder="—"
-          />
-        </label>
-        <label className="field">
-          <span className="label">Готовится, мин</span>
-          <input
-            className="input"
-            value={draft.prep_minutes}
-            onChange={(e) => set("prep_minutes", e.target.value.replace(/\D/g, ""))}
-            inputMode="numeric"
-            placeholder="—"
-          />
-        </label>
+      {/* ——— объёмы ———
+          У каждого своя цена и своя тех карта. Пока объём один, название
+          пустое и гость никакого выбора не видит — карточка как раньше. */}
+      <div className="field">
+        <span className="label">
+          {multi ? "Объёмы и цены" : "Цена"}
+        </span>
+        <div className="stack tight">
+          {draft.variants.map((v, idx) => (
+            <div className="variant-row" key={v.id ?? `new-${idx}`}>
+              {multi && (
+                <input
+                  className="input"
+                  value={v.label}
+                  onChange={(e) => setVariant(idx, { label: e.target.value })}
+                  placeholder="0,33 л"
+                  aria-label="Название объёма"
+                />
+              )}
+              <input
+                className="input"
+                value={v.price}
+                onChange={(e) => setVariant(idx, { price: decimalInput(e.target.value) })}
+                inputMode="decimal"
+                placeholder="цена, ₽"
+                aria-label="Цена"
+              />
+              <input
+                className="input"
+                value={v.weight_grams}
+                onChange={(e) =>
+                  setVariant(idx, { weight_grams: e.target.value.replace(/\D/g, "") })
+                }
+                inputMode="numeric"
+                placeholder="вес, г"
+                aria-label="Вес"
+              />
+              <input
+                className="input"
+                value={v.prep_minutes}
+                onChange={(e) =>
+                  setVariant(idx, { prep_minutes: e.target.value.replace(/\D/g, "") })
+                }
+                inputMode="numeric"
+                placeholder="мин"
+                aria-label="Время приготовления"
+              />
+              <button
+                className={"btn sm" + (v.is_stopped ? " danger" : " ghost")}
+                onClick={() => setVariant(idx, { is_stopped: !v.is_stopped })}
+                title="Временно закончилось"
+              >
+                стоп
+              </button>
+              {multi && (
+                <button
+                  className="icon-btn danger"
+                  onClick={() => dropVariant(idx)}
+                  aria-label="Убрать объём"
+                >
+                  <Icon name="trash" size={16} />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+        <button
+          className="btn sm ghost mt-2"
+          onClick={() => set("variants", [...draft.variants, emptyVariant()])}
+        >
+          <Icon name="plus" size={15} /> Объём
+        </button>
+        {multi && (
+          <p className="muted sm mt-2">
+            Тех карта у каждого объёма своя — заполните её в разделе «Склад».
+          </p>
+        )}
       </div>
 
       <div className="field">
@@ -601,16 +716,10 @@ function ProductForm({
         >
           <Icon name={draft.is_available ? "check" : "close"} size={15} /> В меню
         </button>
-        <button
-          className={"btn sm" + (draft.is_stopped ? " danger" : " ghost")}
-          onClick={() => set("is_stopped", !draft.is_stopped)}
-        >
-          <Icon name={draft.is_stopped ? "check" : "close"} size={15} /> На стопе
-        </button>
       </div>
       <p className="muted sm mt-2">
-        «В меню» — показывать гостю. «На стопе» — видно, но заказать нельзя:
-        временно закончилось.
+        «В меню» — показывать блюдо гостю. «Стоп» ставится на объём: видно, но
+        заказать нельзя — временно закончилось.
       </p>
 
       <button className="btn block mt-3" disabled={saving} onClick={onSave}>

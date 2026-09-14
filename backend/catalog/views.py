@@ -1,12 +1,15 @@
-from django.db.models import Count, ProtectedError
-from rest_framework import status, viewsets
+import json
+
+from django.db import transaction
+from django.db.models import Count, Prefetch, ProtectedError
+from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from users.permissions import ReadOnlyOrAdmin
 
-from .models import Category, Product, ProductLike
+from .models import Category, Product, ProductLike, ProductVariant
 from .serializers import CategorySerializer, ProductSerializer
 
 
@@ -69,13 +72,117 @@ class ProductViewSet(ProtectedDeleteMixin, viewsets.ModelViewSet):
         qs = Product.objects.select_related("category").annotate(
             likes_count=Count("likes")
         )
-        # клиентам и гостям показываем только доступные товары
+        # клиентам и гостям показываем только доступные товары, а из
+        # вариантов — только продающиеся: снятый размер гостю не предлагаем
         if getattr(self.request.user, "role", None) != "admin":
-            qs = qs.filter(is_available=True)
+            qs = qs.filter(is_available=True).prefetch_related(
+                Prefetch(
+                    "variants",
+                    queryset=ProductVariant.objects.filter(is_active=True),
+                )
+            )
+        else:
+            qs = qs.prefetch_related("variants")
         category = self.request.query_params.get("category")
         if category:
             qs = qs.filter(category_id=category)
         return qs
+
+    # ——— варианты: цена/размеры правятся одной формой с товаром ———
+
+    class _VariantRow(serializers.Serializer):
+        id = serializers.IntegerField(required=False)
+        label = serializers.CharField(
+            max_length=40, required=False, allow_blank=True, default=""
+        )
+        price = serializers.DecimalField(max_digits=10, decimal_places=2)
+        weight_grams = serializers.IntegerField(
+            required=False, allow_null=True, min_value=0
+        )
+        prep_minutes = serializers.IntegerField(
+            required=False, allow_null=True, min_value=0
+        )
+        is_stopped = serializers.BooleanField(required=False, default=False)
+
+    def _sync_variants(self, product, raw):
+        """Привести варианты товара к присланному списку.
+
+        Список — состояние целиком, как в тех картах: с id — обновить,
+        без id — создать, отсутствующие — убрать. Проданный вариант
+        удалить нельзя (на нём история заказов) — он снимается с продажи.
+        """
+        if isinstance(raw, str):  # multipart с картинкой: список едет JSON-строкой
+            try:
+                raw = json.loads(raw)
+            except ValueError:
+                raise serializers.ValidationError({"variants": "Не разобрать JSON"})
+        rows = self._VariantRow(data=raw, many=True)
+        rows.is_valid(raise_exception=True)
+        rows = rows.validated_data
+        if not rows:
+            raise serializers.ValidationError(
+                {"variants": "У товара должна быть хотя бы одна цена."}
+            )
+        labels = [r["label"].strip() for r in rows]
+        if len(set(labels)) != len(labels):
+            raise serializers.ValidationError(
+                {"variants": "Варианты не должны повторяться по названию."}
+            )
+
+        existing = {v.id: v for v in product.variants.all()}
+        keep_ids = set()
+        for order, row in enumerate(rows):
+            variant = existing.get(row.get("id"))
+            if variant is None:
+                variant = ProductVariant(product=product)
+            variant.label = row["label"].strip()
+            variant.price = row["price"]
+            variant.weight_grams = row.get("weight_grams")
+            variant.prep_minutes = row.get("prep_minutes")
+            variant.is_stopped = row.get("is_stopped", False)
+            variant.is_active = True  # вернули в форму — значит, снова продаётся
+            variant.sort_order = order
+            variant.save()
+            keep_ids.add(variant.id)
+
+        for variant in product.variants.exclude(id__in=keep_ids):
+            try:
+                with transaction.atomic():
+                    variant.delete()
+            except ProtectedError:
+                # вариант уже продавался — прячем вместо удаления
+                variant.is_active = False
+                variant.save(update_fields=["is_active"])
+
+    def _respond_with(self, product, status_code=status.HTTP_200_OK):
+        product = self.get_queryset().get(pk=product.pk)
+        return Response(self.get_serializer(product).data, status=status_code)
+
+    def create(self, request, *args, **kwargs):
+        ser = self.get_serializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        if "variants" not in request.data:
+            raise serializers.ValidationError({"variants": "Укажите цену товара."})
+        with transaction.atomic():
+            product = ser.save()
+            self._sync_variants(product, request.data["variants"])
+        return self._respond_with(product, status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        product = self.get_object()
+        ser = self.get_serializer(
+            product, data=request.data, partial=kwargs.pop("partial", False)
+        )
+        ser.is_valid(raise_exception=True)
+        with transaction.atomic():
+            product = ser.save()
+            if "variants" in request.data:
+                self._sync_variants(product, request.data["variants"])
+        return self._respond_with(product)
+
+    def partial_update(self, request, *args, **kwargs):
+        kwargs["partial"] = True
+        return self.update(request, *args, **kwargs)
 
     @staticmethod
     def _device(request):

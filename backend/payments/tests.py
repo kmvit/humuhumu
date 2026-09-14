@@ -12,7 +12,7 @@ import httpx
 from django.test import TestCase
 from rest_framework.test import APITestCase
 
-from catalog.models import Category, Product
+from catalog.models import Category, Product, ProductVariant
 from core.models import SiteSettings
 from orders.models import Order
 
@@ -199,9 +199,10 @@ class CallbackEndpointTests(APITestCase):
 
     def setUp(self):
         cat = Category.objects.create(name="Кофе", station="bar")
-        product = Product.objects.create(category=cat, name="Латте", price=Decimal("240"))
+        product = Product.objects.create(category=cat, name="Латте")
+        variant = ProductVariant.objects.create(product=product, price=Decimal("240"))
         self.order = Order.objects.create(status=Order.Status.OPEN, total=Decimal("240"))
-        self.order.items.create(product=product, quantity=1, unit_price=product.price)
+        self.order.items.create(variant=variant, quantity=1, unit_price=variant.price)
         self.payment = Payment.objects.create(
             purpose=Payment.Purpose.ORDER,
             status=Payment.Status.PENDING,

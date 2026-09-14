@@ -112,6 +112,19 @@ export interface Table {
   is_active: boolean;
 }
 
+/** Вариант товара — то, что продаётся: объём со своей ценой и тех картой. */
+export interface ProductVariant {
+  id: number;
+  /** «0,33 л»; пусто у единственного варианта — тогда размер не показываем. */
+  label: string;
+  price: string;
+  weight_grams: number | null;
+  prep_minutes: number | null;
+  is_stopped: boolean;
+  is_active: boolean;
+  sort_order: number;
+}
+
 export interface Product {
   id: number;
   category: number;
@@ -120,18 +133,32 @@ export interface Product {
   description: string;
   image: string | null;
   thumbnail: string | null;
-  price: string;
-  weight_grams: number | null;
-  prep_minutes: number | null;
   is_available: boolean;
-  is_stopped: boolean;
   sort_order: number;
+  /** Минимум один. Гостю приходят только продающиеся. */
+  variants: ProductVariant[];
   likes?: number;
+}
+
+/** Показывать выбор размера, только если вариантов правда несколько. */
+export function hasSizes(p: Product): boolean {
+  return p.variants.length > 1;
+}
+
+/** Самый дешёвый вариант — цена «от» в карточке и выбор по умолчанию. */
+export function baseVariant(p: Product): ProductVariant | undefined {
+  return p.variants[0];
 }
 
 export interface OrderItem {
   id: number;
+  /** Что продано. Цена уже зафиксирована в unit_price. */
+  variant: number;
+  /** «0,33 л» — пусто, если у товара один вариант. */
+  variant_label: string;
+  /** id карточки меню — для группировок на экранах. */
   product: number;
+  /** Полное имя с вариантом: «Кис-кис 0,33 л». */
   product_name: string;
   station: Station;
   status: StationStatus;
@@ -246,6 +273,9 @@ export interface RecipeLine {
 
 /** Тех карта блюда: состав и себестоимость по последним закупкам. */
 export interface Recipe {
+  /** Карта принадлежит варианту: у каждого объёма состав свой. */
+  variant: number;
+  /** id карточки меню — объёмы одного блюда группируются по нему. */
   product: number;
   product_name: string;
   category_name: string;

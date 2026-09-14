@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { get, post, ApiError } from "../../api";
-import type { Category, Order, Product } from "../../types";
+import type { Category, Order, Product, ProductVariant } from "../../types";
 import Icon, { categoryIcon, type IconName } from "../../components/Icon";
 import Modal from "../../components/ui/Modal";
 import { useToast } from "../../components/ui/Toast";
@@ -30,7 +30,10 @@ export default function MenuReels() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  // ключ — id ВАРИАНТА (объёма), а не карточки
   const [cart, setCart] = useState<Record<number, number>>({});
+  // выбранный объём в каждой карточке: id товара → id варианта
+  const [picked, setPicked] = useState<Record<number, number>>({});
   const [cartOpen, setCartOpen] = useState(false);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -135,15 +138,27 @@ export default function MenuReels() {
   const showOrderBar =
     !!myOrder && !cartOpen && !statusOpen && myOrder.status !== "cancelled";
 
-  const priceOf = (pid: number) => Number(products.find((x) => x.id === pid)?.price ?? 0);
-  const count = Object.values(cart).reduce((a, b) => a + b, 0);
-  const total = Object.entries(cart).reduce((s, [pid, q]) => s + priceOf(Number(pid)) * q, 0);
+  /** Корзина держится на вариантах: продаётся объём, а не карточка. */
+  const byVariant = useMemo(() => {
+    const map = new Map<number, { product: Product; variant: ProductVariant }>();
+    for (const product of products)
+      for (const variant of product.variants) map.set(variant.id, { product, variant });
+    return map;
+  }, [products]);
 
-  const add = (pid: number) => setCart((c) => ({ ...c, [pid]: (c[pid] || 0) + 1 }));
-  const remove = (pid: number) =>
+  const priceOf = (vid: number) => Number(byVariant.get(vid)?.variant.price ?? 0);
+  const count = Object.values(cart).reduce((a, b) => a + b, 0);
+  const total = Object.entries(cart).reduce((s, [vid, q]) => s + priceOf(Number(vid)) * q, 0);
+
+  /** Какой объём выбран в карточке. По умолчанию — первый. */
+  const variantOf = (p: Product) =>
+    p.variants.find((v) => v.id === picked[p.id]) ?? p.variants[0];
+
+  const add = (vid: number) => setCart((c) => ({ ...c, [vid]: (c[vid] || 0) + 1 }));
+  const remove = (vid: number) =>
     setCart((c) => {
-      const n = { ...c, [pid]: (c[pid] || 0) - 1 };
-      if (n[pid] <= 0) delete n[pid];
+      const n = { ...c, [vid]: (c[vid] || 0) - 1 };
+      if (n[vid] <= 0) delete n[vid];
       return n;
     });
 
@@ -171,8 +186,8 @@ export default function MenuReels() {
     }
     setSubmitting(true);
     try {
-      const items = Object.entries(cart).map(([product, quantity]) => ({
-        product: Number(product),
+      const items = Object.entries(cart).map(([variant, quantity]) => ({
+        variant: Number(variant),
         quantity,
       }));
       const order = await post<Order>("/orders/place/", {
@@ -259,7 +274,9 @@ export default function MenuReels() {
         {pages.map((s) => (
           <div className="reels-page" key={s.key}>
             {s.items.map((p) => {
-              const q = cart[p.id] || 0;
+              const v = variantOf(p);
+              if (!v) return null;  // товар без цен не показываем
+              const q = cart[v.id] || 0;
               const likeN = likes[p.id] ?? p.likes ?? 0;
               const isLiked = liked.has(p.id);
               return (
@@ -285,20 +302,34 @@ export default function MenuReels() {
                       <h2>{p.name}</h2>
                       {p.description && <p className="reel-desc">{p.description}</p>}
                       <div className="reel-meta">
-                        <span className="reel-price">{Number(p.price).toLocaleString("ru")} ₽</span>
-                        {p.weight_grams ? <span className="reel-weight">{p.weight_grams} г</span> : null}
+                        <span className="reel-price">{Number(v.price).toLocaleString("ru")} ₽</span>
+                        {v.weight_grams ? <span className="reel-weight">{v.weight_grams} г</span> : null}
                       </div>
-                      {p.is_stopped && <span className="stop-badge reel-stop">Sold out</span>}
+                      {p.variants.length > 1 && (
+                        <div className="size-row" role="group" aria-label="Объём">
+                          {p.variants.map((opt) => (
+                            <button
+                              key={opt.id}
+                              className={"size-chip reel-size" + (opt.id === v.id ? " active" : "")}
+                              aria-pressed={opt.id === v.id}
+                              onClick={() => setPicked((st) => ({ ...st, [p.id]: opt.id }))}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {v.is_stopped && <span className="stop-badge reel-stop">Sold out</span>}
                     </div>
                     <div className="reel-add-wrap">
-                      {p.is_stopped ? null : q > 0 ? (
+                      {v.is_stopped ? null : q > 0 ? (
                         <div className="reel-stepper">
-                          <button onClick={() => remove(p.id)} aria-label="Убрать"><Icon name="minus" size={20} /></button>
+                          <button onClick={() => remove(v.id)} aria-label="Убрать"><Icon name="minus" size={20} /></button>
                           <span className="num">{q}</span>
-                          <button onClick={() => add(p.id)} aria-label="Ещё"><Icon name="plus" size={20} /></button>
+                          <button onClick={() => add(v.id)} aria-label="Ещё"><Icon name="plus" size={20} /></button>
                         </div>
                       ) : (
-                        <button className="reel-add" onClick={() => add(p.id)} aria-label={`Добавить «${p.name}»`}>
+                        <button className="reel-add" onClick={() => add(v.id)} aria-label={`Добавить «${p.name}»`}>
                           <Icon name="plus" size={26} />
                         </button>
                       )}
@@ -382,20 +413,24 @@ export default function MenuReels() {
           }
         >
             <div className="reels-sheet-items">
-              {Object.entries(cart).map(([pid, q]) => {
-                const p = products.find((x) => x.id === Number(pid));
-                if (!p) return null;
+              {Object.entries(cart).map(([vid, q]) => {
+                const found = byVariant.get(Number(vid));
+                if (!found) return null;
+                const { product: p, variant: v } = found;
                 return (
-                  <div className="between reels-sheet-row" key={pid}>
-                    <span>{p.name}</span>
+                  <div className="between reels-sheet-row" key={vid}>
+                    <span>
+                      {p.name}
+                      {v.label && <span className="muted"> · {v.label}</span>}
+                    </span>
                     <span className="inline">
                       <div className="reel-stepper sm">
-                        <button onClick={() => remove(p.id)} aria-label="Убрать"><Icon name="minus" size={16} /></button>
+                        <button onClick={() => remove(v.id)} aria-label="Убрать"><Icon name="minus" size={16} /></button>
                         <span className="num">{q}</span>
-                        <button onClick={() => add(p.id)} aria-label="Ещё"><Icon name="plus" size={16} /></button>
+                        <button onClick={() => add(v.id)} aria-label="Ещё"><Icon name="plus" size={16} /></button>
                       </div>
                       <span className="num" style={{ minWidth: 64, textAlign: "right" }}>
-                        {(priceOf(p.id) * q).toLocaleString("ru")} ₽
+                        {(priceOf(v.id) * q).toLocaleString("ru")} ₽
                       </span>
                     </span>
                   </div>

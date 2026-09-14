@@ -233,8 +233,9 @@ class RecipeItemSerializer(serializers.ModelSerializer):
 
 
 class RecipeSerializer(serializers.Serializer):
-    """Тех карта блюда целиком: блюдо + его состав + ориентировочная себестоимость."""
+    """Тех карта варианта блюда: состав + ориентировочная себестоимость."""
 
+    variant = serializers.IntegerField(read_only=True)
     product = serializers.IntegerField(read_only=True)
     product_name = serializers.CharField(read_only=True)
     category_name = serializers.CharField(read_only=True)

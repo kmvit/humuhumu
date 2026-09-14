@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from rest_framework.test import APITestCase
 
-from catalog.models import Category, Product
+from catalog.models import Category, Product, ProductVariant
 from core.models import SiteSettings
 from orders.models import Order
 from users.models import User
@@ -25,7 +25,8 @@ class LoyaltyBase(APITestCase):
         site.bonus_redeem_guest = False
         site.save()
         cat = Category.objects.create(name="Кофе", station="bar")
-        self.latte = Product.objects.create(category=cat, name="Латте", price=Decimal("240"))
+        self.latte = Product.objects.create(category=cat, name="Латте")
+        ProductVariant.objects.create(product=self.latte, price=Decimal("240"))
         self.waiter = User.objects.create_user(
             username="barista", password="demo12345", role=User.Role.WAITER
         )

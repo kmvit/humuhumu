@@ -176,8 +176,10 @@ class OrderItem(TenantModel):
     order = models.ForeignKey(
         Order, on_delete=models.CASCADE, related_name="items", verbose_name="Заказ"
     )
-    product = models.ForeignKey(
-        "catalog.Product", on_delete=models.PROTECT, verbose_name="Товар"
+    # Продаётся вариант товара — у объёмов своя цена и своя тех карта.
+    # PROTECT: на проданный вариант ссылается история, удалять его нельзя.
+    variant = models.ForeignKey(
+        "catalog.ProductVariant", on_delete=models.PROTECT, verbose_name="Вариант"
     )
     quantity = models.PositiveIntegerField("Количество", default=1)
     unit_price = models.DecimalField("Цена за единицу", max_digits=10, decimal_places=2)
@@ -209,7 +211,12 @@ class OrderItem(TenantModel):
     @property
     def station(self):
         """Куда идёт позиция — определяется станцией её категории."""
-        return self.product.category.station
+        return self.variant.product.category.station
+
+    @property
+    def display_name(self) -> str:
+        """Название для чека и досок: «Кис-кис 0,33 л»."""
+        return self.variant.full_name
 
     def __str__(self):
-        return f"{self.product} × {self.quantity}"
+        return f"{self.variant} × {self.quantity}"

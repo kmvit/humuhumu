@@ -19,7 +19,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
-from catalog.models import Category, Product
+from catalog.models import Category, Product, ProductVariant
 from core.models import SiteSettings
 from finance.models import Expense, ExpenseCategory, PayrollPayout
 from inventory.models import (
@@ -158,6 +158,7 @@ class Command(BaseCommand):
         RecipeItem.objects.all().delete()
         StockItem.objects.all().delete()
         StockCategory.objects.all().delete()
+        ProductVariant.objects.all().delete()
         Product.objects.all().delete()
         Category.objects.all().delete()
         Table.objects.all().delete()
@@ -223,24 +224,27 @@ class Command(BaseCommand):
         return items
 
     def _menu(self, items):
-        cats, products = {}, []
+        """Меню стенда. Возвращает ВАРИАНТЫ: продаётся и списывается вариант."""
+        cats, variants = {}, []
         for cat_name, station, name, price, recipe, photo in MENU:
             if cat_name not in cats:
                 cats[cat_name] = Category.objects.create(
                     name=cat_name, station=station, sort_order=len(cats) + 1
                 )
             p = Product.objects.create(
-                category=cats[cat_name], name=name, price=Decimal(price),
+                category=cats[cat_name], name=name, sort_order=len(variants) + 1,
+            )
+            variant = ProductVariant.objects.create(
+                product=p, price=Decimal(price),
                 prep_minutes=random.choice([5, 8, 10, 12]),
-                sort_order=len(products) + 1,
             )
             for item_name, qty in recipe:
                 RecipeItem.objects.create(
-                    product=p, item=items[item_name], quantity=Decimal(str(qty))
+                    variant=variant, item=items[item_name], quantity=Decimal(str(qty))
                 )
             self._attach_photo(p, photo)
-            products.append(p)
-        return products
+            variants.append(variant)
+        return variants
 
     def _attach_photo(self, product, filename):
         """Прикрепить фото блюда из media/demo_src, если оно там лежит.
@@ -295,13 +299,13 @@ class Command(BaseCommand):
                 )
                 Order.objects.filter(pk=order.pk).update(created_at=closed - timedelta(minutes=35))
                 total = Decimal("0")
-                for p in random.sample(products, random.randint(1, 3)):
+                for v in random.sample(products, random.randint(1, 3)):
                     qty = random.choices([1, 2], weights=[8, 2])[0]
                     OrderItem.objects.create(
-                        order=order, product=p, quantity=qty,
-                        unit_price=p.price, status="ready",
+                        order=order, variant=v, quantity=qty,
+                        unit_price=v.price, status="ready",
                     )
-                    total += p.price * qty
+                    total += v.price * qty
                 Order.objects.filter(pk=order.pk).update(total=total)
 
     def _expenses(self):

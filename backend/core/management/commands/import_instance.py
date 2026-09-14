@@ -83,6 +83,7 @@ class Command(BaseCommand):
             self.stdout.write(f"Заведение «{org.name}» (id={org.pk}), смещение ключей {offset}")
 
             self._clear_singletons(org)
+            rows = self._split_legacy_products(rows, offset)
             prepared = [self._shift(r, offset, org) for r in rows]
             prepared = [r for r in prepared if r is not None]
 
@@ -234,6 +235,63 @@ class Command(BaseCommand):
                 v + offset if isinstance(v, int) else v for v in values
             ]
         return out
+
+    #: Поля товара, переехавшие на вариант (catalog.0012). Дампы установок
+    #: старше этой миграции везут их прямо в catalog.product.
+    LEGACY_PRODUCT_FIELDS = ("price", "weight_grams", "prep_minutes", "is_stopped")
+
+    def _split_legacy_products(self, rows, offset):
+        """Развернуть старый товар с ценой в товар + его единственный вариант.
+
+        До вариантов цена, вес и стоп лежали на самом товаре. Такие дампы
+        приезжают до сих пор, и без разворота loaddata упал бы на неизвестных
+        полях, а товар остался бы без цены — то есть непродаваемым.
+
+        Ключ варианта берём из ключа товара: внутри дампа он свободен, а
+        общее смещение всё равно уводит его от занятых.
+        """
+        legacy = [
+            r for r in rows
+            if r["model"].lower() == "catalog.product"
+            and any(f in r["fields"] for f in self.LEGACY_PRODUCT_FIELDS)
+        ]
+        if not legacy:
+            return rows
+
+        extra = []
+        for row in legacy:
+            fields = row["fields"]
+            moved = {f: fields.pop(f, None) for f in self.LEGACY_PRODUCT_FIELDS}
+            extra.append({
+                "model": "catalog.productvariant",
+                "pk": row["pk"],
+                "fields": {
+                    "product": row["pk"],
+                    "label": "",
+                    "price": moved["price"] or "0",
+                    "weight_grams": moved["weight_grams"],
+                    "prep_minutes": moved["prep_minutes"],
+                    "is_stopped": bool(moved["is_stopped"]),
+                    "is_active": True,
+                    "sort_order": 0,
+                },
+            })
+        # Позиции заказов и тех карты в таком дампе ссылаются на товар.
+        # Ключ варианта равен ключу товара, поэтому ссылка переносится
+        # переименованием поля — пересчитывать ничего не нужно.
+        relinked = 0
+        for row in rows:
+            model = row["model"].lower()
+            if model in ("orders.orderitem", "inventory.recipeitem"):
+                if "product" in row["fields"]:
+                    row["fields"]["variant"] = row["fields"].pop("product")
+                    relinked += 1
+
+        self.stdout.write(
+            f"  дамп старого формата: цены {len(extra)} товаров развёрнуты "
+            f"в варианты, ссылок переставлено {relinked}"
+        )
+        return rows + extra
 
     def _reset_sequences(self):
         """Вернуть счётчикам правильное место.

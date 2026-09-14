@@ -9,7 +9,7 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from catalog.models import Product
+from catalog.models import ProductVariant
 from core.plans import RequiresInventory
 from users.permissions import IsWarehouseOrAdmin
 
@@ -209,14 +209,14 @@ class StockItemAliasViewSet(viewsets.ModelViewSet):
 
 
 class RecipeViewSet(viewsets.ViewSet):
-    """Тех карты блюд. Ключ — id блюда из меню, а не отдельная сущность карты."""
+    """Тех карты блюд. Ключ — id варианта блюда: у каждого объёма карта своя."""
 
     permission_classes = [IsWarehouseOrAdmin, RequiresInventory]
 
     @staticmethod
-    def _card(product, costs):
-        """Собрать тех карту блюда: состав + себестоимость по последним закупкам."""
-        lines = list(product.recipe.all())
+    def _card(variant, costs):
+        """Собрать тех карту варианта: состав + себестоимость по закупкам."""
+        lines = list(variant.recipe.all())
         cost, partial = Decimal("0"), False
         for line in lines:
             unit_cost = costs.get(line.item_id)
@@ -224,11 +224,15 @@ class RecipeViewSet(viewsets.ViewSet):
                 partial = True
                 continue
             cost += unit_cost * line.quantity
+        product = variant.product
         return {
+            "variant": variant.id,
+            # id карточки меню — чтобы фронт мог сгруппировать объёмы
+            # одного блюда и предложить скопировать состав соседа
             "product": product.id,
-            "product_name": product.name,
+            "product_name": f"{product.name} {variant.label}".strip(),
             "category_name": product.category.name if product.category_id else "",
-            "price": product.price,
+            "price": variant.price,
             # Строки отдаём объектами — сериализовать их будет RecipeSerializer.
             "lines": lines,
             "cost": cost.quantize(Decimal("0.01")),
@@ -236,32 +240,35 @@ class RecipeViewSet(viewsets.ViewSet):
         }
 
     def _queryset(self):
-        return Product.objects.select_related("category").prefetch_related(
-            "recipe__item"
+        return (
+            ProductVariant.objects.filter(is_active=True)
+            .select_related("product__category")
+            .prefetch_related("recipe__item")
+            .order_by("product__name", "sort_order", "id")
         )
 
     def list(self, request):
-        """Все блюда меню — и с картой, и пустые (их видно, что карты нет)."""
-        products = list(self._queryset())
+        """Все варианты меню — и с картой, и пустые (их видно, что карты нет)."""
+        variants = list(self._queryset())
         costs = last_unit_costs(
-            {line.item_id for p in products for line in p.recipe.all()}
+            {line.item_id for v in variants for line in v.recipe.all()}
         )
-        cards = [self._card(p, costs) for p in products]
+        cards = [self._card(v, costs) for v in variants]
         return Response(RecipeSerializer(cards, many=True).data)
 
     def retrieve(self, request, pk=None):
-        product = self._queryset().filter(pk=pk).first()
-        if product is None:
+        variant = self._queryset().filter(pk=pk).first()
+        if variant is None:
             return Response(
                 {"detail": "Блюдо не найдено"}, status=status.HTTP_404_NOT_FOUND
             )
-        costs = last_unit_costs([line.item_id for line in product.recipe.all()])
-        return Response(RecipeSerializer(self._card(product, costs)).data)
+        costs = last_unit_costs([line.item_id for line in variant.recipe.all()])
+        return Response(RecipeSerializer(self._card(variant, costs)).data)
 
     def update(self, request, pk=None):
         """Заменить состав тех карты целиком: {lines: [{item, quantity, comment}]}."""
-        product = self._queryset().filter(pk=pk).first()
-        if product is None:
+        variant = self._queryset().filter(pk=pk).first()
+        if variant is None:
             return Response(
                 {"detail": "Блюдо не найдено"}, status=status.HTTP_404_NOT_FOUND
             )
@@ -269,10 +276,10 @@ class RecipeViewSet(viewsets.ViewSet):
         ser.is_valid(raise_exception=True)
 
         with transaction.atomic():
-            product.recipe.all().delete()
+            variant.recipe.all().delete()
             RecipeItem.objects.bulk_create(
                 RecipeItem(
-                    product=product,
+                    variant=variant,
                     item=line["item"],
                     quantity=line["quantity"],
                     comment=line.get("comment", ""),
@@ -280,9 +287,9 @@ class RecipeViewSet(viewsets.ViewSet):
                 for line in ser.validated_data["lines"]
             )
 
-        product = self._queryset().get(pk=product.pk)
-        costs = last_unit_costs([line.item_id for line in product.recipe.all()])
-        return Response(RecipeSerializer(self._card(product, costs)).data)
+        variant = self._queryset().get(pk=variant.pk)
+        costs = last_unit_costs([line.item_id for line in variant.recipe.all()])
+        return Response(RecipeSerializer(self._card(variant, costs)).data)
 
 
 class PurchaseViewSet(viewsets.ReadOnlyModelViewSet):

@@ -45,9 +45,9 @@ def write_off_order_item(order_item, user=None) -> list[StockItem]:
         return []
 
     lines = RecipeItem.objects.filter(
-        product_id=order_item.product_id
+        variant_id=order_item.variant_id
     ).select_related("item")
-    comment = f"Заказ №{order_item.order_id} · {order_item.product.name}"
+    comment = f"Заказ №{order_item.order_id} · {order_item.display_name}"
     short: list[StockItem] = []
 
     for line in lines:
@@ -70,9 +70,9 @@ def return_order_item(order_item, user=None) -> None:
         return
 
     lines = RecipeItem.objects.filter(
-        product_id=order_item.product_id
+        variant_id=order_item.variant_id
     ).select_related("item")
-    comment = f"Возврат: заказ №{order_item.order_id} · {order_item.product.name}"
+    comment = f"Возврат: заказ №{order_item.order_id} · {order_item.display_name}"
 
     for line in lines:
         line.item.apply_movement(
