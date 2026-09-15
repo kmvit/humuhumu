@@ -40,7 +40,13 @@ from .serializers import (
     StockItemSerializer,
     StockMovementSerializer,
 )
-from .services import delete_receipt, get_or_build_purchase, last_unit_costs
+from .services import (
+    consume_scan_quota,
+    delete_receipt,
+    get_or_build_purchase,
+    last_unit_costs,
+    scan_quota,
+)
 from .tasks import process_receipt_scan
 
 
@@ -184,15 +190,43 @@ class ReceiptScanViewSet(viewsets.ModelViewSet):
     permission_classes = [IsWarehouseOrAdmin, RequiresInventory]
     http_method_names = ["get", "post", "delete", "head", "options"]
 
+    def create(self, request, *args, **kwargs):
+        """Перед загрузкой сверяемся с месячным лимитом распознаваний.
+
+        Проверка здесь, а не в perform_create: отказывать надо до того, как
+        принят файл и создана запись, иначе заведение увидит в списке скан,
+        за который его же и отругали.
+        """
+        used, limit = scan_quota()
+        if used >= limit:
+            return Response(
+                {
+                    "detail": (
+                        f"Распознано {used} чеков из {limit} за этот месяц — "
+                        "лимит тарифа исчерпан. Приход можно завести вручную "
+                        "или написать в «Падачу» за дополнительным пакетом."
+                    )
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+        return super().create(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         # Сохраняем фото и распознаём. По умолчанию синхронно в запросе — в
         # compose нет celery-воркера; при RECEIPT_SCAN_ASYNC=1 уходит в очередь.
         scan = serializer.save(created_by=self.request.user)
+        consume_scan_quota()
         if settings.RECEIPT_SCAN_ASYNC:
             process_receipt_scan.delay(scan.id)
         else:
             process_receipt_scan(scan.id)
             scan.refresh_from_db()
+
+    @action(detail=False)
+    def quota(self, request):
+        """Сколько распознаваний осталось в этом месяце — для подсказки в UI."""
+        used, limit = scan_quota()
+        return Response({"used": used, "limit": limit, "left": max(0, limit - used)})
 
     @action(detail=True, methods=["post"])
     def confirm(self, request, pk=None):

@@ -17,7 +17,7 @@ class ShiftTests(APITestCase):
     def setUp(self):
         # тесты писались до тарифов и проверяют функционал «Максимума»
         site = SiteSettings.load()
-        site.plan = SiteSettings.Plan.MAX
+        site.plan = SiteSettings.Plan.HALL
         site.save()
         self.staff = {
             role: User.objects.create_user(

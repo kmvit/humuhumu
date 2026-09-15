@@ -6,7 +6,7 @@
 сервер сборкой.
 
     python manage.py new_tenant "Кофейня Компас" --domain kompas.padacha.ru \\
-        --license-key <ключ из пульта> --plan max
+        --license-key <ключ из пульта> --plan hall
 
 Выдаёт логин и пароль владельца — их и отдают клиенту. Django-админку
 клиенту не выдаём: людьми и настройками он управляет из панели владельца.
@@ -18,6 +18,7 @@ from django.db import transaction
 from django.utils.text import slugify
 
 from core.models import Organization, SiteSettings
+from core.plans import mode_for_plan
 from core.tenancy import organization_context
 from users.models import User
 
@@ -31,16 +32,12 @@ class Command(BaseCommand):
         parser.add_argument("--slug", default="", help="Код; по умолчанию из названия")
         parser.add_argument("--license-key", default="", help="Ключ из пульта")
         parser.add_argument(
-            "--plan", default=SiteSettings.Plan.START,
+            "--plan", default=SiteSettings.Plan.COUNTER,
             choices=[p for p, _ in SiteSettings.Plan.choices],
-            help="Тариф до первой сверки с пультом",
+            help="Тариф: counter — стойка, hall — зал. Формат ставится по нему",
         )
         parser.add_argument(
             "--owner", default="owner", help="Логин владельца (по умолчанию owner)"
-        )
-        parser.add_argument(
-            "--service-mode", default=SiteSettings.ServiceMode.HALL,
-            choices=[m for m, _ in SiteSettings.ServiceMode.choices],
         )
 
     def handle(self, *args, **options):
@@ -70,7 +67,9 @@ class Command(BaseCommand):
                 site = SiteSettings.load()
                 site.name = name
                 site.plan = options["plan"]
-                site.service_mode = options["service_mode"]
+                # Формат обслуживания отдельным ключом не задаётся: он едет
+                # за тарифом, это и есть разница между «Стойкой» и «Залом».
+                site.service_mode = mode_for_plan(options["plan"])
                 site.save()
 
                 owner = User(

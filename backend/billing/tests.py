@@ -94,9 +94,9 @@ class LocalSubscriptionTests(TestCase):
     def test_plan_of_subscription_is_reported(self):
         from core.license import status_payload
 
-        sub = make_sub(plan=SiteSettings.Plan.MAX)
+        sub = make_sub(plan=SiteSettings.Plan.HALL)
         with organization_context(sub.organization):
-            self.assertEqual(status_payload()["plan"], "max")
+            self.assertEqual(status_payload()["plan"], "hall")
 
 
 class LicenseIssuingTests(TestCase):
@@ -116,12 +116,12 @@ class LicenseIssuingTests(TestCase):
         self.assertEqual(self._post({"key": "k1"}).status_code, 404)
 
     def test_signed_answer_and_telemetry(self):
-        sub = make_sub(license_key="secret-key", plan=SiteSettings.Plan.MAX)
+        sub = make_sub(license_key="secret-key", plan=SiteSettings.Plan.HALL)
         res = self._post({"key": "secret-key", "version": "abc1234"})
         self.assertEqual(res.status_code, 200)
         body = res.json()
         data = body["data"]
-        self.assertEqual(data["plan"], "max")
+        self.assertEqual(data["plan"], "hall")
         self.assertEqual(data["paid_until"], sub.paid_until.isoformat())
         self.assertFalse(data["internal"])
 
@@ -229,31 +229,47 @@ class SubscriptionDrivesFeaturesTests(TestCase):
     def test_features_follow_subscription(self):
         from core.plans import current_plan, features
 
-        sub = make_sub(plan=SiteSettings.Plan.START)
+        sub = make_sub(plan=SiteSettings.Plan.COUNTER)
         with organization_context(sub.organization):
-            self.assertEqual(current_plan(), "start")
-            self.assertEqual(features(), frozenset())
-
-            sub.plan = SiteSettings.Plan.MAX
-            sub.save()
-            self.assertEqual(current_plan(), "max")
+            self.assertEqual(current_plan(), "counter")
+            # склад и себестоимость есть и на стойке — без них кофейне
+            # продукт не нужен; нет только экранов станций
             self.assertIn("inventory", features())
+            self.assertNotIn("stations", features())
+
+            sub.plan = SiteSettings.Plan.HALL
+            sub.save()
+            self.assertEqual(current_plan(), "hall")
+            self.assertIn("stations", features())
 
     def test_site_settings_follow_subscription(self):
         """Тариф в настройках не должен спорить с подпиской: его читают и
         в панели владельца, и в Django-админке."""
-        sub = make_sub(plan=SiteSettings.Plan.HALL)
+        sub = make_sub(plan=SiteSettings.Plan.COUNTER)
         with organization_context(sub.organization):
-            self.assertEqual(SiteSettings.load().plan, "hall")
-            sub.plan = SiteSettings.Plan.MAX
+            self.assertEqual(SiteSettings.load().plan, "counter")
+            sub.plan = SiteSettings.Plan.HALL
             sub.save()
-            self.assertEqual(SiteSettings.load().plan, "max")
+            self.assertEqual(SiteSettings.load().plan, "hall")
+
+    def test_service_mode_follows_subscription(self):
+        """Формат — это и есть тариф: за «Зал» платят больше, чем за
+        «Стойку», поэтому назначает его подписка, а не заведение."""
+        sub = make_sub(plan=SiteSettings.Plan.COUNTER)
+        with organization_context(sub.organization):
+            site = SiteSettings.load()
+            self.assertEqual(site.service_mode, SiteSettings.ServiceMode.COUNTER)
+
+            sub.plan = SiteSettings.Plan.HALL
+            sub.save()
+            site = SiteSettings.load()
+            self.assertEqual(site.service_mode, SiteSettings.ServiceMode.HALL)
 
     def test_api_reports_paid_plan(self):
         from rest_framework.test import APIClient
 
-        sub = make_sub(plan=SiteSettings.Plan.MAX, domain="paid.padacha.ru")
+        sub = make_sub(plan=SiteSettings.Plan.HALL, domain="paid.padacha.ru")
         with self.settings(ALLOWED_HOSTS=["*"]):
             data = APIClient().get("/api/site/", HTTP_HOST="paid.padacha.ru").json()
-        self.assertEqual(data["plan"], "max")
+        self.assertEqual(data["plan"], "hall")
         self.assertIn("inventory", data["features"])

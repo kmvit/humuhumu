@@ -223,7 +223,7 @@ class ImportInstanceTests(TestCase):
                     "prep_minutes": None, "is_stopped": False}},
         {"model": "core.sitesettings", "pk": 1,
          "fields": {"name": "Переехавшее кафе", "theme": "neutral",
-                    "service_mode": "counter", "plan": "max"}},
+                    "service_mode": "counter", "plan": "hall"}},
     ]
 
     def setUp(self):
@@ -309,7 +309,7 @@ class ImportInstanceTests(TestCase):
                     "prep_minutes": None, "is_stopped": False}},
         {"model": "core.sitesettings", "pk": 1,
          "fields": {"name": "Переехавшее кафе", "theme": "neutral",
-                    "service_mode": "counter", "plan": "max"}},
+                    "service_mode": "counter", "plan": "hall"}},
     ]
 
     def setUp(self):

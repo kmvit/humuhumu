@@ -295,6 +295,45 @@ class ReceiptScan(TenantModel):
         return f"Скан чека №{self.pk} ({self.get_status_display()})"
 
 
+class ScanQuota(TenantModel):
+    """Сколько распознаваний чеков заведение израсходовало за месяц.
+
+    Считать сами сканы нельзя: их разрешено удалять, и обычная уборка в
+    списке молча возвращала бы лимит. Здесь отдельный счётчик, который
+    только растёт — по нему и сверяемся.
+
+    Распознавание — единственная фича с оплатой за каждое обращение
+    (запрос к модели через OpenRouter), поэтому лимит именно на неё.
+    """
+
+    #: Сколько чеков в месяц входит в тариф — одинаково на обоих.
+    MONTHLY_LIMIT = 30
+
+    month = models.DateField("Месяц", help_text="Первое число месяца")
+    used = models.PositiveIntegerField("Израсходовано", default=0)
+    extra = models.PositiveIntegerField(
+        "Докуплено", default=0,
+        help_text="Оплаченный пакет сверх тарифа — прибавляется к лимиту месяца",
+    )
+
+    @property
+    def limit(self) -> int:
+        return self.MONTHLY_LIMIT + self.extra
+
+    class Meta:
+        verbose_name = "Лимит распознаваний"
+        verbose_name_plural = "Лимиты распознаваний"
+        ordering = ["-month"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "month"], name="uniq_scan_quota_per_month"
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.month:%m.%Y} — {self.used} из {self.limit}"
+
+
 class StockMovement(TenantModel):
     """Журнал движений остатка: приход, корректировка, продажа блюда."""
 

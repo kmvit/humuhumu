@@ -31,6 +31,10 @@ from django.utils.text import slugify
 from core.models import Organization
 from billing.models import Client, Payment, Subscription
 
+#: Тарифы пульта → нынешние. «Старт» был форматом «зал или окно», поэтому
+#: однозначно переводится только он — и то с оговоркой; остальное — «Зал».
+OLD_PLANS = {"start": "counter", "hall": "hall", "max": "hall"}
+
 
 class Command(BaseCommand):
     help = "Импорт клиентов, точек и платежей из дампа пульта"
@@ -118,7 +122,10 @@ class Command(BaseCommand):
             sub, _ = Subscription.objects.update_or_create(
                 organization=org,
                 defaults={
-                    "plan": f.get("plan", "start"),
+                    # Формат точки в дампе пульта не записан, поэтому
+                    # перевод приблизительный (OLD_PLANS) — после импорта
+                    # тариф каждой точки сверяется с клиентом.
+                    "plan": OLD_PLANS.get(f.get("plan", ""), "hall"),
                     "paid_until": date.fromisoformat(f["paid_until"]),
                     "grace_days": f.get("grace_days", 7),
                     "is_internal": f.get("is_internal", False),

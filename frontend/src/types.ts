@@ -1,6 +1,7 @@
 export type AppTheme = "neutral" | "warm" | "strict" | "island" | "padacha";
 
-export type Plan = "start" | "hall" | "max";
+/** Тариф «Падачи» — это формат заведения: стойка дешевле зала. */
+export type Plan = "counter" | "hall";
 
 /** Фичи тарифа — по ним фронт прячет разделы; настоящий запрет на бэке. */
 export type Feature = "stations" | "inventory" | "shifts" | "finance" | "loyalty";
@@ -82,6 +83,13 @@ export interface LicenseInfo {
   paid_until: string | null;
   grace_days: number;
   checked_at: string | null;
+}
+
+/** Сколько распознаваний чеков осталось в этом месяце (лимит тарифа). */
+export interface ScanQuota {
+  used: number;
+  limit: number;
+  left: number;
 }
 
 export type Station = "kitchen" | "bar";

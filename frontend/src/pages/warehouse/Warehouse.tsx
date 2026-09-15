@@ -7,6 +7,7 @@ import type {
   StockItem,
   Receipt,
   ReceiptScan,
+  ScanQuota,
   StockUnit,
 } from "../../types";
 import Icon from "../../components/Icon";
@@ -60,6 +61,9 @@ export default function Warehouse() {
   const [scanId, setScanId] = useState<number | null>(null); // если задан — форма = черновик по фото
   const [scanning, setScanning] = useState(false); // идёт загрузка/распознавание
   const fileRef = useRef<HTMLInputElement>(null);
+  // распознавание оплачивается за каждый чек, поэтому в тарифе их
+  // ограниченное число в месяц; подсказываем остаток заранее
+  const [scanLeft, setScanLeft] = useState<number | null>(null);
 
   // правка/удаление уже созданного прихода
   const [editReceiptId, setEditReceiptId] = useState<number | null>(null); // правим существующий → пересоздаём
@@ -102,6 +106,13 @@ export default function Warehouse() {
     setCats(c);
     setItems(i.filter((x) => x.is_active));
     setReceipts(r);
+    loadScanQuota();
+  }
+
+  function loadScanQuota() {
+    get<ScanQuota>("/inventory/receipt-scans/quota/")
+      .then((q) => setScanLeft(q.left))
+      .catch(() => setScanLeft(null));
   }
   useEffect(() => {
     load()
@@ -211,6 +222,7 @@ export default function Warehouse() {
       notify(err instanceof ApiError ? err.message : "Ошибка распознавания", "bad");
     } finally {
       setScanning(false);
+      loadScanQuota(); // попытка засчитана в любом случае — обновляем остаток
     }
   }
 
@@ -474,6 +486,18 @@ export default function Warehouse() {
                 <span style={{ color: "var(--danger)" }}>{lowCount} заканчивается</span>
               </>
             )}
+            {/* про остаток распознаваний говорим, только когда он к концу:
+                постоянный счётчик на экране — лишний шум */}
+            {scanLeft !== null && scanLeft <= 10 && (
+              <>
+                {" · "}
+                <span style={{ color: scanLeft === 0 ? "var(--danger)" : undefined }}>
+                  {scanLeft === 0
+                    ? "распознавание чеков — лимит месяца исчерпан"
+                    : `распознаваний чеков осталось ${scanLeft}`}
+                </span>
+              </>
+            )}
           </p>
         </div>
         <div className="wrap">
@@ -488,8 +512,12 @@ export default function Warehouse() {
           <button
             className="btn ghost"
             onClick={() => fileRef.current?.click()}
-            disabled={!items.length || scanning}
-            title="Распознать позиции с фото чека"
+            disabled={!items.length || scanning || scanLeft === 0}
+            title={
+              scanLeft === 0
+                ? "Распознавания в этом месяце закончились"
+                : "Распознать позиции с фото чека"
+            }
           >
             <Icon name={scanning ? "spark" : "receipt"} size={18} />{" "}
             {scanning ? "Распознаю…" : "Фото чека"}

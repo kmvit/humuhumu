@@ -92,11 +92,11 @@ def sync_license() -> LicenseState:
         state.last_error = ""
         state.save()
         # Тариф — из лицензии. Пишем в SiteSettings, чтобы весь гейт
-        # (core/plans.py, фронт) работал без единого изменения.
-        site = SiteSettings.load()
-        if site.plan != state.plan:
-            site.plan = state.plan
-            site.save(update_fields=["plan"])
+        # (core/plans.py, фронт) работал без единого изменения; вместе с
+        # тарифом приезжает и формат обслуживания — он оплачен тем же.
+        from .plans import apply_plan
+
+        apply_plan(SiteSettings.load(), state.plan)
     except Exception as exc:  # сеть, JSON, подпись — причина в кэше
         logger.warning("Сверка лицензии не удалась: %s", exc)
         state.last_error = str(exc)[:500]

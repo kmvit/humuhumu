@@ -128,6 +128,10 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
             "legal_updated",
             # тариф заведению назначает «Падача», не само заведение
             "plan",
+            # формат едет за тарифом и стоит денег: «Стойка» дешевле «Зала».
+            # Кнопки в панели нет с самого начала, но поле было открыто —
+            # заведение могло включить себе зал обычным PATCH.
+            "service_mode",
         )
 
     def get_logo(self, obj):

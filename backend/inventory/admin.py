@@ -7,6 +7,7 @@ from .models import (
     ReceiptItem,
     ReceiptScan,
     RecipeItem,
+    ScanQuota,
     StockCategory,
     StockItem,
     StockItemAlias,
@@ -85,3 +86,17 @@ class ReceiptScanAdmin(admin.ModelAdmin):
     list_display = ("id", "status", "created_by", "receipt", "created_at")
     list_filter = ("status",)
     readonly_fields = ("parsed", "error", "created_at", "updated_at")
+
+
+@admin.register(ScanQuota)
+class ScanQuotaAdmin(admin.ModelAdmin):
+    """Расход распознаваний по месяцам. Здесь же продаётся пакет сверх тарифа:
+    поле «Докуплено» прибавляется к лимиту месяца."""
+
+    list_display = ("month", "used", "extra", "limit")
+    list_editable = ("extra",)
+    readonly_fields = ("month", "used")
+
+    @admin.display(description="Лимит месяца")
+    def limit(self, obj):
+        return obj.limit

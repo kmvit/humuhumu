@@ -16,7 +16,7 @@ class LoyaltyBase(APITestCase):
 
     def setUp(self):
         site = SiteSettings.load()
-        site.plan = SiteSettings.Plan.MAX
+        site.plan = SiteSettings.Plan.HALL
         site.service_mode = "hall"
         site.bonus_enabled = True
         site.bonus_welcome = 200
@@ -436,27 +436,28 @@ class FinanceTests(LoyaltyBase):
 
 
 class PlanGateTests(LoyaltyBase):
-    """Бонусы — тариф «Максимум»."""
+    """Бонусы входят в оба тарифа — включает их сам владелец.
 
-    def test_start_plan_has_no_loyalty(self):
+    Раньше это была фича «Максимума». Сетку перекроили: тариф означает
+    формат заведения, а не набор функций, и кофейне на «Стойке» бонусы
+    нужны ничуть не меньше. Единственный выключатель теперь — bonus_enabled.
+    """
+
+    def test_counter_plan_has_loyalty_too(self):
         site = SiteSettings.load()
-        site.plan = SiteSettings.Plan.START
+        site.plan = SiteSettings.Plan.COUNTER
         site.save()
-        res = self.client.post(
-            "/api/loyalty/enroll/", {"name": "Аня", "phone": "+79991112233"}, format="json"
-        )
-        # аноним получает от DRF 401, сотрудник — 403; важно, что не 201
-        self.assertIn(res.status_code, (401, 403))
-        self.assertFalse(LoyaltyMember.objects.exists())
+        res = self.client.get("/api/loyalty/program/")
+        self.assertTrue(res.data["enabled"])
 
-    def test_program_endpoint_reports_off_on_start_plan(self):
+    def test_program_endpoint_reports_off_when_owner_turned_bonuses_off(self):
         site = SiteSettings.load()
-        site.plan = SiteSettings.Plan.START
+        site.bonus_enabled = False
         site.save()
         res = self.client.get("/api/loyalty/program/")
         self.assertFalse(res.data["enabled"])
 
-    def test_program_endpoint_reports_terms_on_max(self):
+    def test_program_endpoint_reports_terms(self):
         res = self.client.get("/api/loyalty/program/")
         self.assertTrue(res.data["enabled"])
         self.assertEqual(res.data["welcome"], 200)

@@ -69,9 +69,13 @@ class AcquiringDefaultTests(TestCase):
 class PlanGateTests(APITestCase):
     """Гейт по тарифу: раздел, которого нет в тарифе, закрыт на бэке.
 
-    Прячущий фронт — вежливость, а permission — защита: без неё кофейня
-    на «Старте» получила бы весь «Максимум», просто дёргая API напрямую.
+    Тарифов два, и функционал на них полный — кроме экранов станций,
+    которых в формате стойки просто нет. Проверяем и это, и то, что
+    заведение не может переназначить себе ни тариф, ни формат: формат —
+    это и есть цена.
     """
+
+    PAID_SECTIONS = ("/api/inventory/items/", "/api/finance/expenses/", "/api/shifts/")
 
     def setUp(self):
         self.site = SiteSettings.load()
@@ -84,34 +88,43 @@ class PlanGateTests(APITestCase):
         self.site.plan = plan
         self.site.save()
 
-    def test_start_blocks_paid_sections(self):
-        self._set_plan(SiteSettings.Plan.START)
-        for url in ("/api/inventory/items/", "/api/finance/expenses/", "/api/shifts/"):
-            self.assertEqual(self.client.get(url).status_code, 403, url)
-
-    def test_hall_opens_stations_but_not_warehouse(self):
-        self._set_plan(SiteSettings.Plan.HALL)
-        self.assertIn("stations", features())
-        self.assertEqual(self.client.get("/api/inventory/items/").status_code, 403)
-
-    def test_max_opens_everything(self):
-        self._set_plan(SiteSettings.Plan.MAX)
-        for url in ("/api/inventory/items/", "/api/finance/expenses/", "/api/shifts/"):
+    def test_counter_opens_everything_but_stations(self):
+        """Кофейне без зала нужен склад и себестоимость — иначе она не купит."""
+        self._set_plan(SiteSettings.Plan.COUNTER)
+        for url in self.PAID_SECTIONS:
             self.assertEqual(self.client.get(url).status_code, 200, url)
+        self.assertNotIn("stations", features())
 
-    def test_grandfather_default_is_start_for_new_install(self):
-        # Новая установка не должна получать «Максимум» бесплатно.
-        self.assertEqual(SiteSettings._meta.get_field("plan").default, "start")
+    def test_hall_opens_everything(self):
+        self._set_plan(SiteSettings.Plan.HALL)
+        for url in self.PAID_SECTIONS:
+            self.assertEqual(self.client.get(url).status_code, 200, url)
+        self.assertIn("stations", features())
+
+    def test_new_install_starts_on_the_cheaper_plan(self):
+        self.assertEqual(SiteSettings._meta.get_field("plan").default, "counter")
 
     def test_site_api_exposes_features_but_plan_is_read_only(self):
-        self._set_plan(SiteSettings.Plan.START)
+        self._set_plan(SiteSettings.Plan.COUNTER)
         data = self.client.get("/api/site/").json()
-        self.assertEqual(data["plan"], "start")
-        self.assertEqual(data["features"], [])
-        # заведение не может само себе выписать «Максимум»
-        self.client.patch("/api/site/", {"plan": "max"}, format="json")
+        self.assertEqual(data["plan"], "counter")
+        self.assertNotIn("stations", data["features"])
+        # заведение не может само себе выписать тариф подороже
+        self.client.patch("/api/site/", {"plan": "hall"}, format="json")
         self.site.refresh_from_db()
-        self.assertEqual(self.site.plan, SiteSettings.Plan.START)
+        self.assertEqual(self.site.plan, SiteSettings.Plan.COUNTER)
+
+    def test_service_mode_cannot_be_switched_by_the_cafe(self):
+        """Кнопки в панели нет, но поле было открыто обычным PATCH — и
+        «Стойка» за 3 990 включала себе зал сама."""
+        self.site.service_mode = SiteSettings.ServiceMode.COUNTER
+        self.site.save()
+        res = self.client.patch(
+            "/api/site/", {"service_mode": "hall"}, format="json"
+        )
+        self.assertEqual(res.status_code, 200)  # молча игнорируем, а не 400
+        self.site.refresh_from_db()
+        self.assertEqual(self.site.service_mode, SiteSettings.ServiceMode.COUNTER)
 
 
 @override_settings(LICENSE_KEY="testkey", LICENSE_URL="https://pult.test/api/license/")
@@ -120,7 +133,7 @@ class LicenseClientTests(APITestCase):
 
     def _state(self, paid_delta_days, checked_delta_days=0, grace=7):
         state = LicenseState.load()
-        state.plan = "max"
+        state.plan = "hall"
         state.paid_until = timezone.localdate() + timedelta(days=paid_delta_days)
         state.grace_days = grace
         state.checked_at = timezone.now() - timedelta(days=checked_delta_days)
@@ -163,7 +176,7 @@ class LicenseClientTests(APITestCase):
 
     def test_sync_verifies_signature_and_writes_plan(self):
         data = {
-            "plan": "hall",
+            "plan": "counter",
             "paid_until": (timezone.localdate() + timedelta(days=30)).isoformat(),
             "grace_days": 7,
             "status": "active",
@@ -176,15 +189,18 @@ class LicenseClientTests(APITestCase):
         response.raise_for_status.return_value = None
         with mock.patch("core.license.httpx.post", return_value=response):
             state = sync_license()
-        self.assertEqual(state.plan, "hall")
-        self.assertEqual(SiteSettings.load().plan, "hall")  # тариф пришёл из лицензии
+        self.assertEqual(state.plan, "counter")
+        site = SiteSettings.load()
+        self.assertEqual(site.plan, "counter")  # тариф пришёл из лицензии
+        # вместе с тарифом — формат: «Стойка» и «Зал» это он и есть
+        self.assertEqual(site.service_mode, SiteSettings.ServiceMode.COUNTER)
         self.assertEqual(state.last_error, "")
 
         # подделанная подпись — кэш не меняется, ошибка записана
-        response.json.return_value = {"data": {**data, "plan": "max"}, "sign": sign}
+        response.json.return_value = {"data": {**data, "plan": "hall"}, "sign": sign}
         with mock.patch("core.license.httpx.post", return_value=response):
             state = sync_license()
-        self.assertEqual(state.plan, "hall")
+        self.assertEqual(state.plan, "counter")
         self.assertIn("подпись", state.last_error)
 
     def test_middleware_blocks_and_whitelists(self):

@@ -4,7 +4,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import F, Sum
 from django.utils import timezone
 
 from catalog.models import ModifierEffect
@@ -14,11 +14,35 @@ from .models import (
     PurchaseList,
     ReceiptItem,
     RecipeItem,
+    ScanQuota,
     StockItem,
     StockMovement,
 )
 
 CENT = Decimal("0.001")
+
+
+def scan_quota() -> tuple[int, int]:
+    """(израсходовано, лимит) распознаваний чеков в текущем месяце."""
+    month = timezone.localdate().replace(day=1)
+    row = ScanQuota.objects.filter(month=month).first()
+    if row is None:
+        return 0, ScanQuota.MONTHLY_LIMIT
+    return row.used, row.limit
+
+
+def consume_scan_quota() -> None:
+    """Списать одно распознавание.
+
+    Списываем за попытку, до ответа модели: обращение к ней уже оплачено
+    нами, чем бы оно ни кончилось. Если распознавание сорвалось не по вине
+    чека, лимит возвращается руками — в админке есть «Докуплено».
+    """
+    month = timezone.localdate().replace(day=1)
+    row, created = ScanQuota.objects.get_or_create(month=month, defaults={"used": 1})
+    if not created:
+        # F(), а не чтение-запись: две параллельные загрузки не затрут счёт.
+        ScanQuota.objects.filter(pk=row.pk).update(used=F("used") + 1)
 
 
 def last_unit_costs(item_ids) -> dict[int, Decimal]:

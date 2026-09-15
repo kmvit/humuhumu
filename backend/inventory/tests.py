@@ -1,6 +1,8 @@
 from decimal import Decimal
+from unittest import mock
 
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from catalog.models import (
@@ -17,7 +19,15 @@ from .services import return_order_item, write_off_order_item
 from core.models import SiteSettings
 from users.models import User
 
-from .models import Receipt, RecipeItem, StockCategory, StockItem, StockMovement
+from .models import (
+    Receipt,
+    ReceiptScan,
+    RecipeItem,
+    ScanQuota,
+    StockCategory,
+    StockItem,
+    StockMovement,
+)
 
 
 class StockItemDeleteTests(APITestCase):
@@ -26,7 +36,7 @@ class StockItemDeleteTests(APITestCase):
     def setUp(self):
         # тесты писались до тарифов и проверяют функционал «Максимума»
         site = SiteSettings.load()
-        site.plan = SiteSettings.Plan.MAX
+        site.plan = SiteSettings.Plan.HALL
         site.save()
         self.manager = User.objects.create_user(
             username="manager", password="pw", role=User.Role.WAREHOUSE
@@ -95,7 +105,7 @@ class ReceiptDeleteTests(APITestCase):
     def setUp(self):
         # тесты писались до тарифов и проверяют функционал «Максимума»
         site = SiteSettings.load()
-        site.plan = SiteSettings.Plan.MAX
+        site.plan = SiteSettings.Plan.HALL
         site.save()
         self.manager = User.objects.create_user(
             username="manager", password="pw", role=User.Role.WAREHOUSE
@@ -166,7 +176,7 @@ class RecipeApiTests(APITestCase):
     def setUp(self):
         # тесты писались до тарифов и проверяют функционал «Максимума»
         site = SiteSettings.load()
-        site.plan = SiteSettings.Plan.MAX
+        site.plan = SiteSettings.Plan.HALL
         site.save()
         User.objects.create_user(
             username="manager", password="pw", role=User.Role.WAREHOUSE
@@ -257,7 +267,7 @@ class ReceiptScanUnitsTests(TestCase):
     def setUp(self):
         # тесты писались до тарифов и проверяют функционал «Максимума»
         site = SiteSettings.load()
-        site.plan = SiteSettings.Plan.MAX
+        site.plan = SiteSettings.Plan.HALL
         site.save()
         self.cat = StockCategory.objects.create(name="Продукты")
         self.tomato = StockItem.objects.create(
@@ -314,6 +324,82 @@ class ReceiptScanUnitsTests(TestCase):
         ])
         self.assertIsNone(d["lines"][0]["unit_cost"])
 
+class ScanQuotaTests(APITestCase):
+    """Лимит распознаваний: 30 чеков в месяц на заведение.
+
+    Распознавание — единственная функция, за каждое обращение к которой мы
+    платим деньгами, и она входит в оба тарифа. Без лимита самая дешёвая
+    точка могла бы выбрать всю маржу одна.
+    """
+
+    def setUp(self):
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.COUNTER  # распознавание есть и на стойке
+        site.save()
+        self.manager = User.objects.create_user(
+            username="manager", password="pw", role=User.Role.WAREHOUSE
+        )
+        self.client.force_authenticate(self.manager)
+
+    def _photo(self):
+        from io import BytesIO
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from PIL import Image
+
+        buf = BytesIO()
+        Image.new("RGB", (4, 4), "white").save(buf, "JPEG")
+        return SimpleUploadedFile("chek.jpg", buf.getvalue(), content_type="image/jpeg")
+
+    def _upload(self):
+        # распознавание мокаем: проверяем учёт, а не работу модели
+        with mock.patch("inventory.views.process_receipt_scan"):
+            return self.client.post(
+                "/api/inventory/receipt-scans/",
+                {"image": self._photo()},
+                format="multipart",
+            )
+
+    def _seed(self, used, extra=0):
+        return ScanQuota.objects.create(
+            month=timezone.localdate().replace(day=1), used=used, extra=extra
+        )
+
+    def test_upload_spends_one_scan(self):
+        self.assertEqual(self._upload().status_code, 201)
+        row = ScanQuota.objects.get(month=timezone.localdate().replace(day=1))
+        self.assertEqual(row.used, 1)
+
+    def test_last_scan_passes_and_the_next_is_refused(self):
+        self._seed(used=ScanQuota.MONTHLY_LIMIT - 1)
+        self.assertEqual(self._upload().status_code, 201)
+
+        res = self._upload()
+        self.assertEqual(res.status_code, 402)
+        self.assertIn("лимит", res.json()["detail"].lower())
+        # отказ — до создания записи: списка «сканов, за которые отругали» нет
+        self.assertEqual(ReceiptScan.objects.count(), 1)
+
+    def test_deleting_scans_does_not_return_the_limit(self):
+        """Считаем отдельным счётчиком именно поэтому: сканы можно удалять,
+        и уборка в списке молча возвращала бы оплаченные распознавания."""
+        self._seed(used=ScanQuota.MONTHLY_LIMIT - 1)
+        scan_id = self._upload().json()["id"]
+        self.client.delete(f"/api/inventory/receipt-scans/{scan_id}/")
+        self.assertEqual(self._upload().status_code, 402)
+
+    def test_paid_pack_raises_the_limit(self):
+        self._seed(used=ScanQuota.MONTHLY_LIMIT, extra=50)
+        self.assertEqual(self._upload().status_code, 201)
+
+    def test_quota_endpoint_tells_what_is_left(self):
+        self._seed(used=4)
+        data = self.client.get("/api/inventory/receipt-scans/quota/").json()
+        self.assertEqual(data["used"], 4)
+        self.assertEqual(data["limit"], ScanQuota.MONTHLY_LIMIT)
+        self.assertEqual(data["left"], ScanQuota.MONTHLY_LIMIT - 4)
+
+
 class ModifierWriteOffTests(APITestCase):
     """Списание с опциями: добавка, снятие и замена.
 
@@ -324,7 +410,7 @@ class ModifierWriteOffTests(APITestCase):
 
     def setUp(self):
         site = SiteSettings.load()
-        site.plan = SiteSettings.Plan.MAX
+        site.plan = SiteSettings.Plan.HALL
         site.save()
         cat = StockCategory.objects.create(name="Бар")
         self.milk = StockItem.objects.create(category=cat, name="Молоко коровье", unit="ml")
@@ -444,7 +530,7 @@ class StockCategoryCrudTests(APITestCase):
 
     def setUp(self):
         site = SiteSettings.load()
-        site.plan = SiteSettings.Plan.MAX
+        site.plan = SiteSettings.Plan.HALL
         site.save()
         User.objects.create_user(
             username="manager", password="pw", role=User.Role.WAREHOUSE

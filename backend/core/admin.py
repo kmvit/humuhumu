@@ -37,12 +37,14 @@ class SiteSettingsAdmin(TenantAdminMixin, admin.ModelAdmin):
         (
             "Тариф",
             {
-                "fields": ("plan",),
+                "fields": ("plan", "service_mode"),
                 "description": (
-                    "Что включено заведению по тарифной сетке «Падачи». "
-                    "Если в .env задан LICENSE_KEY, поле перезаписывается "
-                    "лицензией из пульта при суточной сверке — править его "
-                    "тогда нужно в пульте, а не здесь."
+                    "Тариф «Падачи» — это формат заведения: «Стойка» дешевле "
+                    "«Зала», функционал полный на обоих. Формат меняется "
+                    "вместе с тарифом, отдельно его не выбирают. В общей "
+                    "установке тариф назначает подписка (раздел «Подписки»), "
+                    "в отдельной — сверка лицензии; здесь он правится только "
+                    "там, где нет ни того, ни другого."
                 ),
             },
         ),
@@ -50,8 +52,8 @@ class SiteSettingsAdmin(TenantAdminMixin, admin.ModelAdmin):
         (
             "Работа заведения",
             {
-                "fields": ("service_mode", "item_remove_code"),
-                "description": "Формат обслуживания и права официанта на удаление позиций.",
+                "fields": ("item_remove_code",),
+                "description": "Права официанта на удаление позиций.",
             },
         ),
         (
@@ -65,7 +67,7 @@ class SiteSettingsAdmin(TenantAdminMixin, admin.ModelAdmin):
                     "bonus_redeem_guest",
                 ),
                 "description": (
-                    "1 бонус = 1 ₽. Доступна на тарифе «Максимум». "
+                    "1 бонус = 1 ₽. Входит в оба тарифа. "
                     "Владельцу удобнее править это в разделе «Бонусы» "
                     "на фронте — здесь те же настройки."
                 ),
@@ -120,6 +122,18 @@ class SiteSettingsAdmin(TenantAdminMixin, admin.ModelAdmin):
             },
         ),
     )
+
+    #: Формат не выбирают — он следует за тарифом (core.plans.apply_plan).
+    readonly_fields = ("service_mode",)
+
+    def save_model(self, request, obj, form, change):
+        """Тариф правят здесь только в установке без подписки и лицензии —
+        и формат должен поехать за ним, иначе заведение получит зал, не
+        заплатив за него."""
+        from .plans import mode_for_plan
+
+        obj.service_mode = mode_for_plan(obj.plan)
+        super().save_model(request, obj, form, change)
 
     def has_add_permission(self, request):
         # запись одна НА ЗАВЕДЕНИЕ — новую не создаём, если у него уже есть

@@ -18,7 +18,7 @@ class PayrollStatementTests(APITestCase):
     def setUp(self):
         # тесты писались до тарифов и проверяют функционал «Максимума»
         site = SiteSettings.load()
-        site.plan = SiteSettings.Plan.MAX
+        site.plan = SiteSettings.Plan.HALL
         site.save()
         self.cook = User.objects.create_user(
             username="cook", password="demo12345", role=User.Role.COOK, first_name="Повар"
@@ -190,7 +190,7 @@ class ExpenseTests(APITestCase):
     def setUp(self):
         # тесты писались до тарифов и проверяют функционал «Максимума»
         site = SiteSettings.load()
-        site.plan = SiteSettings.Plan.MAX
+        site.plan = SiteSettings.Plan.HALL
         site.save()
         self.manager = User.objects.create_user(
             username="manager", password="demo12345", role=User.Role.WAREHOUSE
@@ -275,7 +275,7 @@ class ProfitReportTests(APITestCase):
     def setUp(self):
         # тесты писались до тарифов и проверяют функционал «Максимума»
         site = SiteSettings.load()
-        site.plan = SiteSettings.Plan.MAX
+        site.plan = SiteSettings.Plan.HALL
         site.save()
         from catalog.models import Category, Product, ProductVariant
         from inventory.models import (

@@ -33,7 +33,7 @@ def build_cafe(org, marker: str):
     with organization_context(org):
         site = SiteSettings.load()
         site.name = f"Кафе {marker}"
-        site.plan = SiteSettings.Plan.MAX
+        site.plan = SiteSettings.Plan.HALL
         site.save()
 
         category = Category.objects.create(name=f"Категория {marker}")
@@ -261,7 +261,7 @@ class CrossTenantReportsTests(TestCase):
         for org, marker, total in ((self.a, "альфы", 100), (self.b, "беты", 999999)):
             with organization_context(org):
                 site = SiteSettings.load()
-                site.plan = SiteSettings.Plan.MAX
+                site.plan = SiteSettings.Plan.HALL
                 site.save()
                 category = Category.objects.create(name=f"Кат {marker}")
                 product = Product.objects.create(
@@ -412,7 +412,7 @@ class BoardsIsolationTests(TestCase):
         """Кафе с кухней, баром и живым заказом на «Столе 5»."""
         with organization_context(org):
             site = SiteSettings.load()
-            site.plan = SiteSettings.Plan.MAX
+            site.plan = SiteSettings.Plan.HALL
             site.save()
             kitchen = Category.objects.create(name=f"Кухня {marker}", station="kitchen")
             bar = Category.objects.create(name=f"Бар {marker}", station="bar")
@@ -559,7 +559,7 @@ class RegistrationAndLoyaltyIsolationTests(TestCase):
         for org in (self.a, self.b):
             with organization_context(org):
                 site = SiteSettings.load()
-                site.plan = SiteSettings.Plan.MAX
+                site.plan = SiteSettings.Plan.HALL
                 site.bonus_enabled = True
                 site.save()
         self.client = APIClient()
@@ -691,7 +691,7 @@ class ReportsIsolationTests(TestCase):
         for org, marker, amount in ((self.a, "альфы", 100), (self.b, "беты", self.HUGE)):
             with organization_context(org):
                 site = SiteSettings.load()
-                site.plan = SiteSettings.Plan.MAX
+                site.plan = SiteSettings.Plan.HALL
                 site.save()
                 category = Category.objects.create(name=f"Кат {marker}")
                 product = Product.objects.create(

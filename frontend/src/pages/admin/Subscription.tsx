@@ -13,15 +13,15 @@ import type { LicenseInfo, Plan } from "../../types";
 */
 
 const PLAN_NAME: Record<Plan, string> = {
-  start: "Старт",
+  counter: "Стойка",
   hall: "Зал",
-  max: "Максимум",
 };
 
+// Оба тарифа полные — разница только в формате работы, поэтому и описание
+// про формат, а не про список разделов.
 const PLAN_NOTE: Record<Plan, string> = {
-  start: "Меню, QR-заказ, столы или стойка, оплаты, отчёты",
-  hall: "Всё из «Старта» + экраны кухни и бара",
-  max: "Всё из «Зала» + склад, смены и зарплата, финансы, бонусы",
+  counter: "Точка без зала: заказ по QR, выдача по номеру. Склад, себестоимость, смены и финансы — всё входит",
+  hall: "Зал с официантами: столы, экраны кухни и бара. Склад, себестоимость, смены и финансы — всё входит",
 };
 
 const STATUS: Record<LicenseInfo["status"], { label: string; cls: string }> = {
@@ -50,7 +50,7 @@ export default function Subscription() {
   }, []);
 
   // тариф знаем из настроек даже без лицензии — он определяет доступные разделы
-  const plan = (info?.plan ?? site?.plan ?? "start") as Plan;
+  const plan = (info?.plan ?? site?.plan ?? "hall") as Plan;
 
   async function refresh() {
     setChecking(true);
