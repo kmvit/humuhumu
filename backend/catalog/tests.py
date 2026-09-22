@@ -688,3 +688,61 @@ class MenuImageApplyTests(CatalogAdminBase):
         res = self.client.get("/api/products/")
         card = next(p for p in res.data if p["id"] == self.latte.id)
         self.assertTrue(card["image_is_generated"])
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), IMAGE_GEN_ASYNC=False)
+class DishwareUploadTests(CatalogAdminBase):
+    """Загрузка образца посуды. Форма едет multipart-ом — с файлом иначе никак."""
+
+    def test_uploaded_sample_is_in_use(self):
+        """Образец без галочки «используется» всё равно используется.
+
+        DRF считает multipart html-формой, а в html-форме отсутствующая
+        галочка значит «снята». Из-за этого загруженный стакан ложился в
+        базу неактивным: в студии не показывался, к генерациям не цеплялся,
+        и вся затея — «нарисуй в НАШЕЙ посуде» — тихо превращалась в
+        стоковую картинку.
+        """
+        self.auth(self.admin)
+        res = self.client.post(
+            "/api/dishware/",
+            {"name": "Стакан 0,4", "image": image_file("cup.png")},
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, 201)
+        self.assertTrue(DishwareSample.objects.get().is_active)
+
+    def test_sample_can_still_be_retired(self):
+        """Снять с работы по-прежнему можно — явным False."""
+        self.auth(self.admin)
+        sample = DishwareSample.objects.create(
+            name="Старая кружка", image=image_file("mug.png")
+        )
+        res = self.client.patch(
+            f"/api/dishware/{sample.id}/", {"is_active": False}, format="json"
+        )
+        self.assertEqual(res.status_code, 200)
+        sample.refresh_from_db()
+        self.assertFalse(sample.is_active)
+
+    def test_batch_uses_the_uploaded_sample_by_default(self):
+        """Владелец загрузил стакан и ничего не выбирал — стакан всё равно в деле."""
+        self.auth(self.admin)
+        self.client.post(
+            "/api/dishware/",
+            {"name": "Стакан 0,4", "image": image_file("cup.png")},
+            format="multipart",
+        )
+        with mock.patch(
+            "catalog.image_ai.generate_image",
+            return_value=(GeneratedImage(data=_png_bytes(), mime="image/png"), 0.019),
+        ), self.captureOnCommitCallbacks(execute=True):
+            res = self.client.post(
+                "/api/image-batches/", {"products": [self.latte.id]}, format="json"
+            )
+        self.assertEqual(res.status_code, 201)
+        generation = ImageGeneration.objects.get()
+        self.assertEqual(
+            list(generation.dishware.values_list("name", flat=True)), ["Стакан 0,4"]
+        )
+        self.assertIn("Стакан 0,4", generation.prompt)

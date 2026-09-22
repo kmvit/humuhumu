@@ -173,6 +173,14 @@ class ProductSerializer(serializers.ModelSerializer):
 
 class DishwareSampleSerializer(serializers.ModelSerializer):
     image = RelativeImageField()
+    # default=True обязателен, и вот почему. Образец приезжает multipart-ом
+    # (с ним файл), а DRF считает multipart html-формой: галочка, которой в
+    # форме нет, трактуется как СНЯТАЯ — поле молча становится False, и
+    # умолчание модели до него не доходит (Field.default_empty_html). Так
+    # загруженный стакан оказывался «не используется»: в студии он не
+    # показывался, к генерациям не цеплялся, и нейросеть придумывала посуду
+    # сама. Явный default переопределяет и default_empty_html тоже.
+    is_active = serializers.BooleanField(required=False, default=True)
 
     class Meta:
         model = DishwareSample
