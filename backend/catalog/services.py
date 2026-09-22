@@ -6,16 +6,62 @@ from decimal import Decimal
 from django.db.models import F, Sum
 from django.utils import timezone
 
+from core.tenancy import current_organization_or_none
+
 from .models import ImageGeneration, ImageQuota
 
 
+def _subscription():
+    """Подписка текущего заведения — или None, если его не выбрали.
+
+    Не core.license.local_subscription: тот спрашивает current_organization(),
+    а она в общей админке хаба (заведений много, текущего нет) бросает
+    исключение. Сюда же ходит колонка «Лимит месяца» в списке лимитов —
+    и уронила бы страницу целиком. Нет заведения — нет и подписки.
+    """
+    org = current_organization_or_none()
+    if org is None:
+        return None
+    return getattr(org, "subscription", None)
+
+
+def images_enabled() -> bool:
+    """Включена ли генерация фото у этого заведения.
+
+    Рубильник стоит в подписке — её держит «Падача» в общей админке.
+    Внешняя установка подписок не хранит (там работает сверка по HTTP), и
+    для неё оставляем включённой: запретить её всё равно нечем.
+    """
+    subscription = _subscription()
+    if subscription is None:
+        return True
+    return subscription.images_enabled
+
+
+def monthly_limit() -> int:
+    """Сколько картинок заведению положено в месяц.
+
+    Число задаётся в подписке: расход по картинкам у всех разный, и
+    тарифной сеткой (она у нас по формату зала) это не описать.
+    """
+    subscription = _subscription()
+    if subscription is None:
+        return ImageQuota.MONTHLY_LIMIT
+    return subscription.image_limit
+
+
 def image_quota() -> tuple[int, int]:
-    """(израсходовано, лимит) генераций фото в текущем месяце."""
+    """(израсходовано, лимит) генераций фото в текущем месяце.
+
+    Лимит месяца = положенное подпиской + разовая добавка этого месяца
+    («Докуплено» в админке): первое — правило, второе — исключение.
+    """
     month = timezone.localdate().replace(day=1)
+    limit = monthly_limit()
     row = ImageQuota.objects.filter(month=month).first()
     if row is None:
-        return 0, ImageQuota.MONTHLY_LIMIT
-    return row.used, row.limit
+        return 0, limit
+    return row.used, limit + row.extra
 
 
 def consume_image_quota(count: int = 1) -> None:

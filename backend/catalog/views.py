@@ -7,7 +7,7 @@ from django.db.models import Count, Prefetch, ProtectedError
 from django.utils import timezone
 from rest_framework import generics, mixins, serializers, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, BasePermission
 from rest_framework.response import Response
 
 from users.permissions import IsAdminRole, ReadOnlyOrAdmin
@@ -38,7 +38,12 @@ from .serializers import (
     ModifierGroupSerializer,
     ProductSerializer,
 )
-from .services import consume_image_quota, image_quota, month_spend
+from .services import (
+    consume_image_quota,
+    image_quota,
+    images_enabled,
+    month_spend,
+)
 from .tasks import generate_product_image
 
 
@@ -410,11 +415,25 @@ class ModifierGroupViewSet(ProtectedDeleteMixin, viewsets.ModelViewSet):
 
 
 
+class ImagesEnabled(BasePermission):
+    """Генерация фото включена «Падачей» для этого заведения.
+
+    Рубильник в подписке: кафе его не трогает, поэтому проверяем здесь, а
+    не прячем только кнопку — выключенную фичу должно быть нельзя позвать
+    и запросом.
+    """
+
+    message = "Генерация фото для этого заведения выключена."
+
+    def has_permission(self, request, view):
+        return images_enabled()
+
+
 class DishwareSampleViewSet(viewsets.ModelViewSet):
     """Образцы посуды: в них нейросеть рисует блюда. Только владелец."""
 
     serializer_class = DishwareSampleSerializer
-    permission_classes = [IsAdminRole]
+    permission_classes = [IsAdminRole, ImagesEnabled]
 
     def get_queryset(self):
         # get_queryset, а не queryset на классе: запрос с фильтром по
@@ -426,7 +445,7 @@ class MenuImageSettingsView(generics.RetrieveUpdateAPIView):
     """Стиль фото меню — один на заведение."""
 
     serializer_class = MenuImageSettingsSerializer
-    permission_classes = [IsAdminRole]
+    permission_classes = [IsAdminRole, ImagesEnabled]
 
     def get_object(self):
         return MenuImageSettings.current()
@@ -510,12 +529,18 @@ class ImageBatchViewSet(
     MAX_PER_BATCH = 30
 
     serializer_class = ImageBatchSerializer
+    # quota отдаём и при выключенной фиче: по нему фронт прячет кнопки.
     permission_classes = [IsAdminRole]
 
     def get_queryset(self):
         return ImageBatch.objects.prefetch_related("generations__product")
 
     def create(self, request, *args, **kwargs):
+        if not images_enabled():
+            return Response(
+                {"detail": ImagesEnabled.message},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         ser = ImageBatchCreateSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         data = ser.validated_data
@@ -621,6 +646,7 @@ class ImageBatchViewSet(
         used, limit = image_quota()
         return Response(
             {
+                "enabled": images_enabled(),
                 "used": used,
                 "limit": limit,
                 "left": max(0, limit - used),
@@ -638,7 +664,7 @@ class ImageGenerationViewSet(
     """Сгенерированные картинки: галерея черновиков. Фильтры ?product=, ?batch=."""
 
     serializer_class = ImageGenerationSerializer
-    permission_classes = [IsAdminRole]
+    permission_classes = [IsAdminRole, ImagesEnabled]
 
     def get_queryset(self):
         qs = ImageGeneration.objects.select_related("product")

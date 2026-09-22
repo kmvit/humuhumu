@@ -418,8 +418,9 @@ class ImageQuota(TenantModel):
     удаляет, и уборка в галерее молча возвращала бы лимит.
     """
 
-    #: Сколько фото в месяц входит в тариф. Меню на сорок позиций с выбором
-    #: из двух вариантов заводится за один месяц и ещё остаётся запас.
+    #: Запасное значение, если подписки в этой установке нет (внешнее кафе
+    #: на своём сервере). В общей установке число берётся из подписки —
+    #: «Падача» ставит его каждой точке сама, см. catalog.services.
     MONTHLY_LIMIT = 100
 
     month = models.DateField("Месяц", help_text="Первое число месяца")
@@ -431,7 +432,10 @@ class ImageQuota(TenantModel):
 
     @property
     def limit(self) -> int:
-        return self.MONTHLY_LIMIT + self.extra
+        """Лимит месяца: положенное подпиской плюс разовая добавка."""
+        from .services import monthly_limit
+
+        return monthly_limit() + self.extra
 
     class Meta:
         verbose_name = "Лимит генераций фото"

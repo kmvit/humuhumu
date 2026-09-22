@@ -30,8 +30,12 @@ class ClientAdmin(admin.ModelAdmin):
 
 @admin.register(Subscription)
 class SubscriptionAdmin(admin.ModelAdmin):
-    list_display = ("organization", "plan", "paid_until", "status_badge", "is_internal")
-    list_filter = ("plan", "is_internal")
+    list_display = (
+        "organization", "plan", "paid_until", "status_badge", "is_internal",
+        "images_enabled", "image_limit",
+    )
+    list_editable = ("images_enabled", "image_limit")
+    list_filter = ("plan", "is_internal", "images_enabled")
     search_fields = ("organization__name", "organization__domain")
     inlines = [PaymentInline]
     fieldsets = (
@@ -42,6 +46,15 @@ class SubscriptionAdmin(admin.ModelAdmin):
                            "is_internal", "notes"),
                 "description": "Оплату удобнее отмечать платежом внизу — "
                 "«оплачено до» продлится само.",
+            },
+        ),
+        (
+            "Фото блюд нейросетью",
+            {
+                "fields": ("images_enabled", "image_limit"),
+                "description": "Каждая картинка стоит нам денег, поэтому "
+                "рубильник и месячный лимит держим здесь. Разовую добавку "
+                "сверх лимита удобнее давать в «Лимитах генераций фото».",
             },
         ),
     )

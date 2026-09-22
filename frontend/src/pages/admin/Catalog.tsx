@@ -3,7 +3,13 @@ import { del, get, patch, patchForm, post, postForm, ApiError } from "../../api"
 import Icon from "../../components/Icon";
 import Modal from "../../components/ui/Modal";
 import { useToast } from "../../components/ui/Toast";
-import type { Category, Product, ProductVariant, Station } from "../../types";
+import type {
+  Category,
+  ImageQuota,
+  Product,
+  ProductVariant,
+  Station,
+} from "../../types";
 import { decimalInput } from "../../decimal";
 import Modifiers from "./Modifiers";
 import PhotoStudio from "./PhotoStudio";
@@ -110,6 +116,10 @@ export default function Catalog() {
   const [studio, setStudio] = useState<{ title: string; products: Product[] } | null>(
     null
   );
+  // Генерацию фото включает «Падача» каждой точке отдельно. По умолчанию
+  // считаем выключенной: лучше кнопка появится через миг, чем мигнёт и
+  // пропадёт у того, кому она не положена.
+  const [photosOn, setPhotosOn] = useState(false);
 
   async function load() {
     try {
@@ -128,6 +138,9 @@ export default function Catalog() {
 
   useEffect(() => {
     load();
+    get<ImageQuota>("/image-batches/quota/")
+      .then((q) => setPhotosOn(q.enabled))
+      .catch(() => setPhotosOn(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -367,6 +380,7 @@ export default function Catalog() {
                       {STATION_LABEL[c.station]} · {list.length} блюд
                     </span>
                   </div>
+                  {photosOn && (
                   <button
                     className="icon-btn"
                     aria-label="Фото нейросетью"
@@ -378,6 +392,7 @@ export default function Catalog() {
                   >
                     <Icon name="spark" size={16} />
                   </button>
+                  )}
                   <button
                     className="icon-btn"
                     aria-label="Изменить категорию"
@@ -481,6 +496,7 @@ export default function Catalog() {
                               </button>
                             ))}
                           </span>
+                          {photosOn && (
                           <button
                             className="icon-btn"
                             aria-label="Фото нейросетью"
@@ -491,6 +507,7 @@ export default function Catalog() {
                           >
                             <Icon name="spark" size={16} />
                           </button>
+                          )}
                           <button
                             className="icon-btn"
                             aria-label="Изменить блюдо"

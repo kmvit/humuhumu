@@ -632,6 +632,8 @@ export interface ImageBatch {
 
 /** Остаток генераций в месяце и потраченное на них. */
 export interface ImageQuota {
+  /** Рубильник «Падачи»: выключен — раздела у кафе нет вовсе. */
+  enabled: boolean;
   used: number;
   limit: number;
   left: number;

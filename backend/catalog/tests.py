@@ -7,7 +7,7 @@ from unittest import mock
 from PIL import Image
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import override_settings
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
@@ -816,3 +816,84 @@ class UnreadableDishwareTests(CatalogAdminBase):
             run_generation(generation)
         generation.refresh_from_db()
         self.assertEqual(generation.status, ImageGeneration.Status.READY)
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), IMAGE_GEN_ASYNC=False)
+class ImagePermissionTests(CatalogAdminBase):
+    """Рубильник и лимит генераций «Падача» держит в подписке точки."""
+
+    def _subscription(self, **kwargs):
+        from billing.models import Subscription
+        from core.tenancy import current_organization
+
+        return Subscription.objects.create(
+            organization=current_organization(), **kwargs
+        )
+
+    def test_disabled_feature_is_closed_for_requests_too(self):
+        """Не просто кнопку прячем: выключенную фичу нельзя позвать и руками."""
+        self._subscription(images_enabled=False)
+        self.auth(self.admin)
+
+        res = self.client.post(
+            "/api/image-batches/", {"products": [self.latte.id]}, format="json"
+        )
+        self.assertEqual(res.status_code, 403)
+        self.assertEqual(ImageGeneration.objects.count(), 0)
+        self.assertEqual(self.client.get("/api/dishware/").status_code, 403)
+
+    def test_quota_says_it_is_off(self):
+        """Остаток отдаём всегда — по нему каталог и прячет кнопки."""
+        self._subscription(images_enabled=False)
+        self.auth(self.admin)
+        res = self.client.get("/api/image-batches/quota/")
+        self.assertEqual(res.status_code, 200)
+        self.assertFalse(res.data["enabled"])
+
+    def test_limit_comes_from_the_subscription(self):
+        self._subscription(image_limit=5)
+        self.auth(self.admin)
+        res = self.client.get("/api/image-batches/quota/")
+        self.assertEqual(res.data["limit"], 5)
+        self.assertEqual(res.data["left"], 5)
+
+    def test_batch_over_the_manual_limit_is_refused(self):
+        self._subscription(image_limit=1)
+        self.raf = Product.objects.create(category=self.cat, name="Раф")
+        ProductVariant.objects.create(product=self.raf, price=Decimal("320"))
+        self.auth(self.admin)
+        res = self.client.post(
+            "/api/image-batches/",
+            {"products": [self.latte.id, self.raf.id]},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 402)
+        self.assertIn("осталось 1", res.data["detail"])
+
+    def test_one_off_top_up_adds_to_the_subscription_limit(self):
+        """«Докуплено» — разовая добавка поверх положенного подпиской."""
+        self._subscription(image_limit=5)
+        ImageQuota.objects.create(
+            month=timezone.localdate().replace(day=1), used=0, extra=3
+        )
+        self.auth(self.admin)
+        res = self.client.get("/api/image-batches/quota/")
+        self.assertEqual(res.data["limit"], 8)
+
+
+class ImageQuotaAdminSafetyTests(TestCase):
+    """Список лимитов в админке хаба открывается без выбранного заведения.
+
+    Колонка «Лимит месяца» спрашивает подписку. Пока она делала это через
+    current_organization(), страница в общей админке падала: заведений там
+    много, текущего нет — и вместо списка выходило исключение.
+    """
+
+    def test_limit_falls_back_when_no_tenant_is_chosen(self):
+        from core.models import Organization
+        from catalog.services import images_enabled, monthly_limit
+
+        Organization.objects.create(name="Вторая точка", domain="second.example")
+        # заведение не выбрано: ровно как на служебной странице админки
+        self.assertEqual(monthly_limit(), ImageQuota.MONTHLY_LIMIT)
+        self.assertTrue(images_enabled())
