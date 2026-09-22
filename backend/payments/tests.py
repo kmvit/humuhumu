@@ -25,7 +25,8 @@ from users.models import User
 
 from .acquiring import AcquiringError, SberAcquirer, TBankAcquirer, YooKassaAcquirer, get_acquirer
 from .models import AcquiringCredentials, Payment
-from .services import apply_payment_result
+from .acquiring import Result
+from .services import apply_bank_result, apply_payment_result
 from .tasks import settle_pending_payments_task
 
 
@@ -762,6 +763,28 @@ class SettleWithoutWebhookTests(APITestCase):
         self.order.refresh_from_db()
         self.assertEqual(self.order.status, Order.Status.PAID)
         self.assertEqual(sum(v for v in report.values() if isinstance(v, int)), 1)
+
+    def test_second_path_does_not_close_the_order_twice(self):
+        """Уведомление и опрос могут сойтись на одном платеже в одну секунду.
+
+        Второй пришедший не должен ни переписать время закрытия, ни
+        начислить гостю бонусы повторно.
+        """
+        self.age()
+        with mock.patch.object(YooKassaAcquirer, "_get", return_value={"status": "succeeded"}):
+            self.client.get(f"/api/orders/track/?token={self.order.public_token}")
+        self.order.refresh_from_db()
+        closed_at, closed_by = self.order.closed_at, self.order.closed_by
+
+        self.payment.refresh_from_db()
+        applied = apply_bank_result(
+            self.payment, Result(external_id="3244d9f7", success=True)
+        )
+
+        self.assertFalse(applied)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.closed_at, closed_at)
+        self.assertEqual(self.order.closed_by, closed_by)
 
     def test_manual_payments_are_never_asked_about(self):
         """У кассового платежа банка нет — спрашивать не у кого."""

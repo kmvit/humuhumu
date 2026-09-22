@@ -10,7 +10,6 @@
 """
 import logging
 
-from django.db import transaction
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -21,7 +20,7 @@ from users.permissions import IsAdminRole
 
 from .acquiring import AcquiringError, NoAcquirer, acquirer_class, acquirers, get_acquirer
 from .models import AcquiringCredentials, Payment
-from .services import apply_payment_result
+from .services import apply_bank_result
 
 logger = logging.getLogger(__name__)
 
@@ -56,18 +55,17 @@ def callback(request, provider: str):
         logger.warning("Уведомление %s: платёж %s не найден", provider, result.external_id)
         return Response({"ok": False}, status=200)
 
-    # Банки повторяют уведомления, и повтор по уже оплаченному заказу
-    # переписал бы closed_at и closed_by. Отвечаем «принято» и выходим.
-    if payment.status == Payment.Status.SUCCEEDED:
+    # Банки повторяют уведомления, и повтор по уже закрытому платежу
+    # переписал бы closed_at и closed_by. Той же строкой отсекается и
+    # гонка с опросом банка: кто пришёл вторым, тот ничего не делает
+    # (проверка внутри — под блокировкой строки платежа).
+    if not apply_bank_result(payment, result):
         return Response({"ok": True})
 
-    with transaction.atomic():
-        apply_payment_result(
-            payment, success=result.success, fiscal_receipt=result.fiscal_receipt
-        )
     logger.info(
-        "Оплата %s: платёж %s → %s",
-        provider, result.external_id, "успех" if result.success else "отказ",
+        "Оплата %s: платёж %s → %s (заказ %s)",
+        provider, result.external_id,
+        "успех" if result.success else "отказ", payment.order_id,
     )
     return Response({"ok": True})
 

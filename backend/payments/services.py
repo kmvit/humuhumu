@@ -119,6 +119,10 @@ def start_online_payment(order: Order, *, return_url: str) -> tuple[Payment, str
     )
     try:
         url = acquirer.create(payment, return_url=return_url)
+        logger.info(
+            "Онлайн-оплата начата: платёж %s, заказ %s, %s ₽, банк %s",
+            payment.pk, order.pk, payment.amount, acquirer.name,
+        )
     except AcquiringError as e:
         # Платёж-пустышку не оставляем: он бы висел в реестре как
         # «создан» и портил сверку с банком.
@@ -172,6 +176,28 @@ SETTLE_EVERY = timedelta(seconds=15)
 SETTLE_WINDOW = timedelta(days=1)
 
 
+def apply_bank_result(payment: Payment, result) -> bool:
+    """Применить ответ банка ровно один раз, кто бы ни пришёл первым.
+
+    Путей теперь два — уведомление банка и наш опрос, — и они вполне
+    могут сойтись на одном платеже в одну секунду. Без блокировки строки
+    обе транзакции увидели бы «ещё не оплачен» и закрыли заказ дважды:
+    вторая переписала бы время закрытия, а гостю дважды начислились бы
+    бонусы. Проверка статуса делается уже под блокировкой — поэтому
+    второй приходящий просто ничего не делает.
+
+    Возвращает True, если статус платежа изменился именно этим вызовом.
+    """
+    with transaction.atomic():
+        fresh = Payment.objects.select_for_update().filter(pk=payment.pk).first()
+        if fresh is None or fresh.status != Payment.Status.PENDING:
+            return False
+        apply_payment_result(
+            fresh, success=result.success, fiscal_receipt=result.fiscal_receipt
+        )
+    return True
+
+
 def settle_payment(payment: Payment) -> bool:
     """Спросить банк о незавершённом платеже и применить ответ.
 
@@ -201,13 +227,11 @@ def settle_payment(payment: Payment) -> bool:
         payment.save(update_fields=["updated_at"])
         return False
 
-    with transaction.atomic():
-        apply_payment_result(
-            payment, success=result.success, fiscal_receipt=result.fiscal_receipt
-        )
+    if not apply_bank_result(payment, result):
+        return False
     logger.info(
-        "Платёж %s доведён опросом банка: %s",
-        payment.pk, "успех" if result.success else "отказ",
+        "Платёж %s доведён опросом банка: %s (заказ %s)",
+        payment.pk, "успех" if result.success else "отказ", payment.order_id,
     )
     return True
 

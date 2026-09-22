@@ -101,6 +101,45 @@ TIME_ZONE = os.getenv("DJANGO_TIME_ZONE", "Europe/Moscow")
 USE_I18N = True
 USE_TZ = True
 
+# ─────────── Логи ───────────
+# Django по умолчанию отдаёт наружу только предупреждения и ошибки, и
+# движение денег — кто заплатил, чем и по какому платежу — в прод-логи
+# не попадало вовсе: разбор случая «гость заплатил, а заказ открыт»
+# упирался в то, что доводку платежа в логах просто не видно.
+# Поэтому свои приложения пишем на INFO, а чужую болтовню (django, httpx,
+# celery на каждый запрос) оставляем на WARNING.
+LOG_LEVEL = os.getenv("DJANGO_LOG_LEVEL", "INFO").upper()
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "plain": {
+            "format": "{asctime} {levelname} {name}: {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "plain"},
+    },
+    # Чужие логгеры — только то, что действительно сломалось.
+    "root": {"handlers": ["console"], "level": "WARNING"},
+    "loggers": {
+        name: {"handlers": ["console"], "level": LOG_LEVEL, "propagate": False}
+        for name in (
+            "payments", "orders", "billing", "wallet",
+            "core", "catalog", "inventory", "loyalty", "shifts", "users",
+        )
+    },
+}
+
+# Отказ клиенту (400, 403, 404) — обычное дело, а не происшествие: их и
+# так видно в логе nginx с адресом и временем. В логе приложения нужны
+# только пятисотки, иначе важное тонет.
+LOGGING["loggers"]["django.request"] = {
+    "handlers": ["console"], "level": "ERROR", "propagate": False,
+}
+
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "media/"
