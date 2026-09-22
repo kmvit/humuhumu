@@ -6,10 +6,18 @@
 уведомлением.
 
 Провайдер выбирается настройкой заведения (SiteSettings.acquiring), а
-доступы берутся ТОЛЬКО из переменных окружения. Так сделано намеренно:
-GET /api/site/ отдаётся без авторизации, и ключ эквайринга, положенный
-в ту же модель, рано или поздно уедет в публичный JSON — достаточно,
-чтобы кто-то добавил поле в сериализатор.
+доступы лежат в отдельной тенантной модели AcquiringCredentials —
+зашифрованные и без единого сериализатора. Рядом с настройками сайта им
+не место: GET /api/site/ отдаётся без авторизации, и ключ эквайринга
+уедет в публичный JSON в тот день, когда кто-то добавит поле в список.
+
+Раньше доступы брались из переменных окружения. На отдельной установке
+(одно кафе — свой сервер, свой .env) это работало, но в общей установке
+окружение одно на все заведения: ключи второго кафе класть некуда, а
+первое, выбрав тот же банк, принимало бы деньги в чужой магазин.
+Поэтому окружение осталось запасным источником и действует ТОЛЬКО там,
+где заведение в базе одно (см. _env_allowed). Перенос уже прописанных
+ключей — команда migrate_acquiring_keys.
 
 Результат оплаты, чем бы он ни пришёл, применяется одной функцией
 services.apply_payment_result — она провайдеро-независима.
@@ -52,6 +60,43 @@ def _env(name: str) -> str:
     return os.getenv(name, "").strip()
 
 
+def _env_allowed() -> bool:
+    """Можно ли брать доступы из окружения.
+
+    Только на отдельной установке, где заведение в базе одно. В общей
+    установке окружение общее, и запасной источник означал бы: второе
+    кафе выбирает тот же банк и начинает принимать деньги в магазин
+    первого. Пусть лучше честное «нет доступов».
+    """
+    from core.models import Organization
+
+    try:
+        return Organization.objects.count() <= 1
+    except Exception:
+        # таблиц ещё нет (первый migrate) — установка заведомо одна
+        return True
+
+
+@dataclass(frozen=True)
+class Field:
+    """Одно поле доступов: что спросить у владельца и как это назвать.
+
+    Драйвер описывает свои поля сам — по этому описанию и рисуется форма
+    в панели владельца, и переносятся старые ключи из окружения. Иначе
+    каждый новый банк правился бы в трёх местах.
+    """
+
+    key: str
+    label: str
+    #: Переменная окружения со старым значением — для отдельных установок
+    #: и разового переноса.
+    env: str
+    hint: str = ""
+    #: Секрет наружу не показываем даже владельцу: отдаём только «задан».
+    secret: bool = True
+    required: bool = True
+
+
 def _kopecks(amount: Decimal) -> int:
     """Банки принимают сумму в копейках целым числом."""
     return int((Decimal(amount) * 100).quantize(Decimal("1")))
@@ -72,10 +117,46 @@ class BaseAcquirer:
 
     name = "base"
     title = "—"
+    #: Какие доступы нужны этому банку (см. Field).
+    fields: tuple[Field, ...] = ()
+
+    def __init__(self, credentials: dict | None = None) -> None:
+        self._credentials = credentials or {}
+        self._env_ok: bool | None = None
+
+    def value(self, key: str) -> str:
+        """Значение доступа: сперва из доступов заведения, потом окружение."""
+        stored = str(self._credentials.get(key, "")).strip()
+        if stored:
+            return stored
+        field = next((f for f in self.fields if f.key == key), None)
+        if field is None:
+            return ""
+        if self._env_ok is None:
+            self._env_ok = _env_allowed()
+        return _env(field.env) if self._env_ok else ""
 
     def configured(self) -> bool:
         """Заданы ли доступы. Без них кнопку оплаты показывать нельзя."""
-        return False
+        return bool(self.fields) and all(
+            self.value(f.key) for f in self.fields if f.required
+        )
+
+    def filled(self) -> dict[str, bool]:
+        """Какие поля заданы — для панели владельца (без самих значений)."""
+        return {f.key: bool(self.value(f.key)) for f in self.fields}
+
+    def require_configured(self) -> None:
+        """Отказ до похода в банк, с адресом, где это чинится.
+
+        Текст видит сотрудник у кассы, а не гость: ему нужно понять, что
+        дело не в госте и не в его карте.
+        """
+        if not self.configured():
+            raise AcquiringError(
+                f"Не заданы доступы к банку ({self.title}). Их вводит владелец "
+                "в панели, раздел «Оплата картой»."
+            )
 
     def create(self, payment, *, return_url: str) -> str:
         """Создать платёж у банка и вернуть ссылку для гостя.
@@ -96,9 +177,6 @@ class NoAcquirer(BaseAcquirer):
     name = "none"
     title = "Нет онлайн-оплаты"
 
-    def configured(self) -> bool:
-        return False
-
     def create(self, payment, *, return_url: str) -> str:
         raise AcquiringError("Онлайн-оплата у заведения не подключена")
 
@@ -118,13 +196,19 @@ class TBankAcquirer(BaseAcquirer):
     name = "tbank"
     title = "Т-Банк (Т-Касса)"
     api = "https://securepay.tinkoff.ru/v2"
+    fields = (
+        Field("terminal_key", "Ключ терминала", env="TBANK_TERMINAL_KEY",
+              hint="Из личного кабинета Т-Кассы, раздел «Терминалы»", secret=False),
+        Field("password", "Пароль терминала", env="TBANK_PASSWORD"),
+    )
 
-    def __init__(self) -> None:
-        self.terminal = _env("TBANK_TERMINAL_KEY")
-        self.password = _env("TBANK_PASSWORD")
+    @property
+    def terminal(self) -> str:
+        return self.value("terminal_key")
 
-    def configured(self) -> bool:
-        return bool(self.terminal and self.password)
+    @property
+    def password(self) -> str:
+        return self.value("password")
 
     def _token(self, data: dict) -> str:
         # В подпись идут только простые поля: вложенные объекты (Receipt,
@@ -138,8 +222,7 @@ class TBankAcquirer(BaseAcquirer):
         return hashlib.sha256(joined.encode()).hexdigest()
 
     def create(self, payment, *, return_url: str) -> str:
-        if not self.configured():
-            raise AcquiringError("Не заданы TBANK_TERMINAL_KEY и TBANK_PASSWORD")
+        self.require_configured()
 
         body = {
             "TerminalKey": self.terminal,
@@ -208,24 +291,36 @@ class SberAcquirer(BaseAcquirer):
     #: Статусы шлюза: 2 — списано, 6 — авторизация отменена, 3 — возврат.
     PAID = 2
 
-    def __init__(self) -> None:
-        self.username = _env("SBER_USERNAME")
-        self.password = _env("SBER_PASSWORD")
-        # Тестовый контур живёт на другом хосте; чтобы не пересобирать образ
-        # ради обкатки, адрес можно переопределить переменной.
-        self.api = _env("SBER_API_URL") or self.api
+    fields = (
+        Field("username", "Логин API-пользователя", env="SBER_USERNAME",
+              hint="Обычно вида имя-api", secret=False),
+        Field("password", "Пароль API-пользователя", env="SBER_PASSWORD"),
+        # Тестовый контур живёт на другом хосте; чтобы не пересобирать
+        # образ ради обкатки, адрес можно переопределить.
+        Field("api_url", "Адрес шлюза", env="SBER_API_URL",
+              hint="Только для тестового контура, в бою пусто",
+              secret=False, required=False),
+    )
 
-    def configured(self) -> bool:
-        return bool(self.username and self.password)
+    @property
+    def username(self) -> str:
+        return self.value("username")
+
+    @property
+    def password(self) -> str:
+        return self.value("password")
+
+    @property
+    def api_url(self) -> str:
+        return self.value("api_url") or self.api
 
     def _auth(self) -> dict:
         return {"userName": self.username, "password": self.password}
 
     def create(self, payment, *, return_url: str) -> str:
-        if not self.configured():
-            raise AcquiringError("Не заданы SBER_USERNAME и SBER_PASSWORD")
+        self.require_configured()
 
-        data = self._post(f"{self.api}/register.do", {
+        data = self._post(f"{self.api_url}/register.do", {
             **self._auth(),
             # orderNumber должен быть уникальным у банка — как и у Т-Кассы,
             # берём id платежа, а не заказа (вторая попытка оплаты).
@@ -251,7 +346,7 @@ class SberAcquirer(BaseAcquirer):
         return self.status(external_id)
 
     def status(self, external_id: str) -> Result | None:
-        data = self._post(f"{self.api}/getOrderStatusExtended.do", {
+        data = self._post(f"{self.api_url}/getOrderStatusExtended.do", {
             **self._auth(),
             "orderId": external_id,
         })
@@ -303,20 +398,27 @@ class YooKassaAcquirer(BaseAcquirer):
     title = "ЮKassa"
     api = "https://api.yookassa.ru/v3"
 
-    def __init__(self) -> None:
-        self.shop_id = _env("YOOKASSA_SHOP_ID")
-        self.secret = _env("YOOKASSA_SECRET_KEY")
+    fields = (
+        Field("shop_id", "shopId", env="YOOKASSA_SHOP_ID",
+              hint="Номер магазина из кабинета ЮKassa", secret=False),
+        Field("secret_key", "Секретный ключ", env="YOOKASSA_SECRET_KEY",
+              hint="Боевой ключ вида live_...; тестовый с настоящей картой не сработает"),
+    )
 
-    def configured(self) -> bool:
-        return bool(self.shop_id and self.secret)
+    @property
+    def shop_id(self) -> str:
+        return self.value("shop_id")
+
+    @property
+    def secret(self) -> str:
+        return self.value("secret_key")
 
     def _key(self, payment) -> str:
         """Ключ идемпотентности: один и тот же для повторов одного платежа."""
         return str(uuid.uuid5(uuid.NAMESPACE_URL, f"https://padacha.ru/payments/{payment.pk}"))
 
     def create(self, payment, *, return_url: str) -> str:
-        if not self.configured():
-            raise AcquiringError("Не заданы YOOKASSA_SHOP_ID и YOOKASSA_SECRET_KEY")
+        self.require_configured()
 
         data = self._post(f"{self.api}/payments", {
             "amount": {"value": _rubles(payment.amount), "currency": "RUB"},
@@ -406,19 +508,48 @@ _ACQUIRERS = {
 }
 
 
+def acquirer_class(name: str) -> type[BaseAcquirer]:
+    """Класс драйвера по имени. Незнакомое имя — «нет оплаты»."""
+    return _ACQUIRERS.get(name, NoAcquirer)
+
+
+def acquirers() -> list[type[BaseAcquirer]]:
+    """Банки, которые умеем, кроме «нет оплаты» — для формы владельца."""
+    return [a for a in _ACQUIRERS.values() if a is not NoAcquirer]
+
+
+def stored_credentials(provider: str) -> dict:
+    """Доступы ТЕКУЩЕГО заведения к этому банку. Чужих не отдаст.
+
+    Менеджер модели тенантный, поэтому фильтр по заведению здесь не виден
+    и не может быть забыт — он применяется сам (core/tenancy.py).
+    """
+    from .models import AcquiringCredentials
+
+    try:
+        row = AcquiringCredentials.objects.filter(provider=provider).first()
+    except Exception:
+        # таблицы ещё нет (первый migrate после обновления)
+        return {}
+    return row.values() if row else {}
+
+
 def get_acquirer(name: str | None = None) -> BaseAcquirer:
-    """Провайдер заведения. Без аргумента — из настроек заведения."""
+    """Провайдер заведения с его доступами. Без аргумента — из настроек."""
     if name is None:
         from core.models import SiteSettings
 
         name = SiteSettings.load().acquiring
-    return _ACQUIRERS.get(name, NoAcquirer)()
+    cls = acquirer_class(name)
+    if cls is NoAcquirer:
+        return NoAcquirer()
+    return cls(stored_credentials(cls.name))
 
 
 def online_payment_available() -> bool:
     """Умеет ли заведение принимать оплату онлайн.
 
-    Мало выбрать провайдера — нужны ещё доступы в переменных окружения,
-    иначе кнопка оплаты приведёт гостя к ошибке.
+    Мало выбрать банк — нужны ещё его доступы, иначе кнопка оплаты
+    приведёт гостя к ошибке.
     """
     return get_acquirer().configured()

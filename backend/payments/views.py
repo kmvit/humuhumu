@@ -1,9 +1,12 @@
-"""Приём уведомлений от банка об оплате.
+"""Ручки эквайринга: уведомление банка об оплате и настройка доступов.
 
-Отдельная публичная ручка, а не действие на заказе: уведомление приходит
-от банка, без сессии сотрудника и без JWT. Подлинность подтверждает сам
-провайдер — подписью (Т-Касса) или встречным запросом статуса (Сбер),
-см. payments/acquiring.py.
+Уведомление — отдельная публичная ручка, а не действие на заказе: оно
+приходит от банка, без сессии сотрудника и без JWT. Подлинность
+подтверждает сам провайдер — подписью (Т-Касса) или встречным запросом
+статуса (Сбер, ЮKassa), см. payments/acquiring.py.
+
+Настройка доступов — ручка владельца: какой банк и его ключи. Вместе
+они здесь потому, что обе про эквайринг, а разделяет их только права.
 """
 import logging
 
@@ -11,9 +14,13 @@ from django.db import transaction
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from .acquiring import get_acquirer
-from .models import Payment
+from core.models import SiteSettings
+from users.permissions import IsAdminRole
+
+from .acquiring import NoAcquirer, acquirer_class, acquirers, get_acquirer
+from .models import AcquiringCredentials, Payment
 from .services import apply_payment_result
 
 logger = logging.getLogger(__name__)
@@ -63,3 +70,95 @@ def callback(request, provider: str):
         provider, result.external_id, "успех" if result.success else "отказ",
     )
     return Response({"ok": True})
+
+
+class AcquiringSettingsView(APIView):
+    """GET/PUT/DELETE /api/acquiring/ — банк заведения и доступы к нему.
+
+    Отдельная ручка, а не поля в /api/site/: тот публичный, и всему, что
+    связано с ключами, там нечего делать. Здесь же только владелец —
+    деньги идут на его расчётный счёт, и менять реквизиты приёма оплаты
+    не должен ни склад, ни официант.
+
+    Наружу не отдаём ни одного секрета, даже владельцу: по полю видно
+    «задан» или «не задан». Показать введённый пароль терминала значило
+    бы отдать его любому, кто на минуту сел за открытую панель.
+    """
+
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        return Response(self._state())
+
+    def put(self, request):
+        provider = str(request.data.get("provider", "")).strip()
+        if provider not in [a.name for a in acquirers()] + [NoAcquirer.name]:
+            return Response({"detail": "Неизвестный банк"}, status=400)
+
+        values = request.data.get("values") or {}
+        if not isinstance(values, dict):
+            return Response({"detail": "Доступы должны быть объектом"}, status=400)
+
+        site = SiteSettings.load()
+        if provider != site.acquiring:
+            site.acquiring = provider
+            # Банк сменили — оплату гасим. Ключи нового ещё не проверены,
+            # а гость упёрся бы в ошибку у самой кассы.
+            site.online_payment_on = False
+            site.save(update_fields=["acquiring", "online_payment_on"])
+
+        if provider != NoAcquirer.name and values:
+            self._save_credentials(provider, values)
+
+        return Response(self._state())
+
+    def delete(self, request):
+        """Стереть доступы выбранного банка (сменился договор, утёк ключ)."""
+        site = SiteSettings.load()
+        AcquiringCredentials.objects.filter(provider=site.acquiring).delete()
+        if site.online_payment_on:
+            site.online_payment_on = False
+            site.save(update_fields=["online_payment_on"])
+        return Response(self._state())
+
+    def _save_credentials(self, provider: str, values: dict) -> None:
+        known = {f.key for f in acquirer_class(provider).fields}
+        row, _ = AcquiringCredentials.objects.get_or_create(provider=provider)
+        stored = row.values()
+        for key, value in values.items():
+            if key not in known or not isinstance(value, str):
+                continue
+            # Пустое поле — «не трогай»: форма присылает пустым то, что
+            # владелец не менял (значения-то ей не показывают). Стереть
+            # всё разом — отдельная кнопка, DELETE.
+            if value.strip():
+                stored[key] = value.strip()
+        row.set_values(stored)
+        row.save()
+
+    def _state(self) -> dict:
+        site = SiteSettings.load()
+        acquirer = get_acquirer(site.acquiring)
+        return {
+            "provider": site.acquiring,
+            "ready": acquirer.configured(),
+            "online_payment_on": site.online_payment_on,
+            "filled": acquirer.filled(),
+            "banks": [
+                {
+                    "name": cls.name,
+                    "title": cls.title,
+                    "fields": [
+                        {
+                            "key": f.key,
+                            "label": f.label,
+                            "hint": f.hint,
+                            "secret": f.secret,
+                            "required": f.required,
+                        }
+                        for f in cls.fields
+                    ],
+                }
+                for cls in acquirers()
+            ],
+        }

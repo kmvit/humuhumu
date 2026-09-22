@@ -27,10 +27,6 @@ export interface Site {
   online_payment: boolean;
   /** Выключатель владельца — сам по себе оплату не включает без доступов. */
   online_payment_on: boolean;
-  /** Банк выбран и его ключи заданы на сервере. */
-  acquiring_ready: boolean;
-  /** Название банка для панели владельца; пусто — банк не выбран. */
-  acquiring_name: string;
   accent_color: string;
   // Бонусная программа (тариф «Максимум»). 1 бонус = 1 ₽.
   bonus_enabled: boolean;

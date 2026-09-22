@@ -10,13 +10,11 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
     # только не показывает лишнего.
     features = serializers.SerializerMethodField()
     # Умеет ли заведение принимать оплату картой онлайн. Фронт по этому
-    # флагу решает, показывать ли гостю кнопку оплаты. Само название банка
-    # и тем более его ключи наружу не отдаём — только «да/нет».
+    # флагу решает, показывать ли гостю кнопку оплаты. Здесь только
+    # «да/нет»: ручка публичная, и название банка с состоянием его
+    # доступов — дело владельца, для него есть GET /api/acquiring/.
+    # Раньше они отдавались отсюда же и уезжали всем подряд.
     online_payment = serializers.SerializerMethodField()
-    # Для раздела «Оплата» в панели владельца: подключён ли банк и какой.
-    # Ключи наружу не отдаём — только факт настроенности и название.
-    acquiring_ready = serializers.SerializerMethodField()
-    acquiring_name = serializers.SerializerMethodField()
     accent_color = serializers.RegexField(
         regex=r"^#[0-9a-fA-F]{6}$",
         allow_blank=True,
@@ -46,14 +44,6 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
         from payments.acquiring import get_acquirer
 
         return obj.online_payment_on and get_acquirer(obj.acquiring).configured()
-
-    def get_acquiring_ready(self, obj) -> bool:
-        from payments.acquiring import get_acquirer
-
-        return get_acquirer(obj.acquiring).configured()
-
-    def get_acquiring_name(self, obj) -> str:
-        return obj.get_acquiring_display() if obj.acquiring != obj.Acquiring.NONE else ""
 
     class Meta:
         model = SiteSettings
@@ -95,8 +85,6 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
             "legal_updated",
             "online_payment",
             "online_payment_on",
-            "acquiring_ready",
-            "acquiring_name",
             "plan",
             "features",
         )

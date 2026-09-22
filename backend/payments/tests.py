@@ -5,19 +5,23 @@
 повторные уведомления и включение оплаты без доступов.
 """
 from decimal import Decimal
+from io import StringIO
 from unittest import mock
 
 import httpx
 
+from django.core.management import call_command
 from django.test import TestCase
 from rest_framework.test import APITestCase
 
 from catalog.models import Category, Product, ProductVariant
-from core.models import SiteSettings
+from core.models import Organization, SiteSettings
+from core.tenancy import organization_context
 from orders.models import Order
+from users.models import User
 
 from .acquiring import AcquiringError, SberAcquirer, TBankAcquirer, YooKassaAcquirer, get_acquirer
-from .models import Payment
+from .models import AcquiringCredentials, Payment
 from .services import apply_payment_result
 
 
@@ -328,17 +332,16 @@ class OnlinePaymentToggleTests(APITestCase):
         site = SiteSettings.load()
         site.online_payment_on = False
         site.save()
-        data = self.site()
-        self.assertFalse(data["online_payment"])
+        self.assertFalse(self.site()["online_payment"])
         # банк остаётся подключённым — выключатель его не сбрасывает
-        self.assertTrue(data["acquiring_ready"])
+        self.assertTrue(get_acquirer().configured())
 
     @mock.patch.dict("os.environ", {"TBANK_TERMINAL_KEY": "", "TBANK_PASSWORD": ""})
     def test_switch_on_does_not_fake_missing_keys(self):
         """Без доступов «включено» ничего не даёт — иначе гость упрётся в банк."""
         data = self.site()
         self.assertTrue(data["online_payment_on"])
-        self.assertFalse(data["acquiring_ready"])
+        self.assertFalse(get_acquirer().configured())
         self.assertFalse(data["online_payment"])
 
     @mock.patch.dict("os.environ", ENV)
@@ -355,13 +358,225 @@ class OnlinePaymentToggleTests(APITestCase):
         with self.assertRaises(PaymentError):
             start_online_payment(order, return_url="https://example.com/")
 
-    def test_acquiring_name_shown_for_owner(self):
-        self.assertEqual(self.site()["acquiring_name"], "Т-Банк (Т-Касса)")
+    @mock.patch.dict("os.environ", ENV)
+    def test_public_site_does_not_name_the_bank(self):
+        """Гостю — только «кнопка есть/нет». С кем у кафе договор, он не спрашивал.
 
-    def test_no_bank_selected_reports_nothing_configured(self):
-        site = SiteSettings.load()
-        site.acquiring = SiteSettings.Acquiring.NONE
-        site.save()
+        Раньше название банка и состояние его доступов отдавались отсюда
+        же, то есть кому угодно без авторизации.
+        """
         data = self.site()
-        self.assertEqual(data["acquiring_name"], "")
-        self.assertFalse(data["acquiring_ready"])
+        self.assertNotIn("acquiring_name", data)
+        self.assertNotIn("acquiring_ready", data)
+
+
+class CredentialsStorageTests(TestCase):
+    """Доступы лежат у заведения, зашифрованные, и не ходят к соседям."""
+
+    def setUp(self):
+        self.a = Organization.objects.order_by("pk").first()
+        self.b = Organization.objects.create(name="Бета", slug="beta", domain="beta.padacha.ru")
+
+    def test_secret_is_not_readable_in_the_table(self):
+        """В базе шифр, а не пароль: унесённый дамп сам по себе бесполезен."""
+        with organization_context(self.a):
+            row = AcquiringCredentials(provider="yookassa")
+            row.set_values({"shop_id": "100500", "secret_key": "live_секрет"})
+            row.save()
+            raw = AcquiringCredentials.all_objects.get(pk=row.pk).payload
+        self.assertNotIn("live_секрет", raw)
+        self.assertNotIn("100500", raw)
+        self.assertEqual(row.values()["secret_key"], "live_секрет")
+
+    def test_blank_values_are_not_stored(self):
+        """Пустой пароль — это «не задан», а не «задан пустым»."""
+        row = AcquiringCredentials(provider="yookassa", organization=self.a)
+        row.set_values({"shop_id": "100500", "secret_key": "   "})
+        self.assertEqual(row.values(), {"shop_id": "100500"})
+
+    def test_neighbour_does_not_get_our_keys(self):
+        """Главное в переезде: банк выбран у двоих, а доступы у каждого свои."""
+        with organization_context(self.a):
+            row = AcquiringCredentials(provider="yookassa")
+            row.set_values({"shop_id": "100500", "secret_key": "live_альфы"})
+            row.save()
+            site = SiteSettings.load()
+            site.acquiring = SiteSettings.Acquiring.YOOKASSA
+            site.save()
+            self.assertEqual(get_acquirer().shop_id, "100500")
+
+        with organization_context(self.b):
+            site = SiteSettings.load()
+            site.acquiring = SiteSettings.Acquiring.YOOKASSA
+            site.save()
+            # Банк тот же, доступов своих нет — значит оплаты нет. Раньше
+            # здесь подхватились бы общие ключи соседа, и выручка Беты
+            # ушла бы в магазин Альфы.
+            self.assertFalse(get_acquirer().configured())
+            self.assertEqual(get_acquirer().shop_id, "")
+
+    @mock.patch.dict("os.environ", {"YOOKASSA_SHOP_ID": "env-shop", "YOOKASSA_SECRET_KEY": "env-key"})
+    def test_env_is_ignored_when_there_are_neighbours(self):
+        """Общая установка: окружение общее, поэтому как источник не годится."""
+        with organization_context(self.b):
+            site = SiteSettings.load()
+            site.acquiring = SiteSettings.Acquiring.YOOKASSA
+            site.save()
+            self.assertFalse(get_acquirer().configured())
+
+    @mock.patch.dict("os.environ", {"YOOKASSA_SHOP_ID": "env-shop", "YOOKASSA_SECRET_KEY": "env-key"})
+    def test_env_still_works_on_a_single_install(self):
+        """Отдельная установка (кафе на своём сервере) продолжает жить на .env."""
+        self.b.delete()
+        with organization_context(self.a):
+            site = SiteSettings.load()
+            site.acquiring = SiteSettings.Acquiring.YOOKASSA
+            site.save()
+            self.assertTrue(get_acquirer().configured())
+            self.assertEqual(get_acquirer().shop_id, "env-shop")
+
+    def test_unreadable_payload_is_not_a_crash(self):
+        """Сменили ключ шифрования — «нет доступов», а не пятисотка на весь сайт."""
+        row = AcquiringCredentials(provider="yookassa", organization=self.a, payload="мусор")
+        self.assertEqual(row.values(), {})
+
+
+class AcquiringSettingsApiTests(APITestCase):
+    """Ручка владельца: выбрать банк и ввести ключи, не показывая их обратно."""
+
+    def setUp(self):
+        self.org = Organization.objects.order_by("pk").first()
+        self.org.domain = "testserver"
+        self.org.save()
+        # Второе заведение — чтобы запасной источник из окружения молчал
+        # и тесты проверяли именно ручку.
+        Organization.objects.create(name="Бета", slug="beta", domain="beta.padacha.ru")
+        self.owner = User.objects.create_user(
+            "owner", password="Sh4-owner", role=User.Role.ADMIN, organization=self.org
+        )
+        self.client.force_authenticate(self.owner)
+
+    def save(self, **body):
+        return self.client.put("/api/acquiring/", body, format="json")
+
+    def test_owner_sets_bank_and_keys(self):
+        response = self.save(
+            provider="yookassa",
+            values={"shop_id": "100500", "secret_key": "live_секрет"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["ready"])
+        # Вне запроса заведение нужно называть явно: их в базе два.
+        with organization_context(self.org):
+            self.assertEqual(SiteSettings.load().acquiring, "yookassa")
+            self.assertEqual(get_acquirer().secret, "live_секрет")
+
+    def test_secrets_never_come_back(self):
+        self.save(provider="yookassa", values={"shop_id": "100500", "secret_key": "live_секрет"})
+        data = self.client.get("/api/acquiring/").data
+        self.assertNotIn("live_секрет", str(data))
+        self.assertEqual(data["filled"], {"shop_id": True, "secret_key": True})
+
+    def test_blank_field_keeps_the_old_value(self):
+        """Форма не знает секрета, поэтому пустое поле значит «не менял»."""
+        self.save(provider="yookassa", values={"shop_id": "100500", "secret_key": "live_секрет"})
+        self.save(provider="yookassa", values={"shop_id": "100501", "secret_key": ""})
+        with organization_context(self.org):
+            self.assertEqual(get_acquirer().shop_id, "100501")
+            self.assertEqual(get_acquirer().secret, "live_секрет")
+
+    def test_switching_bank_turns_payment_off(self):
+        """Ключи нового банка ещё не проверены — гость не должен на них наткнуться."""
+        self.save(provider="yookassa", values={"shop_id": "100500", "secret_key": "live_секрет"})
+        with organization_context(self.org):
+            site = SiteSettings.load()
+            site.online_payment_on = True
+            site.save()
+
+        self.save(provider="tbank", values={})
+        with organization_context(self.org):
+            self.assertFalse(SiteSettings.load().online_payment_on)
+
+    def test_old_keys_survive_a_round_trip(self):
+        """Ушли в другой банк и вернулись — вводить заново не заставляем."""
+        self.save(provider="yookassa", values={"shop_id": "100500", "secret_key": "live_секрет"})
+        self.save(provider="tbank", values={})
+        self.save(provider="yookassa", values={})
+        self.assertTrue(self.client.get("/api/acquiring/").data["ready"])
+
+    def test_delete_wipes_the_keys(self):
+        self.save(provider="yookassa", values={"shop_id": "100500", "secret_key": "live_секрет"})
+        data = self.client.delete("/api/acquiring/").data
+        self.assertFalse(data["ready"])
+        self.assertEqual(data["filled"], {"shop_id": False, "secret_key": False})
+
+    def test_unknown_bank_is_refused(self):
+        self.assertEqual(self.save(provider="sberbank-ru", values={}).status_code, 400)
+
+    def test_staff_cannot_read_or_change_it(self):
+        """Реквизиты приёма денег — дело владельца, а не склада с официантом."""
+        for role in (User.Role.WAREHOUSE, User.Role.WAITER):
+            user = User.objects.create_user(
+                f"сотрудник-{role}", password="Sh4-staff", role=role, organization=self.org
+            )
+            self.client.force_authenticate(user)
+            self.assertEqual(self.client.get("/api/acquiring/").status_code, 403)
+            self.assertEqual(self.save(provider="yookassa", values={}).status_code, 403)
+
+    def test_guest_cannot_read_it(self):
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.get("/api/acquiring/").status_code, 401)
+
+
+class MigrateAcquiringKeysTests(TestCase):
+    """Разовый перенос ключей из окружения в заведения."""
+
+    ENV = {"YOOKASSA_SHOP_ID": "env-shop", "YOOKASSA_SECRET_KEY": "env-key"}
+
+    def setUp(self):
+        self.a = Organization.objects.order_by("pk").first()
+        self.a.name, self.a.domain = "Монти", "monti.padacha.ru"
+        self.a.save()
+        self.b = Organization.objects.create(name="Соседи", slug="sosedi", domain="sosedi.example.com")
+        with organization_context(self.a):
+            site = SiteSettings.load()
+            site.acquiring = SiteSettings.Acquiring.YOOKASSA
+            site.save()
+
+    def run_command(self, **options) -> str:
+        out = StringIO()
+        call_command("migrate_acquiring_keys", stdout=out, **options)
+        return out.getvalue()
+
+    @mock.patch.dict("os.environ", ENV)
+    def test_keys_land_in_the_cafe_that_chose_the_bank(self):
+        self.run_command()
+        with organization_context(self.a):
+            self.assertEqual(get_acquirer().shop_id, "env-shop")
+        with organization_context(self.b):
+            self.assertFalse(AcquiringCredentials.objects.exists())
+
+    @mock.patch.dict("os.environ", ENV)
+    def test_dry_run_changes_nothing(self):
+        self.assertIn("пробный запуск", self.run_command(dry_run=True))
+        self.assertFalse(AcquiringCredentials.all_objects.exists())
+
+    @mock.patch.dict("os.environ", ENV)
+    def test_shared_bank_is_not_guessed(self):
+        """Один банк у двоих — чьи это ключи, решает человек, а не команда."""
+        with organization_context(self.b):
+            site = SiteSettings.load()
+            site.acquiring = SiteSettings.Acquiring.YOOKASSA
+            site.save()
+        self.assertIn("не угадывает", self.run_command())
+        self.assertFalse(AcquiringCredentials.all_objects.exists())
+
+    @mock.patch.dict("os.environ", ENV)
+    def test_existing_keys_are_not_overwritten(self):
+        with organization_context(self.a):
+            row = AcquiringCredentials(provider="yookassa")
+            row.set_values({"shop_id": "своё", "secret_key": "своё"})
+            row.save()
+        self.run_command()
+        with organization_context(self.a):
+            self.assertEqual(get_acquirer().shop_id, "своё")

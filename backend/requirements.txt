@@ -10,3 +10,5 @@ celery==5.4.0
 redis==5.0.7
 openai==2.14.0
 httpx[socks]==0.28.1
+# Шифрование доступов к банку в базе (payments/secrets.py)
+cryptography==45.0.7

@@ -78,3 +78,55 @@ class Payment(TenantModel):
 
     def __str__(self):
         return f"Платёж №{self.pk} — {self.amount} ₽"
+
+
+class AcquiringCredentials(TenantModel):
+    """Доступы заведения к своему банку: shopId, пароль терминала и прочее.
+
+    Отдельная модель, а не поля в SiteSettings, и это главное в ней. У
+    настроек сайта есть публичный сериализатор (GET /api/site/ отдаётся
+    без авторизации), и секрет, положенный рядом с названием кафе, уедет
+    наружу в тот день, когда кто-нибудь допишет поле в список. Здесь
+    сериализатора нет вовсе: чтобы утечь, мало забыть про поле — надо
+    завести сериализатор чужой модели целиком.
+
+    Значения лежат одним зашифрованным блобом, а не колонками: у банков
+    разный набор полей (у Т-Кассы два, у Сбера три), и каждый новый банк
+    иначе требовал бы миграцию. Что внутри — описывает сам драйвер
+    (acquiring.Field), он же единственный, кто эти ключи читает.
+
+    Запись — на заведение И на банк: если кафе ушло из Сбера в Т-Банк, а
+    через месяц вернулось, старые доступы не должны быть стёрты сменой
+    выбора.
+    """
+
+    provider = models.CharField("Банк", max_length=32)
+    #: Зашифрованный JSON, см. payments/secrets.py. Пусто — доступов нет.
+    payload = models.TextField("Доступы (шифр)", blank=True, default="")
+    updated_at = models.DateTimeField("Обновлены", auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "provider"],
+                name="uniq_acquiring_credentials_per_org",
+            ),
+        ]
+        verbose_name = "Доступы к банку"
+        verbose_name_plural = "Доступы к банкам"
+
+    def __str__(self):
+        return f"Доступы {self.provider}"
+
+    def values(self) -> dict:
+        from .secrets import decrypt
+
+        return decrypt(self.payload)
+
+    def set_values(self, values: dict) -> None:
+        from .secrets import encrypt
+
+        # Пустые значения не храним: пустая строка в блобе означала бы
+        # «поле задано», и configured() отвечал бы «да» на пустой пароль.
+        clean = {k: v.strip() for k, v in values.items() if isinstance(v, str) and v.strip()}
+        self.payload = encrypt(clean)
