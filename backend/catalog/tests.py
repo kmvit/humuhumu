@@ -518,7 +518,30 @@ class MenuImagePromptTests(CatalogAdminBase):
         self.assertIn("прозрачный, с крышкой", prompt)
         self.assertIn("деревянном столе", prompt)
         self.assertIn("наши зелёные салфетки", prompt)
-        self.assertIn("Без текста", prompt)
+        self.assertIn("посторонних надписей", prompt)
+        # то, что напечатано на нашем стакане, стирать не просим
+        self.assertIn("оставь как есть", prompt)
+
+    def test_prompt_says_nothing_about_material_itself(self):
+        """Про материал промпт молчит — это дело подписи к образцу.
+
+        «Стакан непрозрачный» — правда для бумажного и враньё для
+        стеклянного. Общий промпт этого знать не может, поэтому в нём
+        только правило, верное для любой посуды.
+        """
+        prompt = build_prompt(self.latte, [])
+        self.assertIn("сквозь непрозрачные стенки", prompt)
+        self.assertIn("сквозь прозрачные", prompt)
+        self.assertNotIn("стакан непрозрачный", prompt.lower())
+
+    def test_sample_note_travels_with_its_dishware(self):
+        """Материал сказан один раз у образца и попадает в каждый запрос."""
+        glass = DishwareSample.objects.create(
+            name="Айриш 0,4", note="толстое прозрачное стекло",
+            image=image_file("glass.png"),
+        )
+        prompt = build_prompt(self.latte, [glass])
+        self.assertIn("толстое прозрачное стекло", prompt)
 
     def test_prompt_without_dishware_stays_neutral(self):
         prompt = build_prompt(self.latte, [])

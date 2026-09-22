@@ -66,7 +66,10 @@ export default function PhotoStudio({
   const [busy, setBusy] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
   const [wareName, setWareName] = useState("");
+  const [wareNote, setWareNote] = useState("");
   const [wareFile, setWareFile] = useState<File | null>(null);
+  // Подписи к образцам, которые владелец дописывает прямо здесь.
+  const [notes, setNotes] = useState<Record<number, string>>({});
 
   const total = picked.size * variants;
   const left = quota?.left ?? 0;
@@ -144,17 +147,34 @@ export default function PhotoStudio({
     if (!wareName.trim() || !wareFile) return notify("Нужны название и фото", "bad");
     const form = new FormData();
     form.append("name", wareName.trim());
+    form.append("note", wareNote.trim());
     form.append("image", wareFile);
     try {
       const created = await postForm<DishwareSample>("/dishware/", form);
       setDishware((list) => [...list, created]);
       setPickedWare((s) => new Set(s).add(created.id));
       setWareName("");
+      setWareNote("");
       setWareFile(null);
       setAdding(false);
       notify("Посуда добавлена", "ok");
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "Не удалось загрузить", "bad");
+    }
+  }
+
+  /** Дописать образцу, что он такое: материал едет в запрос вместе с фото. */
+  async function saveNote(sample: DishwareSample) {
+    const note = (notes[sample.id] ?? "").trim();
+    if (!note) return;
+    try {
+      await patch(`/dishware/${sample.id}/`, { note });
+      setDishware((list) =>
+        list.map((d) => (d.id === sample.id ? { ...d, note } : d))
+      );
+      notify("Записали", "ok");
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Не удалось сохранить", "bad");
     }
   }
 
@@ -321,6 +341,29 @@ export default function PhotoStudio({
             ? "Образцов пока нет — посуду нейросеть придумает сама. Загрузите фото своего стакана или тарелки, и блюдо нарисуется в них."
             : "Фото вашего стакана или тарелки — блюдо нарисуется в нём. Не выбрали — подставим посуду категории."}
         </p>
+        {/* Выбранный образец без подписи — спрашиваем, что это. Материал
+            («бумажный, непрозрачный» против «стекло») нельзя зашить в общий
+            промпт: он разный у стакана, кружки и тарелки. Сказать про него
+            надо один раз, здесь — дальше он едет со своей посудой. */}
+        {dishware
+          .filter((d) => pickedWare.has(d.id) && !d.note)
+          .map((d) => (
+            <div key={d.id} className="wrap mt-2" style={{ alignItems: "center" }}>
+              <span className="muted sm">Что такое «{d.name}»?</span>
+              <input
+                className="input grow"
+                placeholder="бумажный крафт, непрозрачный"
+                maxLength={200}
+                value={notes[d.id] ?? ""}
+                onChange={(e) =>
+                  setNotes((n) => ({ ...n, [d.id]: e.target.value }))
+                }
+              />
+              <button className="btn sm ghost" onClick={() => saveNote(d)}>
+                <Icon name="check" size={15} /> Записать
+              </button>
+            </div>
+          ))}
         {adding && (
           <div className="wrap mt-2" style={{ alignItems: "center" }}>
             <input
@@ -329,6 +372,13 @@ export default function PhotoStudio({
               value={wareName}
               maxLength={100}
               onChange={(e) => setWareName(e.target.value)}
+            />
+            <input
+              className="input grow"
+              placeholder="бумажный крафт, непрозрачный"
+              value={wareNote}
+              maxLength={200}
+              onChange={(e) => setWareNote(e.target.value)}
             />
             <input
               type="file"
