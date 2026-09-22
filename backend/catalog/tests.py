@@ -16,7 +16,7 @@ from core.llm import LLMError
 from orders.models import Order, OrderItem
 from users.models import User
 
-from .image_ai import build_prompt
+from .image_ai import build_prompt, run_generation
 from .models import (
     Category,
     DishwareSample,
@@ -521,9 +521,10 @@ class MenuImagePromptTests(CatalogAdminBase):
         self.assertIn("посторонних надписей", prompt)
         # то, что напечатано на нашем стакане, стирать не просим
         self.assertIn("оставь как есть", prompt)
-        # но и дорисовывать печать, которой нет, — тоже
-        self.assertIn("Не придумывай", prompt)
-        self.assertIn("остаётся чистой", prompt)
+        # Прямого запрета «не придумывай надписей» здесь нарочно нет:
+        # проверено живьём — с ним модель рисует логотип наглее, чем без
+        # него. Выдуманная посуда лечится образцом, а не словами.
+        self.assertNotIn("придумывай", prompt)
 
     def test_prompt_says_nothing_about_material_itself(self):
         """Про материал промпт молчит — это дело подписи к образцу.
@@ -772,3 +773,46 @@ class DishwareUploadTests(CatalogAdminBase):
             list(generation.dishware.values_list("name", flat=True)), ["Стакан 0,4"]
         )
         self.assertIn("Стакан 0,4", generation.prompt)
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), IMAGE_GEN_ASYNC=False)
+class UnreadableDishwareTests(CatalogAdminBase):
+    """Образец есть, а файл не читается — рисовать без него нельзя."""
+
+    def test_generation_fails_instead_of_inventing_dishware(self):
+        """Лучше честная ошибка, чем чужая посуда в меню.
+
+        В запросе уже сказано «подача с приложенных фото». Если фото не
+        уехало, модель сочиняет посуду сама — на проверке она нарисовала
+        стакану несуществующий логотип «COFFEE BEAT». Такое в меню
+        заведения попасть не должно, поэтому до модели не идём вовсе:
+        заодно не платим за обращение.
+        """
+        broken = DishwareSample.objects.create(
+            name="Стакан 0,4", image="org-1/dishware/нет-такого-файла.png"
+        )
+        generation = ImageGeneration.objects.create(
+            product=self.latte, prompt="фото латте в нашем стакане"
+        )
+        generation.dishware.set([broken])
+
+        with mock.patch("catalog.image_ai.generate_image") as model:
+            run_generation(generation)
+
+        model.assert_not_called()
+        generation.refresh_from_db()
+        self.assertEqual(generation.status, ImageGeneration.Status.FAILED)
+        self.assertIn("фото посуды", generation.error)
+
+    def test_without_dishware_at_all_we_draw_as_usual(self):
+        """А без посуды вовсе рисуем спокойно: промпт про неё и не заикается."""
+        generation = ImageGeneration.objects.create(
+            product=self.latte, prompt="фото латте"
+        )
+        with mock.patch(
+            "catalog.image_ai.generate_image",
+            return_value=(GeneratedImage(data=_png_bytes(), mime="image/png"), 0.019),
+        ):
+            run_generation(generation)
+        generation.refresh_from_db()
+        self.assertEqual(generation.status, ImageGeneration.Status.READY)
