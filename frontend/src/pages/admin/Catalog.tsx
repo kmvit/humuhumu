@@ -13,6 +13,7 @@ import type {
 import { decimalInput } from "../../decimal";
 import Modifiers from "./Modifiers";
 import PhotoStudio from "./PhotoStudio";
+import PhotoStyle from "./PhotoStyle";
 
 /** Правка меню прямо в панели владельца, без Django-админки.
 
@@ -120,6 +121,7 @@ export default function Catalog() {
   // считаем выключенной: лучше кнопка появится через миг, чем мигнёт и
   // пропадёт у того, кому она не положена.
   const [photosOn, setPhotosOn] = useState(false);
+  const [styleOpen, setStyleOpen] = useState(false);
 
   async function load() {
     try {
@@ -306,6 +308,11 @@ export default function Catalog() {
         <h1 className="h1">Каталог</h1>
         {tab === "menu" && (
           <div className="wrap">
+            {photosOn && (
+              <button className="btn sm ghost" onClick={() => setStyleOpen(true)}>
+                <Icon name="spark" size={15} /> Стиль фото
+              </button>
+            )}
             <button className="btn sm ghost" onClick={() => setCDraft(emptyCategory())}>
               <Icon name="plus" size={15} /> Категория
             </button>
@@ -573,6 +580,8 @@ export default function Catalog() {
           onSave={saveProduct}
         />
       )}
+
+      {styleOpen && <PhotoStyle onClose={() => setStyleOpen(false)} />}
 
       {studio && (
         <PhotoStudio

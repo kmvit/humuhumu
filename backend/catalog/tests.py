@@ -16,12 +16,13 @@ from core.llm import LLMError
 from orders.models import Order, OrderItem
 from users.models import User
 
-from .image_ai import build_prompt, run_generation
+from .image_ai import build_prompt, collect_references, run_generation
 from .models import (
     Category,
     DishwareSample,
     ImageGeneration,
     ImageQuota,
+    MenuImageSettings,
     Modifier,
     ModifierGroup,
     Product,
@@ -897,3 +898,116 @@ class ImageQuotaAdminSafetyTests(TestCase):
         # заведение не выбрано: ровно как на служебной странице админки
         self.assertEqual(monthly_limit(), ImageQuota.MONTHLY_LIMIT)
         self.assertTrue(images_enabled())
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), IMAGE_GEN_ASYNC=False)
+class StyleSampleTests(CatalogAdminBase):
+    """Эталон съёмки: берём с него свет и ракурс, но не содержимое."""
+
+    def test_prompt_warns_not_to_copy_the_dish_from_the_sample(self):
+        prompt = build_prompt(self.latte, [], style_sample=True)
+        self.assertIn("образец нашей съёмки", prompt)
+        self.assertIn("не переноси", prompt)
+        self.assertIn("Латте", prompt)
+
+    def test_without_a_sample_prompt_says_nothing_about_it(self):
+        self.assertNotIn("образец нашей съёмки", build_prompt(self.latte, []))
+
+    def test_sample_goes_last_in_the_references(self):
+        """Промпт зовёт эталон «последним фото» — порядок обязан совпадать."""
+        cup = DishwareSample.objects.create(
+            name="Стакан", image=image_file("cup.png")
+        )
+        site = MenuImageSettings.current()
+        site.sample_photo = image_file("sample.png")
+        site.background = image_file("bg.png")
+        site.save()
+        refs = collect_references([cup], site.background, site.sample_photo)
+        self.assertEqual(len(refs), 3)
+
+    def test_batch_attaches_the_sample(self):
+        site = MenuImageSettings.current()
+        site.sample_photo = image_file("sample.png")
+        site.save()
+        self.auth(self.admin)
+        with mock.patch(
+            "catalog.image_ai.generate_image",
+            return_value=(GeneratedImage(data=_png_bytes(), mime="image/png"), 0.019),
+        ) as model, self.captureOnCommitCallbacks(execute=True):
+            self.client.post(
+                "/api/image-batches/", {"products": [self.latte.id]}, format="json"
+            )
+        # эталон уехал образцом, а промпт объяснил, зачем он приложен
+        self.assertEqual(len(model.call_args.kwargs["references"]), 1)
+        self.assertIn("образец нашей съёмки", model.call_args[0][0])
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), IMAGE_GEN_ASYNC=False)
+class RefineTests(CatalogAdminBase):
+    """Правка готового кадра словами."""
+
+    def setUp(self):
+        super().setUp()
+        self.ready = ImageGeneration.objects.create(
+            product=self.latte, prompt="фото латте",
+            status=ImageGeneration.Status.READY,
+        )
+        self.ready.image.save("gen.png", ContentFile(_png_bytes()), save=True)
+
+    def test_refine_draws_over_the_original(self):
+        self.auth(self.admin)
+        with mock.patch(
+            "catalog.image_ai.generate_image",
+            return_value=(GeneratedImage(data=_png_bytes("red"), mime="image/png"), 0.019),
+        ) as model, self.captureOnCommitCallbacks(execute=True):
+            res = self.client.post(
+                f"/api/image-generations/{self.ready.id}/refine/",
+                {"instruction": "фон темнее"},
+                format="json",
+            )
+        self.assertEqual(res.status_code, 201)
+        fixed = ImageGeneration.objects.get(pk=res.data["id"])
+        self.assertEqual(fixed.source_id, self.ready.id)
+        self.assertEqual(fixed.status, ImageGeneration.Status.READY)
+        self.assertIn("фон темнее", fixed.prompt)
+        # образцом служит сам исходный кадр, посуду заново не прикладываем
+        self.assertEqual(len(model.call_args.kwargs["references"]), 1)
+
+    def test_original_stays_untouched(self):
+        """Правка — новая карточка: к прежней можно вернуться одним нажатием."""
+        self.auth(self.admin)
+        with mock.patch(
+            "catalog.image_ai.generate_image",
+            return_value=(GeneratedImage(data=_png_bytes("red"), mime="image/png"), 0.019),
+        ), self.captureOnCommitCallbacks(execute=True):
+            self.client.post(
+                f"/api/image-generations/{self.ready.id}/refine/",
+                {"instruction": "фон темнее"},
+                format="json",
+            )
+        self.ready.refresh_from_db()
+        self.assertEqual(self.ready.status, ImageGeneration.Status.READY)
+        self.assertTrue(self.ready.image)
+        self.assertEqual(ImageGeneration.objects.count(), 2)
+
+    def test_empty_instruction_is_refused(self):
+        self.auth(self.admin)
+        res = self.client.post(
+            f"/api/image-generations/{self.ready.id}/refine/",
+            {"instruction": "   "},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(image_quota()[0], 0)
+
+    def test_unfinished_picture_cannot_be_refined(self):
+        pending = ImageGeneration.objects.create(
+            product=self.latte, prompt="рисуется"
+        )
+        self.auth(self.admin)
+        res = self.client.post(
+            f"/api/image-generations/{pending.id}/refine/",
+            {"instruction": "фон темнее"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 400)

@@ -604,11 +604,15 @@ export interface MenuImageSettings {
   extra_prompt: string;
   aspect_ratio: string;
   background: string | null;
+  /** Эталон съёмки: с него берут свет и ракурс, но не само блюдо. */
+  sample_photo: string | null;
 }
 
 export interface ImageGeneration {
   id: number;
   batch: number | null;
+  /** Этот кадр — правка другого: «тот же, но фон темнее». */
+  source: number | null;
   product: number;
   product_name: string;
   prompt: string;

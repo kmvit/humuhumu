@@ -14,7 +14,7 @@ from users.permissions import IsAdminRole, ReadOnlyOrAdmin
 
 from inventory.models import StockItem
 
-from .image_ai import build_prompt
+from .image_ai import build_prompt, build_refine_prompt
 from .models import (
     Category,
     DishwareSample,
@@ -604,6 +604,7 @@ class ImageBatchViewSet(
                     style=site.style,
                     extra=extra,
                     variant_label=variants[0].label if variants else "",
+                    style_sample=bool(site.sample_photo),
                 )
                 for _ in range(data["variants"]):
                     generation = ImageGeneration.objects.create(
@@ -694,6 +695,47 @@ class ImageGenerationViewSet(
             )
         _apply_generation(generation)
         return Response(self.get_serializer(generation).data)
+
+    @action(detail=True, methods=["post"])
+    def refine(self, request, pk=None):
+        """Поправить готовый кадр словами: «этот же, но фон темнее».
+
+        Новая генерация поверх старой, а не замена: правка может выйти
+        хуже оригинала, и вернуться к нему владелец должен одним нажатием.
+        """
+        source = self.get_object()
+        instruction = (request.data.get("instruction") or "").strip()
+        if not instruction:
+            return Response(
+                {"detail": "Напишите, что поправить."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if source.status != ImageGeneration.Status.READY or not source.image:
+            return Response(
+                {"detail": "Поправить можно только готовую картинку."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        used, limit = image_quota()
+        if used >= limit:
+            return Response(
+                {"detail": f"Лимит месяца исчерпан: {used} из {limit}."},
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+
+        with transaction.atomic():
+            generation = ImageGeneration.objects.create(
+                batch=source.batch,
+                source=source,
+                product=source.product,
+                prompt=build_refine_prompt(instruction),
+                created_by=request.user,
+            )
+            consume_image_quota(1)
+            _enqueue([generation])
+        return Response(
+            self.get_serializer(generation).data, status=status.HTTP_201_CREATED
+        )
 
     @action(detail=True, methods=["post"])
     def retry(self, request, pk=None):

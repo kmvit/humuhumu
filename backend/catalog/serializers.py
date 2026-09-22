@@ -191,10 +191,14 @@ class DishwareSampleSerializer(serializers.ModelSerializer):
 
 class MenuImageSettingsSerializer(serializers.ModelSerializer):
     background = RelativeImageField(required=False, allow_null=True)
+    sample_photo = RelativeImageField(required=False, allow_null=True)
 
     class Meta:
         model = MenuImageSettings
-        fields = ("id", "style", "extra_prompt", "aspect_ratio", "background")
+        fields = (
+            "id", "style", "extra_prompt", "aspect_ratio", "background",
+            "sample_photo",
+        )
 
 
 class ImageGenerationSerializer(serializers.ModelSerializer):
@@ -204,8 +208,9 @@ class ImageGenerationSerializer(serializers.ModelSerializer):
     class Meta:
         model = ImageGeneration
         fields = (
-            "id", "batch", "product", "product_name", "prompt", "model", "image",
-            "status", "error", "cost_usd", "applied_at", "created_at",
+            "id", "batch", "source", "product", "product_name", "prompt",
+            "model", "image", "status", "error", "cost_usd", "applied_at",
+            "created_at",
         )
         read_only_fields = fields
 

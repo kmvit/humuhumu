@@ -393,6 +393,15 @@ class MenuImageSettings(TenantModel):
         max_length=200,
         help_text="Своя стойка или стол — попадёт на все фото как фон",
     )
+    #: Эталон съёмки: удачный кадр СВОЕГО блюда. С него модель берёт свет,
+    #: цвет и ракурс — но не содержимое: иначе вместо американо она
+    #: нарисует те самые сырники с эталона. За это отвечает промпт, который
+    #: прямо объясняет, что с какого фото брать (см. image_ai.build_prompt).
+    sample_photo = models.ImageField(
+        "Эталон съёмки", upload_to=tenant_upload_to("dishware"), null=True,
+        blank=True, max_length=200,
+        help_text="Одно удачное фото вашего блюда — с него возьмём свет и ракурс",
+    )
 
     class Meta:
         verbose_name = "Настройки фото меню"
@@ -506,6 +515,17 @@ class ImageGeneration(TenantModel):
         blank=True,
         related_name="generations",
         verbose_name="Пачка",
+    )
+    #: Правка готового кадра: «этот же, но фон темнее». Тогда образцом
+    #: служит САМА исходная картинка, а посуда и фон заведения уже внутри
+    #: неё — прикладывать их заново значит спорить с тем, что правим.
+    source = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="refinements",
+        verbose_name="Правка кадра",
     )
     product = models.ForeignKey(
         Product,

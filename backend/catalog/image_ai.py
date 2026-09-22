@@ -79,7 +79,15 @@ _FORBIDDEN = (
 )
 
 
-def build_prompt(product, dishware=(), *, style=None, extra="", variant_label="") -> str:
+def build_prompt(
+    product,
+    dishware=(),
+    *,
+    style=None,
+    extra="",
+    variant_label="",
+    style_sample=False,
+) -> str:
     """Собрать текст запроса к модели по блюду, посуде и стилю заведения."""
     parts = [
         f"Фотореалистичное фото для меню кафе: «{product.name}».",
@@ -106,12 +114,37 @@ def build_prompt(product, dishware=(), *, style=None, extra="", variant_label=""
     else:
         parts.append("Посуда — простая и нейтральная, под стиль кофейни.")
 
+    # Роль эталона проговариваем отдельно и настойчиво. Иначе модель
+    # принимает его за образец ПОДАЧИ и рисует блюдо с эталона: просили
+    # американо — получили сырники, потому что они были на фото.
+    if style_sample:
+        parts.append(
+            "Последнее приложенное фото — образец нашей съёмки, а не этого "
+            "блюда: возьми с него только свет, цвет, фон и ракурс. Что на "
+            f"нём изображено, не переноси — рисуем «{product.name}»."
+        )
+
     parts.append(STYLE_PROMPTS.get(style or "", STYLE_PROMPTS["studio"]) + ".")
     parts.append(_FRAMING)
     if extra.strip():
         parts.append(extra.strip())
     parts.append(_FORBIDDEN)
     return " ".join(parts)
+
+
+def build_refine_prompt(instruction: str) -> str:
+    """Запрос на правку готового кадра: «этот же, но фон темнее».
+
+    Правим приложенную картинку, а не рисуем заново: у владельца уже есть
+    кадр, который его почти устроил, и потерять в нём посуду и подачу было
+    бы обиднее, чем не получить правку.
+    """
+    return (
+        "На приложенном фото — готовая карточка меню. Внеси ровно одну "
+        f"правку: {instruction.strip()} Всё остальное сохрани как есть: ту "
+        "же посуду, ту же подачу, тот же состав блюда и ту же печать на "
+        "посуде. Это должно остаться тем же снимком, а не новым."
+    )
 
 
 def _reference(field) -> tuple[bytes, str] | None:
@@ -133,17 +166,22 @@ def _reference(field) -> tuple[bytes, str] | None:
     return buf.getvalue(), "image/jpeg"
 
 
-def collect_references(dishware, background=None) -> list[tuple[bytes, str]]:
-    """Образцы для запроса: посуда, затем фон заведения."""
+def collect_references(dishware, background=None, style_sample=None):
+    """Образцы для запроса: посуда, затем фон, последним — эталон съёмки.
+
+    Порядок не косметика: промпт называет эталон «последним приложенным
+    фото», и перестановка превратила бы объяснение в ложь.
+    """
     refs = []
     for sample in dishware:
         ref = _reference(sample.image)
         if ref:
             refs.append(ref)
-    if background:
-        ref = _reference(background)
-        if ref:
-            refs.append(ref)
+    for extra in (background, style_sample):
+        if extra:
+            ref = _reference(extra)
+            if ref:
+                refs.append(ref)
     return refs
 
 
@@ -159,6 +197,23 @@ def _to_webp(data: bytes) -> ContentFile:
     return ContentFile(buf.getvalue())
 
 
+#: Поля, которые меняет любая попытка — удачная или нет.
+_RESULT_FIELDS = ["image", "model", "cost_usd", "status", "error", "updated_at"]
+
+
+def _keep(generation, image, cost) -> None:
+    """Уложить готовую картинку в генерацию (без записи в базу)."""
+    generation.image.save(
+        f"p{generation.product_id}-g{generation.pk}.webp",
+        _to_webp(image.data),
+        save=False,
+    )
+    generation.model = settings.OPENAI_IMAGE_MODEL
+    generation.cost_usd = round(cost, 4)
+    generation.status = generation.Status.READY
+    generation.error = ""
+
+
 def run_generation(generation) -> None:
     """Нарисовать картинку для генерации и сохранить результат.
 
@@ -172,8 +227,25 @@ def run_generation(generation) -> None:
 
     site = MenuImageSettings.current()
     try:
+        if generation.source_id is not None:
+            # Правка готового кадра: образец — он сам. Посуду и фон
+            # заведения не прикладываем, они уже нарисованы внутри него.
+            refs = collect_references([], generation.source.image)
+            if not refs:
+                raise LLMError(
+                    "Не удалось прочитать исходное фото — попробуйте ещё раз."
+                )
+            image, cost = generate_image(
+                generation.prompt,
+                references=refs,
+                aspect_ratio=site.aspect_ratio or "1:1",
+            )
+            _keep(generation, image, cost)
+            generation.save(update_fields=_RESULT_FIELDS)
+            return
+
         dishware = list(generation.dishware.all())
-        refs = collect_references(dishware, site.background)
+        refs = collect_references(dishware, site.background, site.sample_photo)
         if dishware and not refs:
             # Владелец просил СВОЮ посуду, а её фото не читается. Рисовать
             # без образца нельзя: в запросе останется «подача с приложенных
@@ -188,20 +260,10 @@ def run_generation(generation) -> None:
             references=refs,
             aspect_ratio=site.aspect_ratio or "1:1",
         )
-        generation.image.save(
-            f"p{generation.product_id}-g{generation.pk}.webp",
-            _to_webp(image.data),
-            save=False,
-        )
-        generation.model = settings.OPENAI_IMAGE_MODEL
-        generation.cost_usd = round(cost, 4)
-        generation.status = ImageGeneration.Status.READY
-        generation.error = ""
+        _keep(generation, image, cost)
     except Exception as exc:  # noqa: BLE001 — любая осечка = статус «ошибка»
         logger.exception("Не удалось сгенерировать фото id=%s", generation.pk)
         generation.status = ImageGeneration.Status.FAILED
         generation.error = str(exc)[:500]
 
-    generation.save(
-        update_fields=["image", "model", "cost_usd", "status", "error", "updated_at"]
-    )
+    generation.save(update_fields=_RESULT_FIELDS)

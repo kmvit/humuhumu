@@ -70,6 +70,9 @@ export default function PhotoStudio({
   const [wareFile, setWareFile] = useState<File | null>(null);
   // Подписи к образцам, которые владелец дописывает прямо здесь.
   const [notes, setNotes] = useState<Record<number, string>>({});
+  // Какой кадр правим словами и что именно просим изменить.
+  const [fixing, setFixing] = useState<number | null>(null);
+  const [fix, setFix] = useState("");
 
   const total = picked.size * variants;
   const left = quota?.left ?? 0;
@@ -246,6 +249,31 @@ export default function PhotoStudio({
       loadQuota();
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "Не удалось повторить", "bad");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** Поправить готовый кадр словами: «этот же, но фон темнее». */
+  async function refine(gen: ImageGeneration) {
+    if (!fix.trim()) return notify("Напишите, что поправить", "bad");
+    setBusy(gen.id);
+    try {
+      await post(`/image-generations/${gen.id}/refine/`, {
+        instruction: fix.trim(),
+      });
+      notify("Правим кадр", "ok");
+      setFixing(null);
+      setFix("");
+      setRunning(true);
+      if (batch) setBatch(await get<ImageBatch>(`/image-batches/${batch.id}/`));
+      if (single)
+        setDrafts(
+          await get<ImageGeneration[]>(`/image-generations/?product=${products[0].id}`)
+        );
+      loadQuota();
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Не удалось поправить", "bad");
     } finally {
       setBusy(null);
     }
@@ -515,6 +543,7 @@ export default function PhotoStudio({
                 )}
                 <strong className="sm">
                   {g.product_name}
+                  {g.source && <span className="badge mini ml-1">правка</span>}
                   {g.applied_at && <span className="badge mini ml-1">в меню</span>}
                 </strong>
                 <div className="wrap">
@@ -535,6 +564,19 @@ export default function PhotoStudio({
                   >
                     <Icon name="spark" size={14} /> Ещё
                   </button>
+                  {g.status === "ready" && (
+                    <button
+                      className="btn sm ghost"
+                      disabled={busy === g.id}
+                      onClick={() => {
+                        setFixing(fixing === g.id ? null : g.id);
+                        setFix("");
+                      }}
+                      title="Поправить этот кадр словами"
+                    >
+                      <Icon name="edit" size={14} /> Поправить
+                    </button>
+                  )}
                   <button
                     className="icon-btn danger"
                     aria-label="Убрать черновик"
@@ -544,6 +586,28 @@ export default function PhotoStudio({
                     <Icon name="trash" size={15} />
                   </button>
                 </div>
+                {/* Правка рисуется поверх этого кадра и НЕ заменяет его:
+                    получиться может хуже, и вернуться надо одним нажатием. */}
+                {fixing === g.id && (
+                  <div className="stack tight">
+                    <input
+                      className="input"
+                      placeholder="фон темнее, крупнее в кадре"
+                      value={fix}
+                      maxLength={200}
+                      autoFocus
+                      onChange={(e) => setFix(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && refine(g)}
+                    />
+                    <button
+                      className="btn sm"
+                      disabled={busy === g.id}
+                      onClick={() => refine(g)}
+                    >
+                      <Icon name="check" size={14} /> Поправить
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
