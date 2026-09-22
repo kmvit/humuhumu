@@ -913,6 +913,19 @@ class StyleSampleTests(CatalogAdminBase):
     def test_without_a_sample_prompt_says_nothing_about_it(self):
         self.assertNotIn("образец нашей съёмки", build_prompt(self.latte, []))
 
+    def test_sample_replaces_the_style_preset(self):
+        """Эталон и пресет — два указания об одном, и текст сильнее картинки.
+
+        Пока пресет оставался в запросе, тёплый тропический эталон не
+        передавался вовсе: «студийная съёмка на однотонном светлом фоне»
+        перебивала его и выдавала серый студийный кадр.
+        """
+        with_sample = build_prompt(self.latte, [], style="wood", style_sample=True)
+        self.assertNotIn("деревянном столе", with_sample)
+        self.assertIn("образец нашей съёмки", with_sample)
+        # без эталона пресет на месте
+        self.assertIn("деревянном столе", build_prompt(self.latte, [], style="wood"))
+
     def test_sample_goes_last_in_the_references(self):
         """Промпт зовёт эталон «последним фото» — порядок обязан совпадать."""
         cup = DishwareSample.objects.create(

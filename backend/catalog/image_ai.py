@@ -124,7 +124,12 @@ def build_prompt(
             f"нём изображено, не переноси — рисуем «{product.name}»."
         )
 
-    parts.append(STYLE_PROMPTS.get(style or "", STYLE_PROMPTS["studio"]) + ".")
+    # Пресет стиля и эталон — два указания об одном и том же, и текст
+    # сильнее картинки: с «студийная съёмка на светлом фоне» тёплый
+    # тропический эталон не передавался вовсе. Раз владелец загрузил своё
+    # фото, стиль берём с него, а пресет молчит.
+    if not style_sample:
+        parts.append(STYLE_PROMPTS.get(style or "", STYLE_PROMPTS["studio"]) + ".")
     parts.append(_FRAMING)
     if extra.strip():
         parts.append(extra.strip())
