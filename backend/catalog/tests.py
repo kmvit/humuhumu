@@ -521,6 +521,9 @@ class MenuImagePromptTests(CatalogAdminBase):
         self.assertIn("посторонних надписей", prompt)
         # то, что напечатано на нашем стакане, стирать не просим
         self.assertIn("оставь как есть", prompt)
+        # но и дорисовывать печать, которой нет, — тоже
+        self.assertIn("Не придумывай", prompt)
+        self.assertIn("остаётся чистой", prompt)
 
     def test_prompt_says_nothing_about_material_itself(self):
         """Про материал промпт молчит — это дело подписи к образцу.
