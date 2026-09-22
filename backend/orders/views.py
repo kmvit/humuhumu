@@ -28,6 +28,7 @@ from payments.services import (
     PaymentError,
     apply_payment_result,
     record_manual_payment,
+    settle_order,
     start_online_payment,
     start_terminal_payment,
 )
@@ -213,6 +214,11 @@ class OrderViewSet(viewsets.ModelViewSet):
             return Response(
                 {"detail": "Заказ не найден"}, status=status.HTTP_404_NOT_FOUND
             )
+        # Гость вернулся со страницы банка: если уведомление об оплате не
+        # дошло, спрашиваем банк сами — иначе он увидит оплаченный заказ
+        # с кнопкой «оплатить» и заплатит второй раз.
+        settle_order(order)
+        order.refresh_from_db()
         return Response(OrderSerializer(order).data)
 
     @action(detail=False, methods=["post"])

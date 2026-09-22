@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 import uuid
 from dataclasses import dataclass
 from decimal import Decimal
@@ -95,6 +96,12 @@ class Field:
     #: Секрет наружу не показываем даже владельцу: отдаём только «задан».
     secret: bool = True
     required: bool = True
+    #: На что похоже правильное значение. Нужно не для красоты: в поле
+    #: ЮKassa однажды уехали доступы от другого банка, и первым это
+    #: увидел гость у кассы — банк отказал уже на его платеже.
+    pattern: str = ""
+    #: Что сказать владельцу, если значение на это не похоже.
+    error: str = ""
 
 
 def _kopecks(amount: Decimal) -> int:
@@ -170,6 +177,43 @@ class BaseAcquirer:
         """Разобрать уведомление банка. None — уведомление чужое или подделка."""
         raise NotImplementedError
 
+    def status(self, external_id: str) -> Result | None:
+        """Спросить банк, что с платежом. None — банк спрашивать не умеем.
+
+        Нужна не только вебхуку. Уведомление может не прийти вовсе —
+        например, в кабинете банка не прописан адрес, — и тогда опрос
+        остаётся единственным способом узнать, что гость заплатил.
+        """
+        return None
+
+    def check(self) -> None:
+        """Проверить доступы у банка. Молча — значит приняты.
+
+        Проверять надо в момент, когда владелец их вводит: иначе первым
+        неверный ключ находит гость, уже собравший заказ. Банк, которому
+        такого запроса не задать, проверку пропускает — врать «всё
+        хорошо» тут нельзя, но и запрещать подключение не за что.
+        """
+        self.require_configured()
+        self.check_format()
+
+    def check_format(self) -> None:
+        """Похожи ли значения на то, что выдаёт этот банк.
+
+        Проверка грубая и нужна лишь там, где у банка не спросишь: она
+        ловит ровно ту ошибку, что уже случилась, — ключи от другого
+        банка, введённые в чужую форму.
+        """
+        for f in self.fields:
+            value = self.value(f.key)
+            if not value or not f.pattern:
+                continue
+            if not re.fullmatch(f.pattern, value):
+                raise AcquiringError(
+                    f"{self.title}: поле «{f.label}» заполнено не тем значением."
+                    + (f" {f.error}" if f.error else "")
+                )
+
 
 class NoAcquirer(BaseAcquirer):
     """Онлайн-оплаты нет: заведение принимает только наличные и карту на месте."""
@@ -181,6 +225,9 @@ class NoAcquirer(BaseAcquirer):
         raise AcquiringError("Онлайн-оплата у заведения не подключена")
 
     def read_callback(self, payload: dict, headers: dict) -> Result | None:
+        return None
+
+    def check(self) -> None:
         return None
 
 
@@ -400,9 +447,15 @@ class YooKassaAcquirer(BaseAcquirer):
 
     fields = (
         Field("shop_id", "shopId", env="YOOKASSA_SHOP_ID",
-              hint="Номер магазина из кабинета ЮKassa", secret=False),
+              hint="Номер магазина из кабинета ЮKassa, раздел «Ключи API» — только цифры",
+              secret=False,
+              pattern=r"\d{4,12}",
+              error="shopId — это число рядом с названием магазина."),
         Field("secret_key", "Секретный ключ", env="YOOKASSA_SECRET_KEY",
-              hint="Боевой ключ вида live_...; тестовый с настоящей картой не сработает"),
+              hint="Боевой ключ вида live_...; тестовый с настоящей картой не сработает",
+              pattern=r"(live|test)_[A-Za-z0-9_\-]{10,}",
+              error="Ключ ЮKassa начинается с live_ (или test_ для проверок) "
+                    "и выдаётся один раз при выпуске."),
     )
 
     @property
@@ -463,6 +516,16 @@ class YooKassaAcquirer(BaseAcquirer):
             # будет: деньги захолдированы, а не списаны — заказ не закрываем.
             pending=status in ("pending", "waiting_for_capture"),
         )
+
+    def check(self) -> None:
+        """Проверка доступов: спрашиваем банк о самом магазине.
+
+        /me — самый дешёвый авторизованный запрос: денег не двигает,
+        платежей не создаёт, а неверный ключ отсекает сразу же.
+        """
+        self.require_configured()
+        self.check_format()
+        self._get(f"{self.api}/me")
 
     def _post(self, url: str, body: dict, *, idempotence_key: str) -> dict:
         try:

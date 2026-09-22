@@ -154,15 +154,24 @@ CELERY_RESULT_BACKEND = os.getenv("REDIS_URL", "redis://redis:6379/0")
 LICENSE_KEY = os.getenv("LICENSE_KEY", "")
 LICENSE_URL = os.getenv("LICENSE_URL", "https://padacha.ru/api/license/")
 
-if LICENSE_KEY:
-    from celery.schedules import crontab
+from celery.schedules import crontab  # noqa: E402
 
-    CELERY_BEAT_SCHEDULE = {
-        "sync-license": {
-            "task": "core.tasks.sync_license_task",
-            # ночью, в неровное время — чтобы точки не стучались хором
-            "schedule": crontab(hour=4, minute=17),
-        },
+CELERY_BEAT_SCHEDULE = {
+    # Доводка онлайн-оплат: уведомление банка может не прийти вовсе (в
+    # кабинете не прописан адрес) или потеряться, и тогда опрос —
+    # единственный способ узнать, что гость заплатил. Пять минут — это
+    # предел, сколько заказ может простоять оплаченным, но открытым.
+    "settle-payments": {
+        "task": "payments.tasks.settle_pending_payments_task",
+        "schedule": crontab(minute="*/5"),
+    },
+}
+
+if LICENSE_KEY:
+    CELERY_BEAT_SCHEDULE["sync-license"] = {
+        "task": "core.tasks.sync_license_task",
+        # ночью, в неровное время — чтобы точки не стучались хором
+        "schedule": crontab(hour=4, minute=17),
     }
 
 # ─────────── LLM (OpenRouter) для распознавания чеков ───────────

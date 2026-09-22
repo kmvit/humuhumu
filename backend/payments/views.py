@@ -19,7 +19,7 @@ from rest_framework.views import APIView
 from core.models import SiteSettings
 from users.permissions import IsAdminRole
 
-from .acquiring import NoAcquirer, acquirer_class, acquirers, get_acquirer
+from .acquiring import AcquiringError, NoAcquirer, acquirer_class, acquirers, get_acquirer
 from .models import AcquiringCredentials, Payment
 from .services import apply_payment_result
 
@@ -88,7 +88,7 @@ class AcquiringSettingsView(APIView):
     permission_classes = [IsAdminRole]
 
     def get(self, request):
-        return Response(self._state())
+        return Response(self._state(request))
 
     def put(self, request):
         provider = str(request.data.get("provider", "")).strip()
@@ -108,9 +108,15 @@ class AcquiringSettingsView(APIView):
             site.save(update_fields=["acquiring", "online_payment_on"])
 
         if provider != NoAcquirer.name and values:
-            self._save_credentials(provider, values)
+            try:
+                self._save_credentials(provider, values)
+            except AcquiringError as e:
+                # Ключи не приняты банком — не сохраняем: иначе владелец
+                # ушёл бы с ощущением «подключено», а ошибку первым увидел
+                # бы гость, уже собравший заказ.
+                return Response({"detail": str(e)}, status=400)
 
-        return Response(self._state())
+        return Response(self._state(request))
 
     def delete(self, request):
         """Стереть доступы выбранного банка (сменился договор, утёк ключ)."""
@@ -119,12 +125,12 @@ class AcquiringSettingsView(APIView):
         if site.online_payment_on:
             site.online_payment_on = False
             site.save(update_fields=["online_payment_on"])
-        return Response(self._state())
+        return Response(self._state(request))
 
     def _save_credentials(self, provider: str, values: dict) -> None:
         known = {f.key for f in acquirer_class(provider).fields}
-        row, _ = AcquiringCredentials.objects.get_or_create(provider=provider)
-        stored = row.values()
+        row = AcquiringCredentials.objects.filter(provider=provider).first()
+        stored = row.values() if row else {}
         for key, value in values.items():
             if key not in known or not isinstance(value, str):
                 continue
@@ -133,10 +139,16 @@ class AcquiringSettingsView(APIView):
             # всё разом — отдельная кнопка, DELETE.
             if value.strip():
                 stored[key] = value.strip()
+        # Проверяем то, что получилось, ДО записи: банк отвечает на
+        # пробный запрос за доли секунды, а неверный ключ иначе всплывёт
+        # только на первом живом платеже.
+        acquirer_class(provider)(stored).check()
+        if row is None:
+            row = AcquiringCredentials(provider=provider)
         row.set_values(stored)
         row.save()
 
-    def _state(self) -> dict:
+    def _state(self, request) -> dict:
         site = SiteSettings.load()
         acquirer = get_acquirer(site.acquiring)
         return {
@@ -144,6 +156,15 @@ class AcquiringSettingsView(APIView):
             "ready": acquirer.configured(),
             "online_payment_on": site.online_payment_on,
             "filled": acquirer.filled(),
+            # Адрес уведомлений владелец вписывает в кабинете банка сам —
+            # взять его больше неоткуда, а без него банк молчит об оплате.
+            # Домен берём из запроса: у каждого заведения он свой, по нему
+            # уведомление и находит нужное кафе.
+            "callback_url": (
+                request.build_absolute_uri(f"/api/payments/callback/{acquirer.name}/")
+                if site.acquiring != NoAcquirer.name
+                else ""
+            ),
             "banks": [
                 {
                     "name": cls.name,

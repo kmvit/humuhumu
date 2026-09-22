@@ -32,6 +32,8 @@ type State = {
   ready: boolean;
   online_payment_on: boolean;
   filled: Record<string, boolean>;
+  /** Адрес, который владелец вписывает в кабинете банка (пусто — банка нет). */
+  callback_url: string;
   banks: Bank[];
 };
 
@@ -196,6 +198,37 @@ export default function OnlinePayment() {
                 </button>
               ))}
           </div>
+
+          {/* Уведомление банка приходит на этот адрес, и прописывают его
+              в кабинете банка руками. Пока он не прописан, оплаченный
+              заказ закрывается с задержкой — опросом, — а гость успевает
+              увидеть кнопку «оплатить» на уже оплаченном заказе. */}
+          {state.ready && state.callback_url && (
+            <div className="rule-top mt-3 pt-3">
+              <span className="label">Адрес для уведомлений банка</span>
+              <p className="muted sm m-0">
+                Впишите его в кабинете банка — тогда заказ закроется сразу после оплаты.
+              </p>
+              <div className="wrap mt-2">
+                <code className="sm" style={{ wordBreak: "break-all", alignSelf: "center" }}>
+                  {state.callback_url}
+                </code>
+                <button
+                  className="btn sm ghost"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(state.callback_url);
+                      notify("Адрес скопирован", "ok");
+                    } catch {
+                      notify("Скопируйте адрес вручную", "bad");
+                    }
+                  }}
+                >
+                  <Icon name="copy" size={15} /> Скопировать
+                </button>
+              </div>
+            </div>
+          )}
 
           <p className="muted sm mt-3 m-0">
             {state.ready
