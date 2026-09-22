@@ -313,6 +313,9 @@ export default function MenuReels() {
                     <div className="reel-info">
                       <h2>{p.name}</h2>
                       {p.description && <p className="reel-desc">{p.description}</p>}
+                      {p.image_is_generated && p.image && (
+                        <p className="reel-desc">Фото — иллюстрация</p>
+                      )}
                       <div className="reel-meta">
                         <span className="reel-price">{Number(v.price).toLocaleString("ru")} ₽</span>
                         {v.weight_grams ? <span className="reel-weight">{v.weight_grams} г</span> : null}

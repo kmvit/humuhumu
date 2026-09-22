@@ -1,16 +1,33 @@
+import os
 import tempfile
 from decimal import Decimal
 from io import BytesIO
+from unittest import mock
 
 from PIL import Image
+from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
+from core.images import GeneratedImage
+from core.llm import LLMError
 from orders.models import Order, OrderItem
 from users.models import User
 
-from .models import Category, Modifier, ModifierGroup, Product, ProductVariant
+from .image_ai import build_prompt
+from .models import (
+    Category,
+    DishwareSample,
+    ImageGeneration,
+    ImageQuota,
+    Modifier,
+    ModifierGroup,
+    Product,
+    ProductVariant,
+)
+from .services import image_quota
 
 
 def image_file(name="dish.png"):
@@ -475,3 +492,199 @@ class ModifierGroupApiTests(CatalogAdminBase):
                 if p["id"] == self.latte.id][0]
         self.assertEqual(card["modifier_groups"][0]["name"], "Молоко")
 
+
+
+def _png_bytes(color="blue"):
+    buf = BytesIO()
+    Image.new("RGB", (64, 64), color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), IMAGE_GEN_ASYNC=False)
+class MenuImagePromptTests(CatalogAdminBase):
+    """Запрос к модели: в нём должна быть наша посуда и запрет на надписи."""
+
+    def test_prompt_mentions_dishware_and_forbids_text(self):
+        sample = DishwareSample.objects.create(
+            name="Стакан 0,4", note="прозрачный, с крышкой", image=image_file("cup.png")
+        )
+        self.latte.description = "Эспрессо и молоко"
+        prompt = build_prompt(
+            self.latte, [sample], style="wood", extra="наши зелёные салфетки"
+        )
+        self.assertIn("Латте", prompt)
+        self.assertIn("Эспрессо и молоко", prompt)
+        self.assertIn("Стакан 0,4", prompt)
+        self.assertIn("прозрачный, с крышкой", prompt)
+        self.assertIn("деревянном столе", prompt)
+        self.assertIn("наши зелёные салфетки", prompt)
+        self.assertIn("Без текста", prompt)
+
+    def test_prompt_without_dishware_stays_neutral(self):
+        prompt = build_prompt(self.latte, [])
+        self.assertIn("нейтральная", prompt)
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), IMAGE_GEN_ASYNC=False)
+class MenuImageBatchTests(CatalogAdminBase):
+    """Пачка генераций: кто может её запустить, сколько стоит и что рисует."""
+
+    def setUp(self):
+        super().setUp()
+        self.raf = Product.objects.create(category=self.cat, name="Раф")
+        ProductVariant.objects.create(product=self.raf, price=Decimal("320"))
+        self.cup = DishwareSample.objects.create(
+            name="Стакан 0,4", image=image_file("cup.png"), category=self.cat
+        )
+
+    def _fake(self, color="blue", cost=0.019):
+        """Подмена модели: рисовать по-настоящему в тестах нечем и не за что."""
+        return mock.patch(
+            "catalog.image_ai.generate_image",
+            return_value=(GeneratedImage(data=_png_bytes(color), mime="image/png"), cost),
+        )
+
+    def test_waiter_cannot_generate(self):
+        self.auth(self.waiter)
+        res = self.client.post(
+            "/api/image-batches/", {"products": [self.latte.id]}, format="json"
+        )
+        self.assertEqual(res.status_code, 403)
+
+    def test_category_batch_draws_dishes_without_photo(self):
+        self.latte.image.save("own.png", ContentFile(_png_bytes("red")), save=True)
+        self.auth(self.admin)
+        with self._fake(), self.captureOnCommitCallbacks(execute=True):
+            res = self.client.post(
+                "/api/image-batches/",
+                {"category": self.cat.id, "only_without_photo": True},
+                format="json",
+            )
+        self.assertEqual(res.status_code, 201)
+        # у латте фото уже есть — рисуем только раф. В ответе картинка ещё
+        # рисуется: фронт поллит пачку, пока pending не станет нулём.
+        self.assertEqual(
+            res.data["counts"],
+            {"total": 1, "pending": 1, "ready": 0, "failed": 0},
+        )
+        generation = ImageGeneration.objects.get()
+        self.assertEqual(generation.status, ImageGeneration.Status.READY)
+        self.assertEqual(generation.product_id, self.raf.id)
+        self.assertTrue(generation.image)
+        # посуда категории подставилась сама, отдельно выбирать не пришлось
+        self.assertEqual(list(generation.dishware.all()), [self.cup])
+        # счётчик и деньги
+        self.assertEqual(image_quota()[0], 1)
+        self.assertEqual(generation.cost_usd, Decimal("0.0190"))
+
+    def test_variants_multiply_the_bill(self):
+        self.auth(self.admin)
+        with self._fake(), self.captureOnCommitCallbacks(execute=True):
+            self.client.post(
+                "/api/image-batches/",
+                {"products": [self.latte.id, self.raf.id], "variants": 2},
+                format="json",
+            )
+        self.assertEqual(ImageGeneration.objects.count(), 4)
+        self.assertEqual(image_quota()[0], 4)
+
+    def test_batch_over_the_monthly_limit_is_refused(self):
+        ImageQuota.objects.create(
+            month=timezone.localdate().replace(day=1),
+            used=ImageQuota.MONTHLY_LIMIT - 1,
+        )
+        self.auth(self.admin)
+        with self._fake():
+            res = self.client.post(
+                "/api/image-batches/",
+                {"products": [self.latte.id, self.raf.id]},
+                format="json",
+            )
+        self.assertEqual(res.status_code, 402)
+        # ни одной задачи не поставлено: отказ до обращения к модели
+        self.assertEqual(ImageGeneration.objects.count(), 0)
+
+    def test_failed_generation_keeps_the_reason(self):
+        self.auth(self.admin)
+        broken = mock.patch(
+            "catalog.image_ai.generate_image", side_effect=LLMError("туннель лёг")
+        )
+        with broken, self.captureOnCommitCallbacks(execute=True):
+            self.client.post(
+                "/api/image-batches/", {"products": [self.latte.id]}, format="json"
+            )
+        generation = ImageGeneration.objects.get()
+        self.assertEqual(generation.status, ImageGeneration.Status.FAILED)
+        self.assertIn("туннель лёг", generation.error)
+        # неудача всё равно списана: обращение к модели оплачено нами
+        self.assertEqual(image_quota()[0], 1)
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), IMAGE_GEN_ASYNC=False)
+class MenuImageApplyTests(CatalogAdminBase):
+    """Сгенерированное попадает в меню только руками владельца."""
+
+    def setUp(self):
+        super().setUp()
+        self.generation = ImageGeneration.objects.create(
+            product=self.latte, prompt="фото латте", status=ImageGeneration.Status.READY
+        )
+        self.generation.image.save(
+            "gen.png", ContentFile(_png_bytes("green")), save=True
+        )
+
+    def test_apply_copies_photo_into_the_menu(self):
+        self.auth(self.admin)
+        res = self.client.post(f"/api/image-generations/{self.generation.id}/apply/")
+        self.assertEqual(res.status_code, 200)
+        self.latte.refresh_from_db()
+        self.assertTrue(self.latte.image)
+        self.assertTrue(self.latte.thumbnail)  # превью собралось само
+        self.assertTrue(self.latte.image_is_generated)
+
+    def test_menu_photo_survives_deleting_the_draft(self):
+        """Файл копируется, а не переиспользуется: уборка в галерее не должна
+        оставлять меню без картинки."""
+        self.auth(self.admin)
+        self.client.post(f"/api/image-generations/{self.generation.id}/apply/")
+        self.latte.refresh_from_db()
+        path = self.latte.image.path
+        self.client.delete(f"/api/image-generations/{self.generation.id}/")
+        self.assertTrue(os.path.exists(path))
+
+    def test_own_photo_removes_the_illustration_mark(self):
+        self.auth(self.admin)
+        self.client.post(f"/api/image-generations/{self.generation.id}/apply/")
+        self.client.patch(
+            f"/api/products/{self.latte.id}/", {"image": image_file()}, format="multipart"
+        )
+        self.latte.refresh_from_db()
+        self.assertFalse(self.latte.image_is_generated)
+
+    def test_pending_generation_cannot_be_applied(self):
+        self.generation.status = ImageGeneration.Status.PENDING
+        self.generation.save(update_fields=["status"])
+        self.auth(self.admin)
+        res = self.client.post(f"/api/image-generations/{self.generation.id}/apply/")
+        self.assertEqual(res.status_code, 400)
+
+    def test_only_one_photo_is_marked_as_current(self):
+        second = ImageGeneration.objects.create(
+            product=self.latte, prompt="ещё раз", status=ImageGeneration.Status.READY
+        )
+        second.image.save("gen2.png", ContentFile(_png_bytes("yellow")), save=True)
+        self.auth(self.admin)
+        self.client.post(f"/api/image-generations/{self.generation.id}/apply/")
+        self.client.post(f"/api/image-generations/{second.id}/apply/")
+        self.generation.refresh_from_db()
+        second.refresh_from_db()
+        self.assertIsNone(self.generation.applied_at)
+        self.assertIsNotNone(second.applied_at)
+
+    def test_guest_sees_that_the_photo_is_drawn(self):
+        self.auth(self.admin)
+        self.client.post(f"/api/image-generations/{self.generation.id}/apply/")
+        self.client.credentials()
+        res = self.client.get("/api/products/")
+        card = next(p for p in res.data if p["id"] == self.latte.id)
+        self.assertTrue(card["image_is_generated"])

@@ -261,6 +261,11 @@ export default function Menu() {
                   <div className="menu-item">
                     <h3>{p.name} <span className="muted sm">#{p.id}</span></h3>
                     {p.description && <p className="menu-desc">{p.description}</p>}
+                    {/* Фото нарисовано нейросетью — гость вправе знать, что
+                        перед ним не снимок его порции. */}
+                    {p.image_is_generated && p.thumbnail && (
+                      <p className="menu-desc">Фото — иллюстрация</p>
+                    )}
                     {p.variants.length > 1 && (
                       <div className="size-row" role="group" aria-label="Объём">
                         {p.variants.map((opt) => (

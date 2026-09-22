@@ -159,6 +159,8 @@ export interface Product {
   description: string;
   image: string | null;
   thumbnail: string | null;
+  /** Фото нарисовано нейросетью — в меню рядом с ним стоит «иллюстрация». */
+  image_is_generated: boolean;
   is_available: boolean;
   sort_order: number;
   /** Минимум один. Гостю приходят только продающиеся. */
@@ -578,4 +580,60 @@ export interface LoyaltyMember {
   birth_date: string | null;
   balance: string;
   created_at: string;
+}
+
+// ——— фото блюд нейросетью ———
+
+/** Образец посуды: в нём нейросеть рисует блюда заведения. */
+export interface DishwareSample {
+  id: number;
+  name: string;
+  image: string;
+  note: string;
+  category: number | null;
+  sort_order: number;
+  is_active: boolean;
+}
+
+export type PhotoStyle = "studio" | "counter" | "wood" | "dark";
+
+/** Стиль фото меню — один на заведение, чтобы карточки выглядели как серия. */
+export interface MenuImageSettings {
+  id: number;
+  style: PhotoStyle;
+  extra_prompt: string;
+  aspect_ratio: string;
+  background: string | null;
+}
+
+export interface ImageGeneration {
+  id: number;
+  batch: number | null;
+  product: number;
+  product_name: string;
+  prompt: string;
+  model: string;
+  image: string | null;
+  status: "pending" | "ready" | "failed";
+  error: string;
+  cost_usd: string;
+  /** Когда эту картинку поставили в меню; у блюда такая одна. */
+  applied_at: string | null;
+  created_at: string;
+}
+
+export interface ImageBatch {
+  id: number;
+  category: number | null;
+  created_at: string;
+  counts: { total: number; pending: number; ready: number; failed: number };
+  generations: ImageGeneration[];
+}
+
+/** Остаток генераций в месяце и потраченное на них. */
+export interface ImageQuota {
+  used: number;
+  limit: number;
+  left: number;
+  spent_usd: string;
 }

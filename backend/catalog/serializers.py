@@ -2,6 +2,10 @@ from rest_framework import serializers
 
 from .models import (
     Category,
+    DishwareSample,
+    ImageBatch,
+    ImageGeneration,
+    MenuImageSettings,
     Modifier,
     ModifierEffect,
     ModifierGroup,
@@ -74,6 +78,8 @@ class ProductSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     image = RelativeImageField(required=False, allow_null=True)
     thumbnail = serializers.SerializerMethodField()
+    # Только чтение: флаг ставит применение генерации, а не клиент.
+    image_is_generated = serializers.BooleanField(read_only=True)
     likes = serializers.SerializerMethodField()
     # Варианты приходят и уходят вместе с товаром: гостю нечего делать с
     # карточкой без цен, а админка правит их одной формой. Запись — через
@@ -105,6 +111,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "description",
             "image",
             "thumbnail",
+            "image_is_generated",
             "is_available",
             "sort_order",
             "variants",
@@ -115,6 +122,19 @@ class ProductSerializer(serializers.ModelSerializer):
             "prep_minutes",
             "is_stopped",
         )
+
+    def create(self, validated_data):
+        if "image" in validated_data:
+            validated_data["image_is_generated"] = False
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        # Владелец загрузил своё фото или убрал картинку — подпись
+        # «иллюстрация» с карточки уходит. Обратно флаг ставит только
+        # применение сгенерированного фото.
+        if "image" in validated_data:
+            validated_data["image_is_generated"] = False
+        return super().update(instance, validated_data)
 
     def _first(self, obj):
         # prefetch уже отдал варианты списком — не ходим в базу заново
@@ -149,3 +169,81 @@ class ProductSerializer(serializers.ModelSerializer):
         if obj.thumbnail:
             return obj.thumbnail.url
         return obj.image.url if obj.image else None
+
+
+class DishwareSampleSerializer(serializers.ModelSerializer):
+    image = RelativeImageField()
+
+    class Meta:
+        model = DishwareSample
+        fields = (
+            "id", "name", "image", "note", "category", "sort_order", "is_active",
+        )
+
+
+class MenuImageSettingsSerializer(serializers.ModelSerializer):
+    background = RelativeImageField(required=False, allow_null=True)
+
+    class Meta:
+        model = MenuImageSettings
+        fields = ("id", "style", "extra_prompt", "aspect_ratio", "background")
+
+
+class ImageGenerationSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source="product.name", read_only=True)
+    image = RelativeImageField(read_only=True)
+
+    class Meta:
+        model = ImageGeneration
+        fields = (
+            "id", "batch", "product", "product_name", "prompt", "model", "image",
+            "status", "error", "cost_usd", "applied_at", "created_at",
+        )
+        read_only_fields = fields
+
+
+class ImageBatchSerializer(serializers.ModelSerializer):
+    """Пачка с прогрессом: фронт поллит её, пока рисуется."""
+
+    generations = ImageGenerationSerializer(many=True, read_only=True)
+    counts = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ImageBatch
+        fields = ("id", "category", "created_at", "counts", "generations")
+        read_only_fields = fields
+
+    def get_counts(self, obj):
+        rows = list(obj.generations.all())
+        return {
+            "total": len(rows),
+            "pending": sum(1 for r in rows if r.status == ImageGeneration.Status.PENDING),
+            "ready": sum(1 for r in rows if r.status == ImageGeneration.Status.READY),
+            "failed": sum(1 for r in rows if r.status == ImageGeneration.Status.FAILED),
+        }
+
+
+class ImageBatchCreateSerializer(serializers.Serializer):
+    """Что нарисовать: конкретные блюда или категория целиком."""
+
+    products = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=Product.objects, required=False
+    )
+    category = serializers.PrimaryKeyRelatedField(
+        queryset=Category.objects, required=False, allow_null=True
+    )
+    #: для категории: только блюда без фото — обычный случай «заведи меню»
+    only_without_photo = serializers.BooleanField(required=False, default=True)
+    #: сколько вариантов на блюдо, чтобы владельцу было из чего выбрать
+    variants = serializers.IntegerField(required=False, default=1, min_value=1, max_value=3)
+    dishware = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=DishwareSample.objects, required=False
+    )
+    extra = serializers.CharField(required=False, allow_blank=True, default="")
+
+    def validate(self, attrs):
+        if not attrs.get("products") and not attrs.get("category"):
+            raise serializers.ValidationError(
+                "Укажите блюда или категорию — иначе рисовать нечего."
+            )
+        return attrs

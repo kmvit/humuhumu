@@ -5,6 +5,11 @@ from inventory.admin import RecipeItemInline
 
 from .models import (
     Category,
+    DishwareSample,
+    ImageBatch,
+    ImageGeneration,
+    ImageQuota,
+    MenuImageSettings,
     Modifier,
     ModifierEffect,
     ModifierGroup,
@@ -134,3 +139,40 @@ class ModifierEffectAdmin(admin.ModelAdmin):
     list_filter = ("kind", "modifier__group")
     search_fields = ("modifier__name", "item__name")
 
+
+
+@admin.register(DishwareSample)
+class DishwareSampleAdmin(admin.ModelAdmin):
+    """Образцы посуды — в них нейросеть рисует блюда."""
+
+    list_display = ("name", "note", "category", "is_active", "sort_order")
+    list_filter = ("category", "is_active")
+    list_editable = ("is_active", "sort_order")
+    search_fields = ("name", "note")
+
+
+@admin.register(MenuImageSettings)
+class MenuImageSettingsAdmin(admin.ModelAdmin):
+    list_display = ("style", "aspect_ratio")
+
+
+@admin.register(ImageQuota)
+class ImageQuotaAdmin(admin.ModelAdmin):
+    """Лимит генераций. «Докуплено» — оплаченный пакет сверх тарифа."""
+
+    list_display = ("month", "used", "limit", "extra")
+    list_editable = ("extra",)
+
+
+@admin.register(ImageBatch)
+class ImageBatchAdmin(admin.ModelAdmin):
+    list_display = ("__str__", "category", "created_by", "created_at")
+    list_filter = ("category",)
+
+
+@admin.register(ImageGeneration)
+class ImageGenerationAdmin(admin.ModelAdmin):
+    list_display = ("product", "status", "cost_usd", "applied_at", "created_at")
+    list_filter = ("status", "product__category")
+    search_fields = ("product__name",)
+    readonly_fields = ("prompt", "model", "cost_usd", "error")

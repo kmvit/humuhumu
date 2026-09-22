@@ -324,3 +324,101 @@ class TenancyGuardTests(TestCase):
         self.assertEqual(created.count(), 2)
         for category in created:
             self.assertEqual(category.organization, current_organization())
+
+
+@override_settings(
+    OPENAI_API_KEY="test-key",
+    OPENAI_BASE_URL="https://openrouter.ai/api/v1",
+    OPENAI_IMAGE_MODEL="google/gemini-2.5-flash-image",
+    OPENAI_IMAGE_PROVIDER="google-ai-studio/flex",
+    OPENAI_PROXY_URL="",
+)
+class ImageApiTests(TestCase):
+    """Запрос к Image API OpenRouter.
+
+    Форму запроса не проверит никто, кроме теста: живое обращение стоит
+    денег и ходит через туннель, которого в CI нет. А ошибиться тут легко —
+    картинки у OpenRouter живут на своём эндпоинте, не в chat completions.
+    """
+
+    def _answer(self, status_code=200, body=None):
+        response = mock.Mock()
+        response.status_code = status_code
+        response.json.return_value = body or {}
+        response.text = json.dumps(body or {})
+        client = mock.MagicMock()
+        client.__enter__.return_value.post.return_value = response
+        return client
+
+    def test_request_carries_prompt_references_and_provider(self):
+        import base64
+
+        from core.images import generate_image
+
+        client = self._answer(
+            body={
+                "data": [
+                    {
+                        "b64_json": base64.b64encode(b"picture").decode(),
+                        "media_type": "image/png",
+                    }
+                ],
+                "usage": {"cost": 0.019},
+            }
+        )
+        with mock.patch("httpx.Client", return_value=client):
+            image, cost = generate_image(
+                "латте в нашем стакане",
+                references=[(b"cup", "image/jpeg")],
+                aspect_ratio="1:1",
+            )
+
+        post = client.__enter__.return_value.post
+        url, kwargs = post.call_args[0][0], post.call_args[1]
+        self.assertEqual(url, "https://openrouter.ai/api/v1/images")
+        payload = kwargs["json"]
+        self.assertEqual(payload["model"], "google/gemini-2.5-flash-image")
+        self.assertEqual(payload["prompt"], "латте в нашем стакане")
+        self.assertEqual(payload["aspect_ratio"], "1:1")
+        # образец уезжает data-ссылкой: наш /media снаружи не открывается
+        reference = payload["input_references"][0]["image_url"]["url"]
+        self.assertTrue(reference.startswith("data:image/jpeg;base64,"))
+        # дешёвый эндпоинт выбран явно, но падать из-за него нельзя
+        self.assertEqual(
+            payload["provider"], {"only": ["google-ai-studio/flex"], "allow_fallbacks": True}
+        )
+        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer test-key")
+        self.assertEqual(image.data, b"picture")
+        self.assertEqual(image.extension, "png")
+        # цену берём из ответа, а не считаем сами: тарифы меняются без нас
+        self.assertEqual(cost, 0.019)
+
+    def test_error_from_openrouter_is_readable(self):
+        from core.images import generate_image
+        from core.llm import LLMError
+
+        client = self._answer(
+            status_code=402, body={"error": {"message": "Insufficient credits"}}
+        )
+        with mock.patch("httpx.Client", return_value=client):
+            with self.assertRaises(LLMError) as caught:
+                generate_image("латте")
+        self.assertIn("402", str(caught.exception))
+        self.assertIn("Insufficient credits", str(caught.exception))
+
+    def test_answer_without_picture_is_an_error(self):
+        from core.images import generate_image
+        from core.llm import LLMError
+
+        client = self._answer(body={"data": []})
+        with mock.patch("httpx.Client", return_value=client):
+            with self.assertRaises(LLMError):
+                generate_image("латте")
+
+    @override_settings(OPENAI_API_KEY="")
+    def test_without_a_key_we_say_so(self):
+        from core.images import generate_image
+        from core.llm import LLMError
+
+        with self.assertRaises(LLMError):
+            generate_image("латте")

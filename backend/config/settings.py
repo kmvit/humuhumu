@@ -185,3 +185,19 @@ OPENAI_RECEIPT_TIMEOUT = float(os.getenv("OPENAI_RECEIPT_TIMEOUT", "60"))
 # Распознавание чека через celery-воркер (сервис `worker` в compose). Если воркера
 # нет — поставь "0", тогда распознавание пойдёт синхронно прямо в запросе.
 RECEIPT_SCAN_ASYNC = os.getenv("RECEIPT_SCAN_ASYNC", "1") == "1"
+
+# ─────────── Генерация фото блюд (OpenRouter Image API) ───────────
+# Картинки у OpenRouter живут на своём эндпоинте POST /images, а не в
+# chat completions, поэтому ходим туда напрямую httpx — но через тот же
+# ключ, базовый адрес и туннель, что и распознавание чеков.
+# Нанобанана: лучше всех повторяет нашу посуду с приложенного фото.
+OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "google/gemini-2.5-flash-image")
+# Эндпоинт провайдера: flex вдвое дешевле обычного (≈1,7 ₽ против ≈3,5 ₽
+# за картинку) ценой скорости — а генерим мы в фоне, торопиться некуда.
+# Пустая строка — пусть OpenRouter выбирает сам.
+OPENAI_IMAGE_PROVIDER = os.getenv("OPENAI_IMAGE_PROVIDER", "google-ai-studio/flex")
+# flex-тариф думает дольше обычного: минута с запасом.
+OPENAI_IMAGE_TIMEOUT = float(os.getenv("OPENAI_IMAGE_TIMEOUT", "180"))
+# Генерация через celery-воркер. Нет воркера — поставь "0", тогда картинка
+# будет рисоваться прямо в запросе (и держать его те самые полминуты).
+IMAGE_GEN_ASYNC = os.getenv("IMAGE_GEN_ASYNC", "1") == "1"

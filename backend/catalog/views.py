@@ -1,18 +1,26 @@
 import json
 
+from django.conf import settings
+from django.core.files.base import ContentFile
 from django.db import transaction
 from django.db.models import Count, Prefetch, ProtectedError
-from rest_framework import serializers, status, viewsets
+from django.utils import timezone
+from rest_framework import generics, mixins, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
-from users.permissions import ReadOnlyOrAdmin
+from users.permissions import IsAdminRole, ReadOnlyOrAdmin
 
 from inventory.models import StockItem
 
+from .image_ai import build_prompt
 from .models import (
     Category,
+    DishwareSample,
+    ImageBatch,
+    ImageGeneration,
+    MenuImageSettings,
     Modifier,
     ModifierEffect,
     ModifierGroup,
@@ -22,9 +30,16 @@ from .models import (
 )
 from .serializers import (
     CategorySerializer,
+    DishwareSampleSerializer,
+    ImageBatchCreateSerializer,
+    ImageBatchSerializer,
+    ImageGenerationSerializer,
+    MenuImageSettingsSerializer,
     ModifierGroupSerializer,
     ProductSerializer,
 )
+from .services import consume_image_quota, image_quota, month_spend
+from .tasks import generate_product_image
 
 
 class ProtectedDeleteMixin:
@@ -393,3 +408,292 @@ class ModifierGroupViewSet(ProtectedDeleteMixin, viewsets.ModelViewSet):
         kwargs["partial"] = True
         return self.update(request, *args, **kwargs)
 
+
+
+class DishwareSampleViewSet(viewsets.ModelViewSet):
+    """Образцы посуды: в них нейросеть рисует блюда. Только владелец."""
+
+    serializer_class = DishwareSampleSerializer
+    permission_classes = [IsAdminRole]
+
+    def get_queryset(self):
+        # get_queryset, а не queryset на классе: запрос с фильтром по
+        # заведению вычислился бы один раз при импорте. См. core/tenancy.py.
+        return DishwareSample.objects.select_related("category")
+
+
+class MenuImageSettingsView(generics.RetrieveUpdateAPIView):
+    """Стиль фото меню — один на заведение."""
+
+    serializer_class = MenuImageSettingsSerializer
+    permission_classes = [IsAdminRole]
+
+    def get_object(self):
+        return MenuImageSettings.current()
+
+
+def _default_dishware(product):
+    """Чем сервировать, если владелец не выбрал посуду сам.
+
+    Сначала посуда, закреплённая за категорией блюда (кофе — стакан),
+    потом общая. Двух образцов достаточно: дальше модель начинает путаться,
+    что из этого на столе, а входные картинки ещё и платные.
+    """
+    qs = DishwareSample.objects.filter(is_active=True)
+    picked = list(qs.filter(category=product.category_id)[:2])
+    if not picked:
+        picked = list(qs.filter(category__isnull=True)[:2])
+    return picked
+
+
+def _apply_generation(generation):
+    """Поставить сгенерированное фото в меню.
+
+    Файл КОПИРУЕМ, а не ссылаемся на тот же: генерации владелец удаляет,
+    разбирая галерею, и фото блюда не должно исчезнуть из меню вместе с
+    черновиком.
+    """
+    product = generation.product
+    generation.image.open("rb")
+    try:
+        data = generation.image.read()
+    finally:
+        generation.image.close()
+
+    product.image.save(
+        f"ai-{generation.product_id}-{generation.pk}.webp",
+        ContentFile(data),
+        save=False,
+    )
+    product.image_is_generated = True
+    product.save()
+
+    # «В меню» у блюда ровно одна картинка — снимаем метку с прежней.
+    ImageGeneration.objects.filter(product=product).exclude(pk=generation.pk).update(
+        applied_at=None
+    )
+    generation.applied_at = timezone.now()
+    generation.save(update_fields=["applied_at", "updated_at"])
+
+
+def _enqueue(generations):
+    """Отправить генерации рисоваться.
+
+    on_commit, а не сразу: воркер расторопнее транзакции и успел бы не
+    найти запись, которую мы только что создали. Синхронный режим —
+    для установки без воркера, и пачку там лучше не запускать: запрос
+    провисит столько, сколько рисуются все картинки.
+    """
+    ids = [g.id for g in generations]
+
+    def run():
+        for generation_id in ids:
+            if settings.IMAGE_GEN_ASYNC:
+                generate_product_image.delay(generation_id)
+            else:
+                generate_product_image(generation_id)
+
+    transaction.on_commit(run)
+
+
+class ImageBatchViewSet(
+    mixins.CreateModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.ListModelMixin,
+    viewsets.GenericViewSet,
+):
+    """Генерация фото блюд: запуск пачки и её прогресс."""
+
+    #: Потолок на одно нажатие. Лимит месяца и так не даст разгуляться, но
+    #: пачка на сотню задач заняла бы воркер на час и заодно распознавание
+    #: чеков, которое живёт в той же очереди.
+    MAX_PER_BATCH = 30
+
+    serializer_class = ImageBatchSerializer
+    permission_classes = [IsAdminRole]
+
+    def get_queryset(self):
+        return ImageBatch.objects.prefetch_related("generations__product")
+
+    def create(self, request, *args, **kwargs):
+        ser = ImageBatchCreateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        data = ser.validated_data
+
+        products = list(data.get("products") or [])
+        category = data.get("category")
+        if not products and category is not None:
+            qs = Product.objects.filter(category=category)
+            if data["only_without_photo"]:
+                qs = qs.filter(image="")
+            products = list(qs.select_related("category").prefetch_related("variants"))
+        if not products:
+            return Response(
+                {"detail": "Нечего рисовать: у всех блюд категории уже есть фото."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        count = len(products) * data["variants"]
+        if count > self.MAX_PER_BATCH:
+            return Response(
+                {
+                    "detail": (
+                        f"За раз рисуем не больше {self.MAX_PER_BATCH} картинок, "
+                        f"а тут {count}. Разбейте на несколько подходов."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        used, limit = image_quota()
+        if used + count > limit:
+            left = max(0, limit - used)
+            return Response(
+                {
+                    "detail": (
+                        f"В этом месяце осталось {left} генераций из {limit}, "
+                        f"а в запросе {count}. Выберите меньше блюд или "
+                        "напишите в «Падачу» за дополнительным пакетом."
+                    )
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+
+        site = MenuImageSettings.current()
+        chosen = list(data.get("dishware") or [])
+        extra = " ".join(
+            part for part in (site.extra_prompt.strip(), data["extra"].strip()) if part
+        )
+
+        with transaction.atomic():
+            batch = ImageBatch.objects.create(
+                category=category, created_by=request.user
+            )
+            generations = []
+            for product in products:
+                dishware = chosen or _default_dishware(product)
+                variants = list(product.variants.all())
+                prompt = build_prompt(
+                    product,
+                    dishware,
+                    style=site.style,
+                    extra=extra,
+                    variant_label=variants[0].label if variants else "",
+                )
+                for _ in range(data["variants"]):
+                    generation = ImageGeneration.objects.create(
+                        batch=batch,
+                        product=product,
+                        prompt=prompt,
+                        created_by=request.user,
+                    )
+                    generation.dishware.set(dishware)
+                    generations.append(generation)
+            # Списываем до обращения к модели: запрос оплачен нами, чем бы
+            # он ни кончился (так же устроено распознавание чеков).
+            consume_image_quota(len(generations))
+            _enqueue(generations)
+
+        batch = self.get_queryset().get(pk=batch.pk)
+        return Response(
+            self.get_serializer(batch).data, status=status.HTTP_201_CREATED
+        )
+
+    @action(detail=True, methods=["post"])
+    def apply_all(self, request, pk=None):
+        """Поставить в меню по одному готовому фото на каждое блюдо пачки."""
+        batch = self.get_object()
+        applied = 0
+        seen = set()
+        for generation in batch.generations.select_related("product").order_by("id"):
+            if generation.product_id in seen:
+                continue
+            if generation.status != ImageGeneration.Status.READY or not generation.image:
+                continue
+            _apply_generation(generation)
+            seen.add(generation.product_id)
+            applied += 1
+        return Response({"applied": applied})
+
+    @action(detail=False)
+    def quota(self, request):
+        """Остаток генераций и потраченные деньги — для подсказки в UI."""
+        used, limit = image_quota()
+        return Response(
+            {
+                "used": used,
+                "limit": limit,
+                "left": max(0, limit - used),
+                "spent_usd": str(month_spend()),
+            }
+        )
+
+
+class ImageGenerationViewSet(
+    mixins.RetrieveModelMixin,
+    mixins.ListModelMixin,
+    mixins.DestroyModelMixin,
+    viewsets.GenericViewSet,
+):
+    """Сгенерированные картинки: галерея черновиков. Фильтры ?product=, ?batch=."""
+
+    serializer_class = ImageGenerationSerializer
+    permission_classes = [IsAdminRole]
+
+    def get_queryset(self):
+        qs = ImageGeneration.objects.select_related("product")
+        product = self.request.query_params.get("product")
+        if product:
+            qs = qs.filter(product_id=product)
+        batch = self.request.query_params.get("batch")
+        if batch:
+            qs = qs.filter(batch_id=batch)
+        return qs
+
+    def perform_destroy(self, instance):
+        # Картинку черновика удаляем вместе с записью: на неё никто не
+        # ссылается — в меню уехала копия.
+        if instance.image:
+            instance.image.delete(save=False)
+        instance.delete()
+
+    @action(detail=True, methods=["post"])
+    def apply(self, request, pk=None):
+        """Поставить эту картинку фото блюда."""
+        generation = self.get_object()
+        if generation.status != ImageGeneration.Status.READY or not generation.image:
+            return Response(
+                {"detail": "Картинка ещё не готова."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        _apply_generation(generation)
+        return Response(self.get_serializer(generation).data)
+
+    @action(detail=True, methods=["post"])
+    def retry(self, request, pk=None):
+        """Нарисовать ещё раз тем же запросом — новой попыткой.
+
+        Новая запись, а не перезапуск прежней: неудачный кадр владелец
+        сравнивает с новым, а списанную генерацию всё равно не вернуть.
+        """
+        source = self.get_object()
+        used, limit = image_quota()
+        if used >= limit:
+            return Response(
+                {"detail": f"Лимит месяца исчерпан: {used} из {limit}."},
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+
+        with transaction.atomic():
+            generation = ImageGeneration.objects.create(
+                batch=source.batch,
+                product=source.product,
+                prompt=source.prompt,
+                created_by=request.user,
+            )
+            generation.dishware.set(source.dishware.all())
+            consume_image_quota(1)
+            _enqueue([generation])
+        return Response(
+            self.get_serializer(generation).data, status=status.HTTP_201_CREATED
+        )

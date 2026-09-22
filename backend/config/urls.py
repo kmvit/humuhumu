@@ -6,7 +6,15 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from catalog.views import CategoryViewSet, ModifierGroupViewSet, ProductViewSet
+from catalog.views import (
+    CategoryViewSet,
+    DishwareSampleViewSet,
+    ImageBatchViewSet,
+    ImageGenerationViewSet,
+    MenuImageSettingsView,
+    ModifierGroupViewSet,
+    ProductViewSet,
+)
 from core.branding import app_icon, manifest
 from finance.views import ExpenseCategoryViewSet, ExpenseViewSet, PayrollViewSet
 from core.views import SiteSettingsView, license_refresh, license_status
@@ -39,6 +47,12 @@ router = DefaultRouter()
 router.register("categories", CategoryViewSet, basename="category")
 router.register("products", ProductViewSet, basename="product")
 router.register("modifier-groups", ModifierGroupViewSet, basename="modifiergroup")
+# фото блюд нейросетью: образцы посуды, пачки генераций и сами картинки
+router.register("dishware", DishwareSampleViewSet, basename="dishware")
+router.register("image-batches", ImageBatchViewSet, basename="image-batch")
+router.register(
+    "image-generations", ImageGenerationViewSet, basename="image-generation"
+)
 router.register("token-packages", TokenPackageViewSet, basename="token-package")
 router.register("orders", OrderViewSet, basename="order")
 router.register("tables", TableViewSet, basename="table")
@@ -69,6 +83,12 @@ api_patterns = [
     path("auth/register/", RegisterView.as_view(), name="register"),
     # сайт (публичные настройки)
     path("site/", SiteSettingsView.as_view(), name="site"),
+    # стиль сгенерированных фото меню (только владелец)
+    path(
+        "menu-images/settings/",
+        MenuImageSettingsView.as_view(),
+        name="menu-images-settings",
+    ),
     # пользователь
     path("users/me/", MeView.as_view(), name="me"),
     # кошелёк

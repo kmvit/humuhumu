@@ -6,6 +6,7 @@ import { useToast } from "../../components/ui/Toast";
 import type { Category, Product, ProductVariant, Station } from "../../types";
 import { decimalInput } from "../../decimal";
 import Modifiers from "./Modifiers";
+import PhotoStudio from "./PhotoStudio";
 
 /** Правка меню прямо в панели владельца, без Django-админки.
 
@@ -105,6 +106,10 @@ export default function Catalog() {
   const [delProduct, setDelProduct] = useState<number | null>(null);
   const [delCategory, setDelCategory] = useState<number | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
+  // Студия фото: какие блюда рисуем и как это подписать в шапке.
+  const [studio, setStudio] = useState<{ title: string; products: Product[] } | null>(
+    null
+  );
 
   async function load() {
     try {
@@ -364,6 +369,17 @@ export default function Catalog() {
                   </div>
                   <button
                     className="icon-btn"
+                    aria-label="Фото нейросетью"
+                    title="Сгенерировать фото блюдам категории"
+                    disabled={list.length === 0}
+                    onClick={() =>
+                      setStudio({ title: `Категория «${c.name}»`, products: list })
+                    }
+                  >
+                    <Icon name="spark" size={16} />
+                  </button>
+                  <button
+                    className="icon-btn"
                     aria-label="Изменить категорию"
                     title="Изменить категорию"
                     onClick={() =>
@@ -467,6 +483,16 @@ export default function Catalog() {
                           </span>
                           <button
                             className="icon-btn"
+                            aria-label="Фото нейросетью"
+                            title="Сгенерировать фото блюда"
+                            onClick={() =>
+                              setStudio({ title: p.name, products: [p] })
+                            }
+                          >
+                            <Icon name="spark" size={16} />
+                          </button>
+                          <button
+                            className="icon-btn"
                             aria-label="Изменить блюдо"
                             title="Изменить блюдо"
                             onClick={() => setPDraft(draftFrom(p))}
@@ -528,6 +554,15 @@ export default function Catalog() {
           onChange={setPDraft}
           onClose={() => setPDraft(null)}
           onSave={saveProduct}
+        />
+      )}
+
+      {studio && (
+        <PhotoStudio
+          title={studio.title}
+          products={studio.products}
+          onClose={() => setStudio(null)}
+          onApplied={load}
         />
       )}
 
