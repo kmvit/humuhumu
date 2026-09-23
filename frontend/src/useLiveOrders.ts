@@ -5,11 +5,20 @@ import { playChime } from "./sound";
 
 // Живая доска заказов: опрашивает `path` по интервалу. При появлении новых
 // заказов (по id) проигрывает сигнал (если sound=true) и подсвечивает их.
+//
+// `alertWhen` отвечает на вопрос «этот заказ уже пора брать в работу?».
+// Нужен из-за предоплаты на стойке: заказ появляется в списке, когда
+// гость его оформил, а к кофемашине идти в момент оплаты. Без фильтра
+// планшет пикал бы на заказ без денег и молчал бы, когда деньги пришли.
 export function useLiveOrders(
   path: string,
-  opts: { intervalMs?: number; sound?: boolean } = {}
+  opts: {
+    intervalMs?: number;
+    sound?: boolean;
+    alertWhen?: (order: Order) => boolean;
+  } = {}
 ) {
-  const { intervalMs = 5000, sound = true } = opts;
+  const { intervalMs = 5000, sound = true, alertWhen } = opts;
   const [orders, setOrders] = useState<Order[]>([]);
   const [highlight, setHighlight] = useState<Set<number>>(new Set());
   const seen = useRef<Set<number>>(new Set());
@@ -22,8 +31,11 @@ export function useLiveOrders(
     } catch {
       return;
     }
-    const fresh = data.filter((o) => !seen.current.has(o.id)).map((o) => o.id);
-    data.forEach((o) => seen.current.add(o.id));
+    // Заказ, который ещё не пора готовить, в «видели» не заносим — иначе
+    // он перестанет быть новым к тому моменту, когда станет нужным.
+    const ready = data.filter((o) => (alertWhen ? alertWhen(o) : true));
+    const fresh = ready.filter((o) => !seen.current.has(o.id)).map((o) => o.id);
+    ready.forEach((o) => seen.current.add(o.id));
     // на первой загрузке не сигналим — иначе пикнет на все текущие заказы
     if (!firstLoad.current && fresh.length) {
       if (sound) playChime();
@@ -38,7 +50,7 @@ export function useLiveOrders(
     }
     firstLoad.current = false;
     setOrders(data);
-  }, [path, sound]);
+  }, [path, sound, alertWhen]);
 
   useEffect(() => {
     reload();

@@ -39,7 +39,10 @@ export default function Counter() {
   // отдельный поток разъехался бы с основным по времени опроса.
   const prepay = site?.prepay_required === true && site?.online_payment === true;
   const { orders, setOrders, highlight, reload } = useLiveOrders(
-    prepay ? "/orders/?status=open&with_unpaid=1" : "/orders/?status=open"
+    prepay ? "/orders/?status=open&with_unpaid=1" : "/orders/?status=open",
+    // Сигнал — на оплаченный заказ, а не на оформленный: у окна один
+    // человек, и звать его к кофемашине надо, когда пришли деньги.
+    { alertWhen: useCallback((o: Order) => o.status !== "unpaid", []) }
   );
   const [busy, setBusy] = useState<number | null>(null);
   const [payFor, setPayFor] = useState<number | null>(null);
