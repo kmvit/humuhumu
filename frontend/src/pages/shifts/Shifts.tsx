@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { get, post, ApiError } from "../../api";
-import type { Payroll, Shift, StaffUser } from "../../types";
+import { get, patch, post, ApiError } from "../../api";
+import type { PaySettings, Payroll, Shift, StaffUser } from "../../types";
 import Icon, { type IconName } from "../../components/Icon";
 import { useAuth } from "../../auth";
 import { useToast } from "../../components/ui/Toast";
@@ -42,7 +42,7 @@ export default function Shifts() {
   const isManager = user?.role === "admin" || user?.role === "warehouse";
 
   const today = useMemo(() => isoDay(new Date()), []);
-  const [tab, setTab] = useState<"day" | "history" | "payroll">("day");
+  const [tab, setTab] = useState<"day" | "history" | "payroll" | "pay">("day");
   const [day, setDay] = useState(today);
   const [month, setMonth] = useState(() => today.slice(0, 7));
   const [monthDays, setMonthDays] = useState<Shift[]>([]);
@@ -55,6 +55,8 @@ export default function Shifts() {
   const [adding, setAdding] = useState(false);
   const [penEdit, setPenEdit] = useState(false); // менеджер правит ручной штраф
   const [penVal, setPenVal] = useState("");
+  // правила оплаты (ставка, процент, штрафной стол) — вкладка владельца
+  const [pay, setPay] = useState<PaySettings | null>(null);
   const notify = useToast();
 
   // период для истории и сводки — по умолчанию последние 30 дней
@@ -150,6 +152,28 @@ export default function Shifts() {
     }
   }
 
+  // Грузим только когда владелец открыл вкладку: остальным ручка закрыта,
+  // и лишний 403 на каждом заходе в раздел ни к чему.
+  useEffect(() => {
+    if (tab !== "pay" || pay) return;
+    get<PaySettings>("/shifts/settings/").then(setPay).catch(() => {});
+  }, [tab, pay]);
+
+  async function savePaySettings(next: Partial<PaySettings>) {
+    setBusy(true);
+    try {
+      setPay(await patch<PaySettings>("/shifts/settings/", next));
+      notify("Правила оплаты сохранены", "ok");
+      // Ставка применяется и к сегодняшней смене — перечитываем цифры.
+      loadDay(day).catch(() => {});
+      loadPeriod().catch(() => {});
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Не получилось", "bad");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveShiftPenalty() {
     setBusy(true);
     try {
@@ -211,7 +235,104 @@ export default function Shifts() {
         >
           <Icon name="wallet" size={16} /> К выплате
         </button>
+        {/* Ставка и процент — деньги персонала, их задаёт владелец.
+            Менеджер ставит состав смены, но не цену рабочего дня. */}
+        {user?.role === "admin" && (
+          <button
+            className={"navlink" + (tab === "pay" ? " active" : "")}
+            onClick={() => setTab("pay")}
+          >
+            <Icon name="cash" size={16} /> Оплата
+          </button>
+        )}
       </div>
+
+      {/* ——— правила оплаты (владелец) ——— */}
+      {tab === "pay" && (
+        pay === null ? (
+          <p className="muted mt-3">Загрузка…</p>
+        ) : (
+          <div className="card mt-3">
+            <strong className="title">Правила оплаты</strong>
+            <p className="muted subtitle m-0">
+              По ним считается выплата за смену. Правка действует на сегодняшнюю и
+              будущие смены; прошлые остаются со своими ставками — это история выплат.
+            </p>
+
+            <label className="field mt-3">
+              <span className="label">Оплата за смену, ₽</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                step="50"
+                value={pay.daily_rate}
+                onChange={(e) => setPay({ ...pay, daily_rate: e.target.value })}
+              />
+              <span className="muted sm">Сколько получает каждый за отработанный день.</span>
+            </label>
+
+            <label className="field mt-3">
+              <span className="label">Бонус, % от выручки</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                max={100}
+                step="0.5"
+                value={pay.bonus_percent}
+                onChange={(e) => setPay({ ...pay, bonus_percent: e.target.value })}
+              />
+              <span className="muted sm">
+                Процент от выручки дня. Делится поровну на всех в смене.
+              </span>
+            </label>
+
+            {/* На стойке столов нет вовсе — и штрафному столу там неоткуда взяться. */}
+            {pay.tables.length > 0 && (
+              <label className="field mt-3">
+                <span className="label">
+                  Штрафной стол <span className="muted">— необязательно</span>
+                </span>
+                <select
+                  className="input"
+                  value={pay.penalty_table ?? ""}
+                  onChange={(e) =>
+                    setPay({
+                      ...pay,
+                      penalty_table: e.target.value === "" ? null : Number(e.target.value),
+                    })
+                  }
+                >
+                  <option value="">Не использовать</option>
+                  {pay.tables.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+                <span className="muted sm">
+                  Стол, на который официант оформляет подарки гостям за косяки персонала.
+                  Сумма его заказов делится на всех в смене и вычитается из оплаты,
+                  в выручку дня не идёт.
+                </span>
+              </label>
+            )}
+
+            <button
+              className="btn sm mt-3"
+              disabled={busy}
+              onClick={() =>
+                savePaySettings({
+                  daily_rate: pay.daily_rate,
+                  bonus_percent: pay.bonus_percent,
+                  penalty_table: pay.penalty_table,
+                })
+              }
+            >
+              <Icon name="check" size={16} /> Сохранить
+            </button>
+          </div>
+        )
+      )}
 
       {/* ——— смена на день ——— */}
       {tab === "day" && shift && (

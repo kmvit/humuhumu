@@ -10,10 +10,12 @@ from rest_framework.response import Response
 
 from core.plans import RequiresShifts
 from users.models import User
-from users.permissions import IsStaffRole, IsWarehouseOrAdmin
+from users.permissions import IsAdminRole, IsStaffRole, IsWarehouseOrAdmin
 
-from .models import Shift
-from .services import add_member, payroll, remove_member, shift_report, user_name
+from orders.models import Table
+
+from .models import Shift, ShiftSettings
+from .services import add_member, money, payroll, remove_member, shift_report, user_name
 
 
 class ShiftViewSet(viewsets.ViewSet):
@@ -28,6 +30,10 @@ class ShiftViewSet(viewsets.ViewSet):
     def get_permissions(self):
         if self.action in ("add_member", "remove_member", "staff", "set_penalty"):
             return [IsWarehouseOrAdmin(), RequiresShifts()]
+        # Ставка и процент бонуса — деньги персонала: их задаёт владелец,
+        # а не менеджер, который ставит состав смены.
+        if self.action == "pay_settings":
+            return [IsAdminRole(), RequiresShifts()]
         return super().get_permissions()
 
     @property
@@ -220,6 +226,75 @@ class ShiftViewSet(viewsets.ViewSet):
     def remove_member(self, request):
         """Убрать работника из смены."""
         return self._member_action(request, add=False)
+
+    @action(detail=False, methods=["get", "patch"], url_path="settings")
+    def pay_settings(self, request):
+        """Правила оплаты: ставка за день, процент бонуса, штрафной стол.
+
+        Раньше жили только в Django-админке, то есть правил их
+        разработчик. Владельцу они нужны у себя: ставка меняется чаще,
+        чем выходит обновление.
+
+        Правка применяется и к уже открытым сменам от сегодня и дальше —
+        иначе владелец поднял бы ставку и не увидел этого в сегодняшней
+        смене. Прошлые смены не трогаем никогда: там история выплат.
+        """
+        cfg = ShiftSettings.load()
+        if request.method == "GET":
+            return Response(self._settings_payload(cfg))
+
+        try:
+            if "daily_rate" in request.data:
+                cfg.daily_rate = self._money(request.data["daily_rate"], "Оплата за смену")
+            if "bonus_percent" in request.data:
+                cfg.bonus_percent = self._money(request.data["bonus_percent"], "Бонус")
+                if cfg.bonus_percent > 100:
+                    raise ValueError("Бонус не может быть больше 100% от выручки")
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if "penalty_table" in request.data:
+            raw = request.data["penalty_table"]
+            cfg.penalty_table = Table.objects.filter(pk=raw).first() if raw else None
+
+        cfg.save()
+        self._apply_to_open_shifts(cfg)
+        return Response(self._settings_payload(cfg))
+
+    @staticmethod
+    def _money(raw, label: str) -> Decimal:
+        try:
+            value = Decimal(str(raw))
+        except (InvalidOperation, TypeError):
+            raise ValueError(f"{label}: нужно число")
+        if value < 0:
+            raise ValueError(f"{label}: не может быть отрицательной")
+        return value
+
+    @staticmethod
+    def _apply_to_open_shifts(cfg) -> None:
+        """Подтянуть новые правила к сегодняшней и будущим сменам."""
+        Shift.objects.filter(date__gte=timezone.localdate()).update(
+            daily_rate=cfg.daily_rate,
+            bonus_percent=cfg.bonus_percent,
+            penalty_table=cfg.penalty_table.name if cfg.penalty_table else "",
+        )
+
+    @staticmethod
+    def _settings_payload(cfg) -> dict:
+        return {
+            # С копейками — как во всех суммах раздела, чтобы поле не
+            # прыгало между «2000» и «2000.00» после сохранения.
+            "daily_rate": str(money(cfg.daily_rate)),
+            "bonus_percent": str(money(cfg.bonus_percent)),
+            "penalty_table": cfg.penalty_table_id,
+            # Столы для выбора штрафного: на стойке их нет вовсе, и поле
+            # там просто не показывается.
+            "tables": [
+                {"id": t.id, "name": t.name}
+                for t in Table.objects.filter(is_active=True).order_by("sort_order", "name")
+            ],
+        }
 
     @action(detail=False, methods=["post"], url_path="set_penalty")
     def set_penalty(self, request):

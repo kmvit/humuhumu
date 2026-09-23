@@ -440,6 +440,14 @@ export interface ShiftMember {
   orders_total: string;
 }
 
+/** Правила оплаты смены — раньше жили только в Django-админке. */
+export interface PaySettings {
+  daily_rate: string;
+  bonus_percent: string;
+  penalty_table: number | null;
+  tables: { id: number; name: string }[];
+}
+
 /** Сотрудник, которого менеджер может поставить в смену. */
 export interface StaffUser {
   id: number;

@@ -441,3 +441,88 @@ class PerformerTests(APITestCase):
     def test_barista_may_read_the_list(self):
         """Выбирает человек за стойкой, а не менеджер."""
         self.assertEqual(self.client.get("/api/shifts/performers/").status_code, 200)
+
+
+class PaySettingsApiTests(APITestCase):
+    """Правила оплаты правит владелец у себя, а не разработчик в Django-админке.
+
+    Ставка меняется чаще, чем выходит обновление, — держать её за
+    админкой значило держать владельца на коротком поводке.
+    """
+
+    def setUp(self):
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.HALL
+        site.save()
+        self.owner = User.objects.create_user(
+            "owner-pay", password="demo12345", role=User.Role.ADMIN
+        )
+        self.manager = User.objects.create_user(
+            "manager-pay", password="demo12345", role=User.Role.WAREHOUSE
+        )
+        self.waiter = User.objects.create_user(
+            "waiter-pay", password="demo12345", role=User.Role.WAITER
+        )
+        self.client.force_authenticate(self.owner)
+
+    def save(self, **body):
+        return self.client.patch("/api/shifts/settings/", body, format="json")
+
+    def test_owner_reads_the_rules(self):
+        res = self.client.get("/api/shifts/settings/")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["daily_rate"], "2000.00")
+        self.assertEqual(res.data["bonus_percent"], "9.00")
+
+    def test_owner_changes_the_rate(self):
+        res = self.save(daily_rate="2500", bonus_percent="10")
+        self.assertEqual(res.status_code, 200)
+        cfg = ShiftSettings.load()
+        self.assertEqual(cfg.daily_rate, Decimal("2500"))
+        self.assertEqual(cfg.bonus_percent, Decimal("10"))
+
+    def test_today_shift_picks_up_the_new_rate(self):
+        """Иначе владелец поднял бы ставку и не увидел этого в сегодняшней смене."""
+        add_member(self.waiter, timezone.localdate())
+        self.save(daily_rate="2500")
+        self.assertEqual(
+            get_shift(timezone.localdate()).daily_rate, Decimal("2500")
+        )
+
+    def test_past_shifts_keep_their_numbers(self):
+        """Прошлое — это история выплат, её правка переписала бы расчёт задним числом."""
+        yesterday = timezone.localdate() - timedelta(days=1)
+        add_member(self.waiter, yesterday)
+        self.save(daily_rate="2500")
+        self.assertEqual(get_shift(yesterday).daily_rate, Decimal("2000"))
+
+    def test_penalty_table_is_set_and_cleared(self):
+        table = Table.objects.create(name="12")
+        self.save(penalty_table=table.id)
+        self.assertEqual(ShiftSettings.load().penalty_table, table)
+
+        self.save(penalty_table=None)
+        self.assertIsNone(ShiftSettings.load().penalty_table)
+
+    def test_tables_come_with_the_rules(self):
+        Table.objects.create(name="3")
+        self.assertEqual(
+            [t["name"] for t in self.client.get("/api/shifts/settings/").data["tables"]],
+            ["3"],
+        )
+
+    def test_nonsense_is_refused(self):
+        self.assertEqual(self.save(daily_rate="-100").status_code, 400)
+        self.assertEqual(self.save(bonus_percent="150").status_code, 400)
+        self.assertEqual(self.save(daily_rate="много").status_code, 400)
+        self.assertEqual(ShiftSettings.load().daily_rate, Decimal("2000"))
+
+    def test_manager_sets_the_shift_but_not_its_price(self):
+        """Состав смены — дело менеджера, стоимость рабочего дня — владельца."""
+        self.client.force_authenticate(self.manager)
+        self.assertEqual(self.client.get("/api/shifts/settings/").status_code, 403)
+        self.assertEqual(self.save(daily_rate="9999").status_code, 403)
+
+    def test_staff_cannot_touch_it(self):
+        self.client.force_authenticate(self.waiter)
+        self.assertEqual(self.save(daily_rate="9999").status_code, 403)
