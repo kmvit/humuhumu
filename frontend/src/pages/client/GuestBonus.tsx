@@ -63,7 +63,11 @@ export default function GuestBonus({
   const spent = Number(order.bonus_spent);
   // сдачи с бонусов не бывает — списываем не больше остатка счёта
   const maxRedeem = Math.min(Number(member.balance), payable);
-  const canRedeem = order.status === "open" || order.status === "requested";
+  // Бонусы уменьшают сумму к оплате, поэтому списываются только до неё:
+  // у предоплаченного заказа деньги уже взяты на полную сумму.
+  const canRedeem =
+    !order.paid_at &&
+    (order.status === "open" || order.status === "requested" || order.status === "unpaid");
 
   async function redeem(amount: number) {
     if (amount <= 0) return;

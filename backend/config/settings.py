@@ -204,6 +204,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "payments.tasks.settle_pending_payments_task",
         "schedule": crontab(minute="*/5"),
     },
+    # Неоплаченные заказы стойки: гость передумал — заказ уходит сам,
+    # иначе за смену их накопятся десятки (orders/tasks.py).
+    "cancel-stale-unpaid": {
+        "task": "orders.tasks.cancel_stale_unpaid_orders_task",
+        "schedule": crontab(minute="*/5"),
+    },
 }
 
 if LICENSE_KEY:

@@ -152,6 +152,42 @@ def next_daily_number() -> int:
     return (last or 0) + 1
 
 
+def prepay_required() -> bool:
+    """Ждёт ли заказ гостя оплаты, прежде чем уйти на кухню.
+
+    Только формат «Стойка»: в зале за стол отвечает официант, и заявка
+    ему нужна как раз до оплаты — иначе он не примет гостя вовсе.
+
+    И только при работающей онлайн-оплате. Требовать предоплату, когда
+    банк не подключён, — это не принимать заказы совсем: заплатить
+    гостю нечем, и каждый заказ через четверть часа отменялся бы сам.
+    """
+    from core.models import SiteSettings
+    from payments.acquiring import online_payment_available
+
+    site = SiteSettings.load()
+    if site.service_mode != SiteSettings.ServiceMode.COUNTER or not site.prepay_required:
+        return False
+    return site.online_payment_on and online_payment_available()
+
+
+@transaction.atomic
+def start_order(order: Order) -> Order:
+    """Пустить оплаченный заказ в работу: номер выдачи и путь на станции.
+
+    Номер даём здесь, а не при создании: брошенные неоплаченные заказы
+    иначе выедали бы номера, и бариста выкрикивал бы в окно 47-й при
+    дюжине проданных за день.
+    """
+    if order.status != Order.Status.UNPAID:
+        return order
+    order.status = Order.Status.OPEN
+    if order.daily_number is None:
+        order.daily_number = next_daily_number()
+    order.save(update_fields=["status", "daily_number"])
+    return order
+
+
 @transaction.atomic
 def create_request(
     *, customer_name: str, items: list[dict], table: str = "", comment: str = "", client=None
@@ -165,7 +201,9 @@ def create_request(
 
     В зале это заявка: официант подтверждает её на стол, который пришёл из
     QR-кода. На стойке подтверждать некому и стола нет — заказ сразу уходит
-    в работу, а гость ждёт свой номер.
+    в работу, а гость ждёт свой номер. Если на стойке включена предоплата,
+    заказ сперва ждёт денег: бар не должен готовить тому, кто передумал по
+    дороге.
     """
     from core.models import SiteSettings
 
@@ -173,14 +211,23 @@ def create_request(
         raise OrderError("Пустой заказ")
 
     counter = SiteSettings.load().service_mode == SiteSettings.ServiceMode.COUNTER
+    # На стойке с предоплатой заказ ждёт денег: ни номера, ни станций у
+    # него пока нет (см. prepay_required и start_order).
+    waits_payment = counter and prepay_required()
+    if waits_payment:
+        status = Order.Status.UNPAID
+    elif counter:
+        status = Order.Status.OPEN
+    else:
+        status = Order.Status.REQUESTED
     order = Order.objects.create(
-        status=Order.Status.OPEN if counter else Order.Status.REQUESTED,
+        status=status,
         client=client,
         customer_name=customer_name,
         table="" if counter else table,
         comment=comment,
         public_token=uuid.uuid4(),
-        daily_number=next_daily_number(),
+        daily_number=None if waits_payment else next_daily_number(),
     )
     _add_items(order, items)
     order.recalc_total()

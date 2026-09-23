@@ -78,7 +78,7 @@ class SiteSettingsAdmin(TenantAdminMixin, admin.ModelAdmin):
         (
             "Приём оплаты",
             {
-                "fields": ("acquiring", "online_payment_on"),
+                "fields": ("acquiring", "online_payment_on", "prepay_required"),
                 "description": (
                     "Кто принимает оплату картой онлайн. Ключи и пароли банка "
                     "владелец вводит у себя в панели, раздел «Оплата картой» — "

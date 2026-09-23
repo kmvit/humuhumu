@@ -12,6 +12,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from orders.models import Order
+from orders.services import start_order
 
 from .acquiring import AcquiringError, get_acquirer
 from .models import Payment
@@ -44,23 +45,66 @@ def record_manual_payment(order: Order, method: str, user=None) -> Order:
     заказа был Payment (единый реестр), как и при оплате через терминал.
     """
     pm = method if method in Payment.Method.values else Payment.Method.CASH
-    Payment.objects.create(
-        purpose=Payment.Purpose.ORDER,
-        status=Payment.Status.SUCCEEDED,
-        # деньгами берём чек за вычетом списанных бонусов
-        amount=order.payable,
-        order=order,
-        method=pm,
-        provider="manual",
-    )
+    # Предоплаченный заказ закрывается без второго платежа: деньги уже
+    # в реестре. Иначе выручка дня удвоилась бы на каждом таком заказе.
+    if order.paid_at is None:
+        Payment.objects.create(
+            purpose=Payment.Purpose.ORDER,
+            status=Payment.Status.SUCCEEDED,
+            # деньгами берём чек за вычетом списанных бонусов
+            amount=order.payable,
+            order=order,
+            method=pm,
+            provider="manual",
+        )
+        order.paid_at = timezone.now()
+    else:
+        # Способ оплаты у такого заказа уже записан — тот, которым
+        # заплатили вперёд, а не тот, что нажали при выдаче.
+        pm = Payment.Method.CASH if order.pay_method == Order.PayMethod.CASH else Payment.Method.CARD
     order.status = Order.Status.PAID
     order.pay_method = (
         Order.PayMethod.CASH if pm == Payment.Method.CASH else Order.PayMethod.CARD
     )
     order.closed_by = user
     order.closed_at = timezone.now()
-    order.save(update_fields=["status", "pay_method", "closed_by", "closed_at"])
+    order.save(update_fields=["status", "paid_at", "pay_method", "closed_by", "closed_at"])
     accrue_bonuses(order)
+    return order
+
+
+@transaction.atomic
+def record_prepayment(order: Order, method: str, user=None) -> Order:
+    """Гость заплатил на кассе за заказ, который ждал оплаты.
+
+    Не то же самое, что закрытие: деньги получены, но заказ только уходит
+    в работу — его ещё готовить и выдавать. Нужна эта ручка ради гостя с
+    наличными: без неё на стойке с предоплатой он не смог бы заказать
+    вовсе, а бариста — принять у него деньги.
+    """
+    if order.status != Order.Status.UNPAID:
+        raise PaymentError("Этот заказ не ждёт оплаты")
+
+    pm = method if method in Payment.Method.values else Payment.Method.CASH
+    Payment.objects.create(
+        purpose=Payment.Purpose.ORDER,
+        status=Payment.Status.SUCCEEDED,
+        amount=order.payable,
+        order=order,
+        method=pm,
+        provider="manual",
+    )
+    order.paid_at = timezone.now()
+    order.pay_method = (
+        Order.PayMethod.CASH if pm == Payment.Method.CASH else Order.PayMethod.CARD
+    )
+    order.save(update_fields=["paid_at", "pay_method"])
+    start_order(order)
+    accrue_bonuses(order)
+    logger.info(
+        "Оплата на кассе: заказ %s, %s ₽, %s — пущен в работу",
+        order.pk, order.payable, pm,
+    )
     return order
 
 
@@ -95,7 +139,7 @@ def start_online_payment(order: Order, *, return_url: str) -> tuple[Payment, str
     зависший в «к оплате», официант закрыть не сможет. Статус меняется
     только по факту оплаты — в apply_payment_result.
     """
-    if order.status not in (Order.Status.OPEN, Order.Status.REQUESTED):
+    if order.status not in (Order.Status.OPEN, Order.Status.REQUESTED, Order.Status.UNPAID):
         raise PaymentError("Оплатить можно только незакрытый заказ")
 
     # Выключатель владельца проверяем и здесь, а не только прячем кнопку:
@@ -145,16 +189,28 @@ def apply_payment_result(payment: Payment, *, success: bool, fiscal_receipt: str
         payment.fiscal_receipt = fiscal_receipt or payment.fiscal_receipt
         payment.save(update_fields=["status", "fiscal_receipt", "updated_at"])
         if order:
-            order.status = Order.Status.PAID
+            order.paid_at = timezone.now()
             order.pay_method = (
                 Order.PayMethod.CASH
                 if payment.method == Payment.Method.CASH
                 else Order.PayMethod.CARD
             )
             order.fiscal_receipt = fiscal_receipt or order.fiscal_receipt
-            order.closed_by = user
-            order.closed_at = timezone.now()
-            order.save(update_fields=["status", "pay_method", "fiscal_receipt", "closed_by", "closed_at"])
+            if order.status == Order.Status.UNPAID:
+                # Предоплата на стойке: деньги получены, но заказ только
+                # начинается. Закрыть его сейчас значило бы записать
+                # выручку за то, что ещё не приготовлено и не выдано, —
+                # и убрать карточку с доски, по которой бариста работает.
+                order.save(update_fields=["paid_at", "pay_method", "fiscal_receipt"])
+                start_order(order)
+            else:
+                order.status = Order.Status.PAID
+                order.closed_by = user
+                order.closed_at = timezone.now()
+                order.save(update_fields=[
+                    "status", "paid_at", "pay_method", "fiscal_receipt",
+                    "closed_by", "closed_at",
+                ])
             accrue_bonuses(order)
     else:
         payment.status = Payment.Status.CANCELLED
@@ -258,7 +314,14 @@ def settle_order(order: Order) -> None:
     Вызывается из публичной ручки track, поэтому не падает никогда:
     заказ гостю нужно показать, даже если банк сейчас недоступен.
     """
-    if order.status not in (Order.Status.OPEN, Order.Status.REQUESTED, Order.Status.AWAITING):
+    if order.status not in (
+        Order.Status.OPEN,
+        Order.Status.REQUESTED,
+        Order.Status.AWAITING,
+        # Заказ стойки, ждущий предоплаты: для него опрос как раз главный —
+        # именно оплата пускает его в работу.
+        Order.Status.UNPAID,
+    ):
         return
     for payment in pending_online_payments(order):
         try:

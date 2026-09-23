@@ -28,6 +28,7 @@ from payments.services import (
     PaymentError,
     apply_payment_result,
     record_manual_payment,
+    record_prepayment,
     settle_order,
     start_online_payment,
     start_terminal_payment,
@@ -77,7 +78,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             return [IsBarOrAdmin(), RequiresStations()]
         if self.action == "item_status":
             return [IsAuthenticated(), RequiresStations()]
-        if self.action in ("close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "item_qty", "confirm", "set_comment", "move", "move_items", "serve", "pay_terminal", "pay_result"):
+        if self.action in ("close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "item_qty", "confirm", "prepaid", "set_comment", "move", "move_items", "serve", "pay_terminal", "pay_result"):
             return [IsWaiterOrAdmin()]
         # item_status — право проверяем внутри по станции позиции
         return [IsAuthenticated()]
@@ -121,7 +122,13 @@ class OrderViewSet(viewsets.ModelViewSet):
             st = params["status"]
             # доска официанта (status=open) включает и отправленные на терминал
             if st == Order.Status.OPEN:
-                qs = qs.filter(status__in=[Order.Status.OPEN, Order.Status.AWAITING])
+                board = [Order.Status.OPEN, Order.Status.AWAITING]
+                # Стойка с предоплатой просит сюда же и неоплаченные: их
+                # никто не готовит, но бариста должен их видеть — иначе
+                # гостю с наличными некому отдать деньги.
+                if params.get("with_unpaid") == "1":
+                    board.append(Order.Status.UNPAID)
+                qs = qs.filter(status__in=board)
             else:
                 qs = qs.filter(status=st)
         if params.get("table"):
@@ -230,9 +237,9 @@ class OrderViewSet(viewsets.ModelViewSet):
             return Response(
                 {"detail": "Заказ не найден"}, status=status.HTTP_404_NOT_FOUND
             )
-        if order.status != Order.Status.REQUESTED:
+        if order.status not in (Order.Status.REQUESTED, Order.Status.UNPAID):
             return Response(
-                {"detail": "Заказ уже подтверждён официантом — отмена только через официанта"},
+                {"detail": "Заказ уже в работе — отмена только через сотрудника"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         order.status = Order.Status.CANCELLED
@@ -261,6 +268,22 @@ class OrderViewSet(viewsets.ModelViewSet):
         except PaymentError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response({"payment_url": url})
+
+    @action(detail=True, methods=["post"])
+    def prepaid(self, request, pk=None):
+        """Гость заплатил на кассе за заказ, который ждал оплаты.
+
+        Без этой кнопки стойка с предоплатой теряет всех, кто платит
+        наличными: заказ у них уже оформлен по QR, а принять деньги и
+        пустить его в работу некому.
+        """
+        order = self.get_object()
+        try:
+            record_prepayment(order, self._pay_method(request), user=request.user)
+        except PaymentError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        order.refresh_from_db()
+        return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["patch"])
     def confirm(self, request, pk=None):
@@ -324,9 +347,12 @@ class OrderViewSet(viewsets.ModelViewSet):
                 {"detail": "Бонусная программа недоступна"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if order.status != Order.Status.OPEN:
+        # Бонусы уменьшают сумму к оплате, поэтому списывать их можно
+        # только ДО того, как деньги получены: у предоплаченного заказа
+        # платёж уже на полную сумму, и списание разошлось бы с кассой.
+        if order.status not in (Order.Status.OPEN, Order.Status.UNPAID) or order.paid_at:
             return Response(
-                {"detail": "Списать бонусы можно только в открытый заказ"},
+                {"detail": "Бонусы списываются до оплаты заказа"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         staff = request.user.is_authenticated and request.user.is_staff_role

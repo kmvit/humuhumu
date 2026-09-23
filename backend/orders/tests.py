@@ -1,5 +1,8 @@
+from datetime import timedelta
 from decimal import Decimal
+from unittest import mock
 
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from catalog.models import (
@@ -10,9 +13,13 @@ from catalog.models import (
     ProductVariant,
 )
 from core.models import SiteSettings
+from payments.acquiring import YooKassaAcquirer
+from payments.models import Payment
+from payments.services import apply_payment_result
 from users.models import User
 
 from .models import Order, OrderItem
+from .tasks import cancel_stale_unpaid_orders_task
 
 
 class OrderFlowBase(APITestCase):
@@ -425,3 +432,196 @@ class ModifierOrderTests(APITestCase):
             ["Коровье", "Овсяное"],
         )
 
+
+
+class PrepayCounterTests(OrderFlowBase):
+    """Стойка с предоплатой: бар не готовит, пока не заплатили.
+
+    Причина простая и денежная: у окна выдачи никто не отвечает за гостя,
+    который назаказывал и не пришёл. В зале за стол отвечает официант,
+    поэтому там всё должно остаться как было.
+    """
+
+    ENV = {"YOOKASSA_SHOP_ID": "100500", "YOOKASSA_SECRET_KEY": "live_AbCd0123456789xyz"}
+
+    def setUp(self):
+        super().setUp()
+        self.set_mode("counter")
+        site = SiteSettings.load()
+        site.acquiring = SiteSettings.Acquiring.YOOKASSA
+        site.online_payment_on = True
+        site.prepay_required = True
+        site.save()
+        env = mock.patch.dict("os.environ", self.ENV)
+        env.start()
+        self.addCleanup(env.stop)
+
+    def pay(self, order, success=True):
+        """Банк подтвердил оплату — тем же путём, что и настоящий вебхук."""
+        payment = Payment.objects.create(
+            purpose=Payment.Purpose.ORDER,
+            status=Payment.Status.PENDING,
+            amount=order.payable,
+            order=order,
+            method=Payment.Method.CARD,
+            provider="yookassa",
+            external_id=f"ext-{order.pk}",
+        )
+        return apply_payment_result(payment, success=success)
+
+    # ——— заказ ждёт денег ———
+
+    def test_order_waits_for_payment_without_a_number(self):
+        self.assertEqual(self.place().status_code, 201)
+        order = Order.objects.get()
+        self.assertEqual(order.status, Order.Status.UNPAID)
+        # Номер брошенного заказа был бы потрачен зря: в окно выкрикивали
+        # бы 47-й при дюжине проданных.
+        self.assertIsNone(order.daily_number)
+        self.assertIsNone(order.paid_at)
+
+    def test_unpaid_order_does_not_reach_the_stations(self):
+        self.place()
+        self.auth(self.waiter)
+        self.assertEqual(len(self.client.get("/api/orders/?station=bar").data), 0)
+        self.assertEqual(len(self.client.get("/api/orders/?status=open").data), 0)
+
+    def test_barista_still_sees_it_in_its_own_column(self):
+        """Иначе гостю с наличными некому отдать деньги."""
+        self.place()
+        self.auth(self.waiter)
+        board = self.client.get("/api/orders/?status=open&with_unpaid=1").data
+        self.assertEqual([o["status"] for o in board], ["unpaid"])
+
+    # ——— оплата запускает заказ ———
+
+    def test_payment_sends_the_order_to_work(self):
+        self.place()
+        order = Order.objects.get()
+        self.pay(order)
+
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.OPEN)
+        self.assertEqual(order.daily_number, 1)
+        self.assertIsNotNone(order.paid_at)
+        # Закрывать рано: заказ ещё готовят и выдают, а закрытие пишет выручку.
+        self.assertIsNone(order.closed_at)
+
+    def test_numbers_go_to_those_who_paid(self):
+        """Брошенный заказ не должен съедать номер у оплаченного."""
+        self.place()
+        second = self.place().data["id"]
+        self.pay(Order.objects.get(pk=second))
+        self.assertEqual(Order.objects.get(pk=second).daily_number, 1)
+
+    def test_cash_at_the_counter_starts_the_order(self):
+        self.place()
+        order = Order.objects.get()
+        self.auth(self.waiter)
+
+        res = self.client.post(f"/api/orders/{order.id}/prepaid/", {"pay_method": "cash"}, format="json")
+
+        self.assertEqual(res.status_code, 200)
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.OPEN)
+        self.assertEqual(order.pay_method, Order.PayMethod.CASH)
+        self.assertEqual(Payment.objects.filter(order=order).count(), 1)
+
+    def test_prepaid_order_is_not_charged_twice(self):
+        """Выдача уже оплаченного заказа не должна удваивать выручку дня."""
+        self.place()
+        order = Order.objects.get()
+        self.pay(order)
+        self.auth(self.waiter)
+
+        self.client.post(f"/api/orders/{order.id}/close/", {"pay_method": "cash"}, format="json")
+
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.PAID)
+        self.assertEqual(Payment.objects.filter(order=order).count(), 1)
+        # Способ оплаты остаётся тем, которым заплатили вперёд.
+        self.assertEqual(order.pay_method, Order.PayMethod.CARD)
+
+    def test_guest_can_drop_an_unpaid_order(self):
+        token = self.place().data["public_token"]
+        res = self.client.post("/api/orders/cancel_request/", {"token": token}, format="json")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(Order.objects.get().status, Order.Status.CANCELLED)
+
+    # ——— протухание ———
+
+    def test_forgotten_order_is_cancelled(self):
+        self.place()
+        Order.objects.update(created_at=timezone.now() - timedelta(minutes=16))
+
+        cancel_stale_unpaid_orders_task()
+
+        self.assertEqual(Order.objects.get().status, Order.Status.CANCELLED)
+
+    def test_fresh_order_is_left_alone(self):
+        self.place()
+        cancel_stale_unpaid_orders_task()
+        self.assertEqual(Order.objects.get().status, Order.Status.UNPAID)
+
+    def test_payment_in_the_last_minute_saves_the_order(self):
+        """Уведомление могло потеряться — перед отменой спрашиваем банк."""
+        self.place()
+        order = Order.objects.get()
+        Payment.objects.create(
+            purpose=Payment.Purpose.ORDER,
+            status=Payment.Status.PENDING,
+            amount=order.payable,
+            order=order,
+            method=Payment.Method.CARD,
+            provider="yookassa",
+            external_id="ext-late",
+        )
+        Order.objects.update(created_at=timezone.now() - timedelta(minutes=16))
+        Payment.objects.update(updated_at=timezone.now() - timedelta(minutes=16))
+
+        with mock.patch.object(YooKassaAcquirer, "_get", return_value={"status": "succeeded"}):
+            cancel_stale_unpaid_orders_task()
+
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.OPEN)
+        self.assertEqual(order.daily_number, 1)
+
+    def test_bonuses_are_not_spent_after_the_money_is_taken(self):
+        """Списание после оплаты разошлось бы с кассой: платёж-то на полную сумму."""
+        site = SiteSettings.load()
+        site.bonus_enabled = True
+        site.bonus_redeem_guest = True
+        site.save()
+        self.place()
+        order = Order.objects.get()
+        self.pay(order)
+
+        res = self.client.post(f"/api/orders/{order.id}/bonus/", {"amount": 50}, format="json")
+
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("до оплаты", res.data["detail"])
+
+    # ——— где предоплаты быть не должно ———
+
+    def test_hall_is_untouched(self):
+        """В зале заявка нужна официанту до оплаты — иначе он не примет гостя."""
+        self.set_mode("hall")
+        self.place(table="5")
+        self.assertEqual(Order.objects.get().status, Order.Status.REQUESTED)
+
+    def test_without_a_working_bank_orders_are_taken_as_before(self):
+        """Требовать предоплату, когда платить нечем, — это не работать совсем."""
+        site = SiteSettings.load()
+        site.online_payment_on = False
+        site.save()
+        self.place()
+        self.assertEqual(Order.objects.get().status, Order.Status.OPEN)
+
+    def test_switch_off_brings_the_old_behaviour_back(self):
+        site = SiteSettings.load()
+        site.prepay_required = False
+        site.save()
+        self.place()
+        order = Order.objects.get()
+        self.assertEqual(order.status, Order.Status.OPEN)
+        self.assertEqual(order.daily_number, 1)

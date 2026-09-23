@@ -85,6 +85,10 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
             "legal_updated",
             "online_payment",
             "online_payment_on",
+            # Ждёт ли заказ гостя оплаты, прежде чем уйти на кухню.
+            # Гостю это видно и так по статусу его заказа, а владельцу
+            # нужен выключатель в панели.
+            "prepay_required",
             "plan",
             "features",
         )

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { del, get, patch, put, ApiError } from "../../api";
 import Icon from "../../components/Icon";
 import { useToast } from "../../components/ui/Toast";
+import { useSite } from "../../site";
 
 /** Раздел «Оплата картой» в панели владельца.
 
@@ -41,6 +42,10 @@ const NONE = "none";
 
 export default function OnlinePayment() {
   const notify = useToast();
+  const site = useSite();
+  // Правку держим локально: контекст сайта перечитывается при загрузке
+  // страницы, а ждать этого ради одного выключателя незачем.
+  const [prepay, setPrepay] = useState<boolean | null>(null);
   const [state, setState] = useState<State | null>(null);
   const [provider, setProvider] = useState(NONE);
   const [values, setValues] = useState<Record<string, string>>({});
@@ -111,6 +116,27 @@ export default function OnlinePayment() {
     }
   }
 
+  const counter = site?.service_mode === "counter";
+  const prepayOn = prepay ?? site?.prepay_required ?? true;
+
+  /** Готовить только после оплаты — смысл есть лишь на стойке (см. ниже). */
+  async function togglePrepay() {
+    const next = !prepayOn;
+    setSaving(true);
+    try {
+      await patch("/site/", { prepay_required: next });
+      setPrepay(next);
+      notify(
+        next ? "Заказ пойдёт на кухню после оплаты" : "Заказ идёт на кухню сразу",
+        "ok",
+      );
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Не удалось сохранить", "bad");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <>
       <h2 className="section-title">Оплата картой</h2>
@@ -138,6 +164,36 @@ export default function OnlinePayment() {
             {state.online_payment_on ? "Включена" : "Выключена"}
           </button>
         </div>
+
+        {/* Предоплата — только для стойки. В зале за стол отвечает
+            официант: там заявка нужна ему как раз до оплаты, иначе он
+            не примет гостя вовсе. */}
+        {counter && (
+          <div className="between rule-top mt-3 pt-3">
+            <div>
+              <strong className="title">Готовить только после оплаты</strong>
+              <p className="muted subtitle m-0">
+                {prepayOn
+                  ? "Заказ по QR ждёт оплаты: бар начнёт, когда придут деньги"
+                  : "Заказ уходит на кухню сразу, гость платит при выдаче"}
+              </p>
+            </div>
+            <button
+              className={"btn sm" + (prepayOn ? "" : " ghost")}
+              disabled={saving || !live}
+              onClick={togglePrepay}
+            >
+              <Icon name={prepayOn ? "check" : "close"} size={15} />
+              {prepayOn ? "Включено" : "Выключено"}
+            </button>
+          </div>
+        )}
+        {counter && prepayOn && !live && (
+          <p className="muted sm mt-2 m-0">
+            Пока оплата картой не работает, заказы принимаются как раньше — платить
+            гостю было бы нечем.
+          </p>
+        )}
 
         <div className="rule-top mt-3">
           <label className="field mt-3">

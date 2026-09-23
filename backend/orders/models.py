@@ -36,6 +36,11 @@ class Order(TenantModel):
 
     class Status(models.TextChoices):
         REQUESTED = "requested", "Ждёт официанта"
+        # Стойка с предоплатой: заказ принят, но на кухню не ушёл. До
+        # оплаты у него нет даже номера выдачи — брошенные заказы иначе
+        # выедали бы номера, и в окно выкрикивали бы 47-й при дюжине
+        # проданных.
+        UNPAID = "unpaid", "Ждёт оплаты"
         OPEN = "open", "Открыт"
         AWAITING = "awaiting", "К оплате"  # отправлен на терминал, ждём результат
         PAID = "paid", "Закрыт"
@@ -90,6 +95,10 @@ class Order(TenantModel):
     public_token = models.UUIDField(
         "Токен отслеживания", null=True, blank=True, unique=True, editable=False
     )
+    # Когда деньги получены. Отдельно от статуса: при предоплате заказ
+    # оплачен задолго до того, как его выдали и закрыли, и одним полем
+    # status эти два события не различить — а закрытие пишет выручку.
+    paid_at = models.DateTimeField("Оплачен", null=True, blank=True)
     pay_method = models.CharField(
         "Способ оплаты", max_length=16, choices=PayMethod.choices,
         blank=True, default=PayMethod.CASH,

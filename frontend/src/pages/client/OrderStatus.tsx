@@ -3,6 +3,7 @@ import { post, ApiError } from "../../api";
 import Icon from "../../components/Icon";
 import { useToast } from "../../components/ui/Toast";
 import { useSite } from "../../site";
+import { minutesBetween } from "../../time";
 import type { Order } from "../../types";
 import GuestBonus from "./GuestBonus";
 
@@ -36,13 +37,21 @@ export default function OrderStatus({
   const [confirmCancel, setConfirmCancel] = useState(false);
 
   const st = order.status;
+  // Сколько ещё ждёт оплаты неоплаченный заказ. Без этой строки гость не
+  // понимает, что заказ живёт не вечно, и возвращается к отменённому.
+  const leftToPay = Math.max(0, 15 - minutesBetween(order.created_at));
   const head =
     st === "requested" ? "Заявка принята"
+    : st === "unpaid" ? "Ждём оплату"
     : st === "open" ? (order.is_ready ? "Готово!" : "Готовится")
     : st === "paid" ? "Заказ закрыт"
     : "Заказ отменён";
   const note =
     st === "requested" ? `Подойдите к стойке и назовите имя «${order.customer_name}» — официант оформит заказ.`
+    : st === "unpaid"
+      ? `Оплатите заказ — и мы сразу начнём готовить. Номер для выдачи появится после оплаты.${
+          leftToPay > 0 ? ` Заказ ждёт ещё ${leftToPay} мин.` : ""
+        }`
     : st === "open"
       ? order.is_ready
         ? counter ? "Готово — подойдите к окну и назовите свой номер." : "Ваш заказ готов, можно забирать."
@@ -147,7 +156,7 @@ export default function OrderStatus({
         </button>
       )}
 
-      {st === "requested" ? (
+      {st === "requested" || st === "unpaid" ? (
         confirmCancel ? (
           <div className="wrap mt-4" style={{ justifyContent: "center" }}>
             <span className="muted" style={{ alignSelf: "center" }}>Точно отменить заказ?</span>

@@ -27,6 +27,8 @@ export interface Site {
   online_payment: boolean;
   /** Выключатель владельца — сам по себе оплату не включает без доступов. */
   online_payment_on: boolean;
+  /** Стойка: заказ гостя ждёт оплаты и не уходит на кухню без неё. */
+  prepay_required: boolean;
   accent_color: string;
   // Бонусная программа (тариф «Максимум»). 1 бонус = 1 ₽.
   bonus_enabled: boolean;
@@ -210,7 +212,7 @@ export interface OrderItem {
   options_text: string;
 }
 
-export type OrderStatus = "requested" | "open" | "awaiting" | "paid" | "cancelled";
+export type OrderStatus = "requested" | "unpaid" | "open" | "awaiting" | "paid" | "cancelled";
 
 export type PayMethod = "cash" | "card";
 
@@ -227,6 +229,9 @@ export interface Order {
   public_token: string | null;
   status: OrderStatus;
   status_display: string;
+  /** Когда деньги получены. Заполнено у предоплаченного заказа задолго
+   *  до закрытия — по нему и видно, что при выдаче платить уже не надо. */
+  paid_at: string | null;
   pay_method: PayMethod;
   pay_method_display: string;
   fiscal_receipt: string;

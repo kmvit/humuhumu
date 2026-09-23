@@ -6,20 +6,27 @@ import { useLiveOrders } from "../../useLiveOrders";
 import Compose from "../waiter/Compose";
 import { useToast } from "../../components/ui/Toast";
 import { fmtDuration, minutesBetween } from "../../time";
+import { useSite } from "../../site";
 
 function money(v: string | number | null | undefined): string {
   return Number(v ?? 0).toLocaleString("ru", { maximumFractionDigits: 2 });
 }
 
+type Stage = "unpaid" | "new" | "in_progress" | "ready";
+
 /** Статус заказа целиком: на стойке один человек собирает и еду, и напитки. */
-function stage(o: Order): "new" | "in_progress" | "ready" {
+function stage(o: Order): Stage {
+  // Неоплаченный заказ стоит перед всеми колонками: его не готовят,
+  // пока не придут деньги.
+  if (o.status === "unpaid") return "unpaid";
   const st = o.items.map((i) => i.status);
   if (st.length && st.every((s) => s === "ready")) return "ready";
   if (st.some((s) => s !== "new")) return "in_progress";
   return "new";
 }
 
-const COLUMNS: { key: "new" | "in_progress" | "ready"; label: string }[] = [
+const COLUMNS: { key: Stage; label: string }[] = [
+  { key: "unpaid", label: "Ждут оплаты" },
   { key: "new", label: "Новые" },
   { key: "in_progress", label: "Собираем" },
   { key: "ready", label: "Готов — выдать" },
@@ -27,9 +34,16 @@ const COLUMNS: { key: "new" | "in_progress" | "ready"; label: string }[] = [
 
 export default function Counter() {
   const toast = useToast();
-  const { orders, setOrders, highlight, reload } = useLiveOrders("/orders/?status=open");
+  const site = useSite();
+  // Предоплата: заказы, ждущие денег, приезжают этой же доской —
+  // отдельный поток разъехался бы с основным по времени опроса.
+  const prepay = site?.prepay_required === true && site?.online_payment === true;
+  const { orders, setOrders, highlight, reload } = useLiveOrders(
+    prepay ? "/orders/?status=open&with_unpaid=1" : "/orders/?status=open"
+  );
   const [busy, setBusy] = useState<number | null>(null);
   const [payFor, setPayFor] = useState<number | null>(null);
+  const [cashFor, setCashFor] = useState<number | null>(null);
   // Заказ на словах: гость подошёл к окну и назвал позиции. Столов на стойке
   // нет, поэтому Compose открываем без стола — он выдаст номер.
   const [composing, setComposing] = useState(false);
@@ -65,8 +79,22 @@ export default function Counter() {
     }
   }
 
+  /** Гость заплатил на кассе: деньги в реестр, заказ — в работу. */
+  async function takeCash(order: Order, method: PayMethod) {
+    setBusy(order.id);
+    try {
+      apply(await post<Order>(`/orders/${order.id}/prepaid/`, { pay_method: method }));
+      setCashFor(null);
+      toast(`Оплачен · ${money(order.total)} ₽ — заказ пошёл в работу`);
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : "Не удалось принять оплату");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const byStage = useMemo(() => {
-    const map: Record<string, Order[]> = { new: [], in_progress: [], ready: [] };
+    const map: Record<Stage, Order[]> = { unpaid: [], new: [], in_progress: [], ready: [] };
     // старые сверху: кто раньше заказал, того раньше и обслуживают
     [...orders]
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
@@ -107,7 +135,7 @@ export default function Counter() {
         <p className="muted center mt-5">Заказов нет — всё выдано.</p>
       ) : (
         <div className="kanban">
-          {COLUMNS.map((col) => (
+          {COLUMNS.filter((c) => c.key !== "unpaid" || prepay).map((col) => (
             <div className="kanban-col" key={col.key}>
               <div className="kanban-head">
                 <span>{col.label}</span>
@@ -117,9 +145,18 @@ export default function Counter() {
                 {byStage[col.key].map((o) => (
                   <div className={"card" + (highlight.has(o.id) ? " new-order" : "")} key={o.id}>
                     <div className="between">
-                      <strong className="counter-no">№{o.daily_number ?? o.id}</strong>
+                      {/* Номер даётся при оплате, поэтому у ждущих его нет —
+                          показываем имя гостя, по нему и найдём заказ. */}
+                      <strong className="counter-no">
+                        {o.daily_number != null ? `№${o.daily_number}` : (o.customer_name || "Без номера")}
+                      </strong>
                       <span className="num">{money(o.total)} ₽</span>
                     </div>
+                    {o.paid_at && col.key !== "unpaid" && (
+                      <span className="badge paid mt-1">
+                        <Icon name="check" size={13} /> Оплачен
+                      </span>
+                    )}
                     <div className="muted sm mt-1">
                       <Icon name="spark" size={12} />{" "}
                       {fmtDuration(minutesBetween(o.created_at))}
@@ -143,6 +180,35 @@ export default function Counter() {
                       ))}
                     </ul>
 
+                    {col.key === "unpaid" &&
+                      (cashFor === o.id ? (
+                        <div className="grid cols-2 mt-2">
+                          <button
+                            className="btn sm"
+                            disabled={busy === o.id}
+                            onClick={() => takeCash(o, "cash")}
+                          >
+                            <Icon name="cash" size={16} /> Наличными
+                          </button>
+                          <button
+                            className="btn sm"
+                            disabled={busy === o.id}
+                            onClick={() => takeCash(o, "card")}
+                          >
+                            <Icon name="card" size={16} /> Картой
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="muted sm m-0">
+                            Гость платит на своём телефоне. Заплатил у кассы — отметьте,
+                            и заказ пойдёт в работу.
+                          </p>
+                          <button className="btn sm block mt-2" onClick={() => setCashFor(o.id)}>
+                            <Icon name="cash" size={16} /> Оплатил на кассе
+                          </button>
+                        </>
+                      ))}
                     {col.key === "new" && (
                       <button
                         className="btn sm block"
@@ -161,7 +227,16 @@ export default function Counter() {
                         <Icon name="check" size={16} /> Готов
                       </button>
                     )}
-                    {col.key === "ready" &&
+                    {col.key === "ready" && o.paid_at && (
+                      <button
+                        className="btn sm block"
+                        disabled={busy === o.id}
+                        onClick={() => handOut(o, o.pay_method)}
+                      >
+                        <Icon name="share" size={16} /> Выдать
+                      </button>
+                    )}
+                    {col.key === "ready" && !o.paid_at &&
                       (payFor === o.id ? (
                         <div className="grid cols-2 mt-2">
                           <button
