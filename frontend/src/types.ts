@@ -497,6 +497,9 @@ export interface PayrollRow {
   bonus: string;
   penalty: string;
   total: string;
+  /** Сделанное за период: закрытые заказы с его отметкой. На выплату не влияет. */
+  orders: number;
+  orders_total: string;
 }
 
 export interface Payroll {

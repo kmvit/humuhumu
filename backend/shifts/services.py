@@ -223,9 +223,16 @@ def payroll(shifts, user=None) -> list[dict]:
                     "bonus": Decimal("0"),
                     "penalty": Decimal("0"),
                     "total": Decimal("0"),
+                    # Сделанное за период: сколько заказов закрыто с его
+                    # отметкой и на какую сумму. На выплату не влияет —
+                    # это цифры для решения о сдельной оплате.
+                    "orders": 0,
+                    "orders_total": Decimal("0"),
                 },
             )
             row["days"] += 1
+            row["orders"] += m["orders"]
+            row["orders_total"] += Decimal(m["orders_total"])
             row["base"] += Decimal(report["daily_rate"])
             row["bonus"] += Decimal(report["bonus_share"])
             # в «списания» идут и подарки со штрафного стола, и ручной штраф
@@ -234,6 +241,12 @@ def payroll(shifts, user=None) -> list[dict]:
             )
             row["total"] += Decimal(m["payout"])
     return [
-        {**r, **{k: str(money(r[k])) for k in ("base", "bonus", "penalty", "total")}}
+        {
+            **r,
+            **{
+                k: str(money(r[k]))
+                for k in ("base", "bonus", "penalty", "total", "orders_total")
+            },
+        }
         for r in sorted(rows.values(), key=lambda r: -r["total"])
     ]

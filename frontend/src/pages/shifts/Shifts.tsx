@@ -26,6 +26,16 @@ function isoDay(d: Date): string {
 
 const DOW = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
+// 1 заказ, 2 заказа, 5 заказов
+function fmtOrders(n: number): string {
+  const ten = n % 100;
+  const one = n % 10;
+  if (ten >= 11 && ten <= 14) return `${n} заказов`;
+  if (one === 1) return `${n} заказ`;
+  if (one >= 2 && one <= 4) return `${n} заказа`;
+  return `${n} заказов`;
+}
+
 // 1 смена, 2 смены, 5 смен
 function fmtDays(n: number): string {
   const ten = n % 100;
@@ -192,6 +202,26 @@ export default function Shifts() {
       setBusy(false);
     }
   }
+
+  // Кто сколько сделал за день: состав смены плюс те, кто работал, но в
+  // смену не поставлен, — их работа не должна пропадать из виду.
+  const made = useMemo(() => {
+    const rows = [
+      ...(shift?.members ?? []).map((m) => ({
+        user: m.user,
+        name: m.name,
+        orders: m.orders,
+        orders_total: m.orders_total,
+        outsider: false,
+      })),
+      ...(shift?.outsiders ?? []).map((o) => ({ ...o, outsider: true })),
+    ].sort((a, b) => Number(b.orders_total) - Number(a.orders_total));
+    return {
+      rows,
+      orders: rows.reduce((n, r) => n + r.orders, 0),
+      total: rows.reduce((n, r) => n + Number(r.orders_total), 0),
+    };
+  }, [shift]);
 
   if (loading) return <p className="muted">Загрузка…</p>;
 
@@ -545,8 +575,6 @@ export default function Shifts() {
                     {m.name}
                     {m.user === user?.id ? " (вы)" : ""}
                   </strong>
-                  {/* Сделанное за день. На выплату пока не влияет — по этим
-                      цифрам владелец и решит, платить ли сдельно. */}
                   <span className="muted">
                     {m.role_display}
                     {m.orders > 0
@@ -598,6 +626,67 @@ export default function Shifts() {
               </p>
             )}
           </div>
+
+          {/* ——— кто сколько сделал ———
+              Ради этих цифр бариста и отмечает себя на заказе: по ним
+              владелец решает, переходить ли на сдельную оплату. Смотреть
+              их было негде, поэтому здесь они отдельным блоком, а не
+              припиской к строке состава. */}
+          {made.rows.length > 0 && (
+            <div className="card mt-3">
+              <div className="between">
+                <strong className="title">Кто сколько сделал</strong>
+                <span className="chip sm">
+                  {made.orders} зак. · {fmtMoney(made.total)} ₽
+                </span>
+              </div>
+              <p className="muted subtitle m-0">
+                Закрытые заказы с отметкой исполнителя. На выплату пока не влияет.
+              </p>
+
+              {made.rows.map((r) => (
+                <div className="row" key={`made-${r.user}`}>
+                  <span className="tx-icon">
+                    <Icon name="user" size={17} />
+                  </span>
+                  <div className="row-body">
+                    <strong>
+                      {r.name}
+                      {r.user === user?.id ? " (вы)" : ""}
+                    </strong>
+                    <span className="muted">
+                      {r.orders > 0
+                        ? `${fmtOrders(r.orders)} · ${
+                            made.total > 0
+                              ? Math.round((Number(r.orders_total) / made.total) * 100)
+                              : 0
+                          }% выручки смены`
+                        : "пока ни одного заказа"}
+                      {r.outsider ? " · не в смене" : ""}
+                    </span>
+                  </div>
+                  <strong className="num">{fmtMoney(r.orders_total)}</strong>
+                  {r.outsider && canEdit && (
+                    <button
+                      className="icon-btn"
+                      disabled={busy}
+                      aria-label="Поставить в смену"
+                      onClick={() => changeMember(r.user, true)}
+                    >
+                      <Icon name="plus" size={16} />
+                    </button>
+                  )}
+                </div>
+              ))}
+
+              {made.orders === 0 && (
+                <p className="muted sm m-0 mt-2">
+                  Никто не отмечался на заказах. Исполнитель выбирается на карточке
+                  заказа — поле необязательное, поэтому его можно и пропустить.
+                </p>
+              )}
+            </div>
+          )}
 
           <p className="muted mt-3">
             Оплата за день {fmtMoney(shift.daily_rate)} + бонус{" "}
@@ -688,6 +777,13 @@ export default function Shifts() {
                     ? ` − списания ${fmtMoney(r.penalty)}`
                     : ""}
                 </span>
+                {/* Сделанное за период — рядом с выплатой, чтобы одно
+                    было видно вместе с другим, когда решают про сдельную. */}
+                {r.orders > 0 && (
+                  <span className="muted">
+                    {fmtOrders(r.orders)} на {fmtMoney(r.orders_total)} ₽
+                  </span>
+                )}
               </div>
               <strong className="num lg text-brand">
                 {fmtMoney(r.total)}

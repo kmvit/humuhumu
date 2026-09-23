@@ -526,3 +526,59 @@ class PaySettingsApiTests(APITestCase):
     def test_staff_cannot_touch_it(self):
         self.client.force_authenticate(self.waiter)
         self.assertEqual(self.save(daily_rate="9999").status_code, 403)
+
+
+class PayrollOrdersTests(APITestCase):
+    """Сводка за период показывает и деньги, и сделанное — рядом.
+
+    Ради этих цифр бариста и отмечает себя на заказе: по ним владелец
+    решает, переходить ли на сдельную оплату.
+    """
+
+    def setUp(self):
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.HALL
+        site.save()
+        cat = Category.objects.create(name="Кофе", station="bar")
+        product = Product.objects.create(category=cat, name="Латте")
+        self.variant = ProductVariant.objects.create(product=product, price=Decimal("240"))
+        self.anna = User.objects.create_user(
+            "anna-pr", password="demo12345", role=User.Role.WAITER, first_name="Анна"
+        )
+        self.owner = User.objects.create_user(
+            "owner-pr", password="demo12345", role=User.Role.ADMIN
+        )
+        add_member(self.anna, timezone.localdate())
+        self.client.force_authenticate(self.anna)
+
+    def make_and_close(self, n=1):
+        for _ in range(n):
+            res = self.client.post(
+                "/api/orders/",
+                {"items": [{"variant": self.variant.id, "quantity": 1}], "performer": self.anna.id},
+                format="json",
+            )
+            self.client.post(
+                f"/api/orders/{res.data['id']}/close/", {"pay_method": "cash"}, format="json"
+            )
+
+    def test_period_summary_counts_orders(self):
+        self.make_and_close(3)
+        self.client.force_authenticate(self.owner)
+
+        row = self.client.get("/api/shifts/payroll/").data["rows"][0]
+
+        self.assertEqual(row["orders"], 3)
+        self.assertEqual(row["orders_total"], "720.00")
+
+    def test_worker_sees_own_numbers(self):
+        """Официант видит только свою строку — и в ней своё сделанное."""
+        self.make_and_close(1)
+        rows = self.client.get("/api/shifts/payroll/").data["rows"]
+        self.assertEqual([r["user"] for r in rows], [self.anna.id])
+        self.assertEqual(rows[0]["orders"], 1)
+
+    def test_days_without_marks_are_zero(self):
+        rows = self.client.get("/api/shifts/payroll/").data["rows"]
+        self.assertEqual(rows[0]["orders"], 0)
+        self.assertEqual(rows[0]["orders_total"], "0.00")
