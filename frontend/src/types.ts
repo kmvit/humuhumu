@@ -212,6 +212,14 @@ export interface OrderItem {
   options_text: string;
 }
 
+/** Кого можно выбрать в поле «выполнил»: сегодняшняя смена впереди списка. */
+export interface Performer {
+  id: number;
+  name: string;
+  role_display: string;
+  in_shift: boolean;
+}
+
 export type OrderStatus = "requested" | "unpaid" | "open" | "awaiting" | "paid" | "cancelled";
 
 export type PayMethod = "cash" | "card";
@@ -232,6 +240,9 @@ export interface Order {
   /** Когда деньги получены. Заполнено у предоплаченного заказа задолго
    *  до закрытия — по нему и видно, что при выдаче платить уже не надо. */
   paid_at: string | null;
+  /** Кто выполнил заказ — выбирается вручную, может быть пустым. */
+  performer: number | null;
+  performer_name: string;
   pay_method: PayMethod;
   pay_method_display: string;
   fiscal_receipt: string;
@@ -424,6 +435,9 @@ export interface ShiftMember {
   added_at: string;
   /** К выплате этому человеку за смену. */
   payout: string;
+  /** Сколько заказов закрыто с его отметкой — на выплату пока не влияет. */
+  orders: number;
+  orders_total: string;
 }
 
 /** Сотрудник, которого менеджер может поставить в смену. */
@@ -454,6 +468,8 @@ export interface Shift {
   manual_penalty_share: string;
   payout: string;
   members: ShiftMember[];
+  /** Кто выполнял заказы, но в смену не поставлен — менеджер забыл отметить. */
+  outsiders: { user: number; name: string; orders: number; orders_total: string }[];
   /** Только в /shifts/day/: я в этой смене. */
   in_shift?: boolean;
   /** Только в /shifts/day/: можно менять состав (менеджер или админ). */

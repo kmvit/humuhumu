@@ -424,7 +424,14 @@ export default function Shifts() {
                     {m.name}
                     {m.user === user?.id ? " (вы)" : ""}
                   </strong>
-                  <span className="muted">{m.role_display}</span>
+                  {/* Сделанное за день. На выплату пока не влияет — по этим
+                      цифрам владелец и решит, платить ли сдельно. */}
+                  <span className="muted">
+                    {m.role_display}
+                    {m.orders > 0
+                      ? ` · ${m.orders} зак. на ${fmtMoney(m.orders_total)}`
+                      : ""}
+                  </span>
                 </div>
                 <strong className="num">{fmtMoney(m.payout)}</strong>
                 {canEdit && (
@@ -435,6 +442,29 @@ export default function Shifts() {
                     onClick={() => changeMember(m.user, false)}
                   >
                     <Icon name="minus" size={16} />
+                  </button>
+                )}
+              </div>
+            ))}
+            {shift.outsiders?.map((o) => (
+              <div className="row" key={`out-${o.user}`}>
+                <span className="tx-icon">
+                  <Icon name="user" size={17} />
+                </span>
+                <div className="row-body">
+                  <strong>{o.name}</strong>
+                  <span className="muted">
+                    Не в смене · {o.orders} зак. на {fmtMoney(o.orders_total)}
+                  </span>
+                </div>
+                {canEdit && (
+                  <button
+                    className="icon-btn"
+                    disabled={busy}
+                    aria-label="Поставить в смену"
+                    onClick={() => changeMember(o.user, true)}
+                  >
+                    <Icon name="plus" size={16} />
                   </button>
                 )}
               </div>

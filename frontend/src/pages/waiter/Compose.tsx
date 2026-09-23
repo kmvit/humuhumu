@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { get, post, ApiError } from "../../api";
-import type { Category, Order, Product, ProductVariant } from "../../types";
+import type { Category, Order, Performer, Product, ProductVariant } from "../../types";
 import OptionsSheet from "../../components/OptionsSheet";
 import { lineCaption, linePrice, lineKey, needsPicking } from "../../cart";
 import Icon, { categoryIcon } from "../../components/Icon";
@@ -39,6 +39,10 @@ export default function Compose({
   const [guests, setGuests] = useState(initialGuests); // сколько именованных гостей (0 = только общий)
   const [activeGuest, setActiveGuest] = useState(0); // 0 = общий
   const [comment, setComment] = useState("");
+  // Кто выполняет заказ. На точке один планшет и общий вход, поэтому по
+  // учётной записи не понять, кто из смены это сделал. Поле необязательное.
+  const [performers, setPerformers] = useState<Performer[]>([]);
+  const [performer, setPerformer] = useState<number | "">("");
   const notify = useToast();
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -51,6 +55,9 @@ export default function Compose({
     ])
       .catch(() => {})
       .finally(() => setLoading(false));
+    // Список смены грузим отдельно: без него заказ принимается как прежде,
+    // поэтому ошибка здесь не должна мешать работе.
+    get<Performer[]>("/shifts/performers/").then(setPerformers).catch(() => {});
   }, []);
 
   const sections = useMemo(() => {
@@ -160,7 +167,12 @@ export default function Compose({
       if (adding) {
         await post<Order>(`/orders/${orderId}/add_items/`, { items });
       } else {
-        await post<Order>("/orders/", { items, table, comment: comment.trim() });
+        await post<Order>("/orders/", {
+          items,
+          table,
+          comment: comment.trim(),
+          ...(performer === "" ? {} : { performer }),
+        });
       }
       onCreated();
     } catch (err) {
@@ -209,6 +221,27 @@ export default function Compose({
           <Icon name="plus" size={15} /> гость
         </button>
       </div>
+      )}
+
+      {!adding && performers.length > 1 && (
+        <label className="field mt-3">
+          <span className="label">
+            Кто выполняет <span className="muted">— необязательно</span>
+          </span>
+          <select
+            className="input"
+            value={performer}
+            onChange={(e) => setPerformer(e.target.value === "" ? "" : Number(e.target.value))}
+          >
+            <option value="">Не указывать</option>
+            {performers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+                {p.in_shift ? "" : " — не в смене"}
+              </option>
+            ))}
+          </select>
+        </label>
       )}
 
       {!adding && (

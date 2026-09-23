@@ -71,6 +71,19 @@ class Order(TenantModel):
         related_name="waiter_orders",
         verbose_name="Официант",
     )
+    # Кто именно выполнил заказ. Отдельно от waiter: на точке один
+    # планшет и один общий вход, под которым работает вся смена, — по
+    # учётной записи не понять, кто из двух барист сделал этот кофе.
+    # Поле необязательное: не выбрали — заказ просто не попадёт в личный
+    # счёт, ничего не ломается.
+    performer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="performed_orders",
+        verbose_name="Выполнил",
+    )
     closed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState } from "react";
-import { patch, post, ApiError } from "../../api";
-import type { Order, PayMethod } from "../../types";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { get, patch, post, ApiError } from "../../api";
+import type { Order, PayMethod, Performer } from "../../types";
 import Icon from "../../components/Icon";
 import { useLiveOrders } from "../../useLiveOrders";
 import Compose from "../waiter/Compose";
@@ -44,6 +44,14 @@ export default function Counter() {
   const [busy, setBusy] = useState<number | null>(null);
   const [payFor, setPayFor] = useState<number | null>(null);
   const [cashFor, setCashFor] = useState<number | null>(null);
+  // Кто сегодня в смене: заказ по QR приходит без исполнителя, а сделает
+  // его кто-то из стоящих за стойкой — отметить это можно на карточке.
+  const [performers, setPerformers] = useState<Performer[]>([]);
+
+  useEffect(() => {
+    // Ошибка не должна мешать работе: без списка заказы принимаются как прежде.
+    get<Performer[]>("/shifts/performers/").then(setPerformers).catch(() => {});
+  }, []);
   // Заказ на словах: гость подошёл к окну и назвал позиции. Столов на стойке
   // нет, поэтому Compose открываем без стола — он выдаст номер.
   const [composing, setComposing] = useState(false);
@@ -90,6 +98,15 @@ export default function Counter() {
       toast(e instanceof ApiError ? e.message : "Не удалось принять оплату");
     } finally {
       setBusy(null);
+    }
+  }
+
+  /** Отметить, кто из смены делает этот заказ. Пустое — снять отметку. */
+  async function setPerformer(order: Order, id: number | "") {
+    try {
+      apply(await patch<Order>(`/orders/${order.id}/performer/`, { performer: id === "" ? null : id }));
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : "Не удалось записать исполнителя");
     }
   }
 
@@ -180,6 +197,26 @@ export default function Counter() {
                       ))}
                     </ul>
 
+                    {performers.length > 1 && col.key !== "ready" && (
+                      <select
+                        className="input sm mt-2"
+                        value={o.performer ?? ""}
+                        onChange={(e) =>
+                          setPerformer(o, e.target.value === "" ? "" : Number(e.target.value))
+                        }
+                      >
+                        <option value="">Кто выполняет?</option>
+                        {performers.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                            {p.in_shift ? "" : " — не в смене"}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {col.key === "ready" && o.performer_name && (
+                      <p className="muted sm m-0">Выполнил: {o.performer_name}</p>
+                    )}
                     {col.key === "unpaid" &&
                       (cashFor === o.id ? (
                         <div className="grid cols-2 mt-2">

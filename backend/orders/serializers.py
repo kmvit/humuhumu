@@ -42,6 +42,7 @@ class OrderSerializer(serializers.ModelSerializer):
 
     items = OrderItemSerializer(many=True, read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    performer_name = serializers.SerializerMethodField()
     pay_method_display = serializers.CharField(source="get_pay_method_display", read_only=True)
     has_food = serializers.BooleanField(read_only=True)
     has_drinks = serializers.BooleanField(read_only=True)
@@ -58,6 +59,8 @@ class OrderSerializer(serializers.ModelSerializer):
             "id",
             "client",
             "waiter",
+            "performer",
+            "performer_name",
             "closed_by",
             "table",
             "daily_number",
@@ -93,6 +96,13 @@ class OrderSerializer(serializers.ModelSerializer):
             "closed_at",
         )
 
+    def get_performer_name(self, obj) -> str:
+        """Имя исполнителя для карточки — без второго запроса за профилем."""
+        if not obj.performer:
+            return ""
+        full = f"{obj.performer.first_name} {obj.performer.last_name}".strip()
+        return full or obj.performer.username
+
     def get_food_served(self, obj):
         return obj.food_served_at is not None
 
@@ -124,6 +134,9 @@ class OrderCreateSerializer(serializers.Serializer):
 
     table = serializers.CharField(max_length=32, required=False, allow_blank=True)
     comment = serializers.CharField(max_length=300, required=False, allow_blank=True)
+    # Кто выполняет. Не обязателен намеренно: в час пик выбирать некогда,
+    # и заказ без исполнителя должен приниматься как прежде.
+    performer = serializers.IntegerField(required=False, allow_null=True)
     items = OrderItemCreateSerializer(many=True)
 
 

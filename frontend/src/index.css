@@ -817,6 +817,8 @@ h1, h2, h3 { font-family: var(--font-display); color: var(--fg); margin: 0; font
 .input, select.input { font: inherit; font-weight: 500; width: 100%; padding: 12px 14px; min-height: 46px; border: 1px solid var(--rule); border-radius: var(--radius-sm); background: var(--surface-solid); color: var(--fg); transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease); }
 .input::placeholder { color: color-mix(in srgb, var(--muted) 70%, transparent); }
 .input:focus, select.input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+/* компактное поле — для карточек досок, где строка ввода соседствует с кнопками */
+.input.sm, select.input.sm { padding: 8px 10px; min-height: 38px; font-size: 0.93rem; }
 
 /* ============ Списки/строки ============ */
 .row { display: flex; align-items: center; gap: 12px; justify-content: space-between; padding: 13px 0; border-bottom: 1px solid var(--border); }

@@ -22,7 +22,13 @@ from .serializers import (
     OrderSerializer,
     TableSerializer,
 )
-from .services import OrderError, append_items, create_order, create_request
+from .services import (
+    OrderError,
+    append_items,
+    create_order,
+    create_request,
+    resolve_performer,
+)
 from payments.models import Payment
 from payments.services import (
     PaymentError,
@@ -78,7 +84,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             return [IsBarOrAdmin(), RequiresStations()]
         if self.action == "item_status":
             return [IsAuthenticated(), RequiresStations()]
-        if self.action in ("close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "item_qty", "confirm", "prepaid", "set_comment", "move", "move_items", "serve", "pay_terminal", "pay_result"):
+        if self.action in ("close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "item_qty", "confirm", "prepaid", "performer", "set_comment", "move", "move_items", "serve", "pay_terminal", "pay_result"):
             return [IsWaiterOrAdmin()]
         # item_status — право проверяем внутри по станции позиции
         return [IsAuthenticated()]
@@ -152,6 +158,9 @@ class OrderViewSet(viewsets.ModelViewSet):
                 items=serializer.validated_data["items"],
                 table=serializer.validated_data.get("table", ""),
                 comment=serializer.validated_data.get("comment", ""),
+                performer=resolve_performer(
+                    serializer.validated_data.get("performer"), fallback=request.user
+                ),
             )
         except OrderError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -268,6 +277,19 @@ class OrderViewSet(viewsets.ModelViewSet):
         except PaymentError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response({"payment_url": url})
+
+    @action(detail=True, methods=["patch"])
+    def performer(self, request, pk=None):
+        """Кто выполнил заказ — выбор из тех, кто сегодня в смене.
+
+        Отдельной ручкой, потому что заказ по QR приходит без исполнителя:
+        гость его оформил сам, а делает кто-то из смены. Пустое значение
+        снимает отметку — ошиблись кнопкой, и ничего страшного.
+        """
+        order = self.get_object()
+        order.performer = resolve_performer(request.data.get("performer"))
+        order.save(update_fields=["performer"])
+        return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["post"])
     def prepaid(self, request, pk=None):

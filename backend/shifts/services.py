@@ -51,6 +51,28 @@ def day_penalty(day, penalty_table: str = "") -> Decimal:
     return money(qs.aggregate(s=Sum("total"))["s"])
 
 
+def performer_stats(day, penalty_table: str = "") -> dict[int, dict]:
+    """Сколько заказов за день выполнил каждый — для сдельной оплаты.
+
+    Считаем закрытые счета: пока заказ не оплачен, выручки по нему нет,
+    а считать «сделанное» по незакрытому — значит сложить одно и то же
+    дважды, если гость передумает. Штрафной стол не в счёт: это подарки
+    за косяки, а не работа.
+
+    На деньги смены это пока не влияет — ставка и бонус делятся как
+    прежде. Сначала цифры, потом решение, как по ним платить.
+    """
+    from django.db.models import Count
+
+    qs = Order.objects.filter(
+        status=Order.Status.PAID, closed_at__date=day, performer__isnull=False
+    )
+    if penalty_table:
+        qs = qs.exclude(table=penalty_table)
+    rows = qs.values("performer").annotate(n=Count("id"), total=Sum("total"))
+    return {r["performer"]: {"orders": r["n"], "orders_total": money(r["total"])} for r in rows}
+
+
 def get_shift(day, create: bool = False):
     """Смена на дату. С create=True заводит её, зафиксировав текущие параметры оплаты."""
     shift = Shift.objects.filter(date=day).first()
@@ -107,6 +129,7 @@ def shift_report(shift=None, day=None) -> dict:
 
     revenue = day_revenue(day, penalty_table)
     penalty = day_penalty(day, penalty_table)
+    by_performer = performer_stats(day, penalty_table)
     bonus_pool = money(revenue * percent / 100)
     count = len(members)
 
@@ -147,10 +170,37 @@ def shift_report(shift=None, day=None) -> dict:
                 ),
                 "added_at": m.added_at.isoformat(),
                 "payout": str(payout),
+                # Сделанное за день. На выплату пока не влияет — это
+                # цифры, по которым владелец решит, платить ли сдельно.
+                "orders": by_performer.get(m.user_id, {}).get("orders", 0),
+                "orders_total": str(
+                    by_performer.get(m.user_id, {}).get("orders_total", money(0))
+                ),
             }
             for m in members
         ],
+        # Те, кто выполнял заказы, но в смену не поставлен: менеджер забыл
+        # отметить, а работа сделана. Без этой строки она пропала бы.
+        "outsiders": _outsiders(by_performer, members),
     }
+
+
+def _outsiders(by_performer: dict[int, dict], members) -> list[dict]:
+    """Исполнители заказов, которых нет в составе смены."""
+    from users.models import User
+
+    ids = set(by_performer) - {m.user_id for m in members}
+    if not ids:
+        return []
+    return [
+        {
+            "user": u.id,
+            "name": user_name(u),
+            "orders": by_performer[u.id]["orders"],
+            "orders_total": str(by_performer[u.id]["orders_total"]),
+        }
+        for u in User.tenant.filter(pk__in=ids).order_by("first_name", "username")
+    ]
 
 
 def payroll(shifts, user=None) -> list[dict]:

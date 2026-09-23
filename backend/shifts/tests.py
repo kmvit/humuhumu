@@ -4,11 +4,14 @@ from decimal import Decimal
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
-from core.models import SiteSettings
+from catalog.models import Category, Product, ProductVariant
+from core.models import Organization, SiteSettings
+from core.tenancy import organization_context
 from orders.models import Order, Table
 from users.models import User
 
 from .models import Shift, ShiftMember, ShiftSettings
+from .services import add_member, get_shift, shift_report
 
 
 class ShiftTests(APITestCase):
@@ -303,3 +306,138 @@ class ShiftTests(APITestCase):
         names = {u["id"] for u in self.client.get("/api/shifts/staff/").data}
         self.assertIn(self.staff["cook"].id, names)
         self.assertNotIn(self.client_user.id, names)
+
+
+class PerformerTests(APITestCase):
+    """Кто именно выполнил заказ — при общем планшете это не видно из входа.
+
+    На точке один логин на всю смену, а зарплата у барист сдельная: без
+    отметки исполнителя посчитать, кто сколько сделал, нечем.
+    """
+
+    def setUp(self):
+        # Заведение адресуется доменом: как только их становится двое,
+        # запрос без явного домена перестаёт находить нужное.
+        self.org = Organization.objects.order_by("pk").first()
+        self.org.domain = "testserver"
+        self.org.save()
+        cat = Category.objects.create(name="Кофе", station="bar")
+        product = Product.objects.create(category=cat, name="Латте")
+        self.variant = ProductVariant.objects.create(product=product, price=Decimal("240"))
+        self.anna = User.objects.create_user(
+            "anna", password="demo12345", role=User.Role.WAITER, first_name="Анна"
+        )
+        self.boris = User.objects.create_user(
+            "boris", password="demo12345", role=User.Role.WAITER, first_name="Борис"
+        )
+        self.client.force_authenticate(self.anna)
+
+    def order(self, performer=None):
+        body = {"items": [{"variant": self.variant.id, "quantity": 1}]}
+        if performer is not None:
+            body["performer"] = performer
+        return self.client.post("/api/orders/", body, format="json")
+
+    def close(self, order_id):
+        return self.client.post(f"/api/orders/{order_id}/close/", {"pay_method": "cash"}, format="json")
+
+    # ——— отметка исполнителя ———
+
+    def test_performer_is_saved_with_the_order(self):
+        res = self.order(performer=self.boris.id)
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.data["performer"], self.boris.id)
+        self.assertEqual(res.data["performer_name"], "Борис")
+
+    def test_without_a_choice_it_is_the_one_who_logged_in(self):
+        """В зале у каждого свой вход — там отметка верна по умолчанию."""
+        self.assertEqual(self.order().data["performer"], self.anna.id)
+
+    def test_qr_order_can_be_claimed_later(self):
+        """Заказ гостя приходит ничей: его оформил гость, а делает смена."""
+        order = Order.objects.create(status=Order.Status.OPEN, total=Decimal("240"))
+        res = self.client.patch(
+            f"/api/orders/{order.id}/performer/", {"performer": self.boris.id}, format="json"
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(Order.objects.get(pk=order.id).performer, self.boris)
+
+    def test_mark_can_be_removed(self):
+        """Ошиблись кнопкой — снять отметку можно, поле необязательное."""
+        order_id = self.order(performer=self.boris.id).data["id"]
+        self.client.patch(f"/api/orders/{order_id}/performer/", {"performer": None}, format="json")
+        self.assertIsNone(Order.objects.get(pk=order_id).performer)
+
+    def test_stranger_cannot_be_written_in(self):
+        """id приходит с планшета; чужой сотрудник испортил бы сдельный отчёт."""
+        alien = Organization.objects.create(name="Соседи", slug="sosedi-perf", domain="sosedi.example.com")
+        with organization_context(alien):
+            other = User.objects.create_user(
+                "чужой", password="demo12345", role=User.Role.WAITER, organization=alien
+            )
+        res = self.order(performer=other.id)
+        # Заказ принят, но исполнителем записан тот, кто вошёл, а не чужак.
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.data["performer"], self.anna.id)
+
+    # ——— счёт выполненного ———
+
+    def test_shift_counts_orders_of_each_person(self):
+        add_member(self.anna, timezone.localdate())
+        add_member(self.boris, timezone.localdate())
+        for _ in range(2):
+            self.close(self.order(performer=self.anna.id).data["id"])
+        self.close(self.order(performer=self.boris.id).data["id"])
+
+        rows = {m["user"]: m for m in shift_report(day=timezone.localdate(), shift=get_shift(timezone.localdate()))["members"]}
+
+        self.assertEqual(rows[self.anna.id]["orders"], 2)
+        self.assertEqual(rows[self.anna.id]["orders_total"], "480.00")
+        self.assertEqual(rows[self.boris.id]["orders"], 1)
+
+    def test_open_orders_are_not_counted_yet(self):
+        """Пока счёт не закрыт, выручки по нему нет — и считать нечего."""
+        add_member(self.anna, timezone.localdate())
+        self.order(performer=self.anna.id)
+        report = shift_report(shift=get_shift(timezone.localdate()))
+        self.assertEqual(report["members"][0]["orders"], 0)
+
+    def test_work_of_those_outside_the_shift_is_not_lost(self):
+        """Менеджер забыл поставить в смену, а человек работал."""
+        add_member(self.anna, timezone.localdate())
+        self.close(self.order(performer=self.boris.id).data["id"])
+
+        report = shift_report(shift=get_shift(timezone.localdate()))
+
+        self.assertEqual([o["name"] for o in report["outsiders"]], ["Борис"])
+        self.assertEqual(report["outsiders"][0]["orders"], 1)
+
+    def test_payout_still_splits_evenly(self):
+        """Сдельной оплаты пока нет: цифры показываем, деньги делим как раньше."""
+        add_member(self.anna, timezone.localdate())
+        add_member(self.boris, timezone.localdate())
+        self.close(self.order(performer=self.anna.id).data["id"])
+
+        report = shift_report(shift=get_shift(timezone.localdate()))
+
+        payouts = {m["payout"] for m in report["members"]}
+        self.assertEqual(len(payouts), 1)
+
+    # ——— список для выбора ———
+
+    def test_list_puts_the_shift_first(self):
+        add_member(self.boris, timezone.localdate())
+        rows = self.client.get("/api/shifts/performers/").data
+        self.assertEqual(rows[0]["name"], "Борис")
+        self.assertTrue(rows[0]["in_shift"])
+        self.assertIn("Анна", [r["name"] for r in rows])
+
+    def test_list_is_not_empty_without_a_shift(self):
+        """Иначе поле молчало бы из-за того, что менеджер не поставил смену."""
+        rows = self.client.get("/api/shifts/performers/").data
+        self.assertEqual({r["in_shift"] for r in rows}, {False})
+        self.assertEqual(len(rows), 2)
+
+    def test_barista_may_read_the_list(self):
+        """Выбирает человек за стойкой, а не менеджер."""
+        self.assertEqual(self.client.get("/api/shifts/performers/").status_code, 200)

@@ -152,6 +152,36 @@ class ShiftViewSet(viewsets.ViewSet):
         )
 
     @action(detail=False, methods=["get"])
+    def performers(self, request):
+        """Кого бариста выбирает в поле «выполнил» — сегодняшняя смена.
+
+        Доступно любому сотруднику, а не только менеджеру: выбирает-то
+        человек за стойкой. Сначала идут те, кто в смене, — им и жать.
+        Если смену на сегодня не поставили, список не пустеет, а показывает
+        весь персонал: поле не должно молчать из-за забывчивости менеджера.
+        """
+        day = timezone.localdate()
+        shift = Shift.objects.filter(date=day).first()
+        in_shift = set(
+            shift.members.values_list("user_id", flat=True) if shift else []
+        )
+        users = User.tenant.filter(
+            is_active=True,
+            role__in=[User.Role.WAITER, User.Role.COOK, User.Role.BAR, User.Role.ADMIN],
+        )
+        rows = [
+            {
+                "id": u.id,
+                "name": user_name(u),
+                "role_display": u.get_role_display(),
+                "in_shift": u.id in in_shift,
+            }
+            for u in users
+        ]
+        rows.sort(key=lambda r: (not r["in_shift"], r["name"]))
+        return Response(rows)
+
+    @action(detail=False, methods=["get"])
     def payroll(self, request):
         """К выплате за период. Работнику — только его строка, менеджеру — все."""
         me = None if self.is_manager else request.user

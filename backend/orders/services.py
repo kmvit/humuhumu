@@ -99,8 +99,25 @@ def _add_items(order: Order, items: list[dict]) -> None:
         )
 
 
+def resolve_performer(user_id, fallback=None):
+    """Кто выполняет заказ: выбранный сотрудник своего заведения.
+
+    Проверяем на сервере: id приходит с планшета, под которым работает
+    вся смена, и чужой сотрудник в поле «выполнил» испортил бы отчёт,
+    по которому считают сдельную оплату. Не выбрали — берём того, кто
+    вошёл: в зале у каждого свой вход, и там это верно по умолчанию.
+    """
+    from users.models import User
+
+    if not user_id:
+        return fallback
+    return User.tenant.filter(pk=user_id, is_active=True).first() or fallback
+
+
 @transaction.atomic
-def create_order(*, waiter, items: list[dict], table: str = "", comment: str = "") -> Order:
+def create_order(
+    *, waiter, items: list[dict], table: str = "", comment: str = "", performer=None
+) -> Order:
     """Заказ, заведённый сотрудником сразу в работу (статус «Открыт»).
 
     В зале это заказ на стол. На стойке столов нет: гость называет позиции
@@ -114,6 +131,7 @@ def create_order(*, waiter, items: list[dict], table: str = "", comment: str = "
     counter = SiteSettings.load().service_mode == SiteSettings.ServiceMode.COUNTER
     order = Order.objects.create(
         waiter=waiter,
+        performer=performer,
         table="" if counter else table,
         comment=comment,
         status=Order.Status.OPEN,
