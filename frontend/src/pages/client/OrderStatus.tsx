@@ -149,7 +149,10 @@ export default function OrderStatus({
 
       <GuestBonus order={order} onDone={onReload} />
 
-      {canPayOnline && st !== "paid" && st !== "cancelled" && (
+      {/* Оплаченный заказ кнопку не показывает, даже пока готовится: при
+          предоплате деньги уже взяты, а статус ещё «открыт» — гость
+          заплатил бы второй раз. */}
+      {canPayOnline && !order.paid_at && st !== "paid" && st !== "cancelled" && (
         <button className="btn block mt-4" disabled={paying} onClick={payOnline}>
           <Icon name="card" size={18} /> Оплатить картой ·{" "}
           {Number(order.payable).toLocaleString("ru")} ₽

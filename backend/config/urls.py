@@ -4,7 +4,7 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from rest_framework_simplejwt.views import TokenRefreshView
 
 from catalog.views import (
     CategoryViewSet,
@@ -35,7 +35,7 @@ from payments.views import AcquiringSettingsView
 from payments.views import callback as payment_callback
 from shifts.views import ShiftViewSet
 from users.staff import StaffViewSet
-from users.views import MeView, RegisterView
+from users.views import LoginView, MeView, RegisterView
 from wallet.views import (
     MyTransactionsView,
     MyWalletView,
@@ -78,7 +78,7 @@ router.register(
 
 api_patterns = [
     # авторизация
-    path("auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
+    path("auth/token/", LoginView.as_view(), name="token_obtain_pair"),
     path("auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("auth/register/", RegisterView.as_view(), name="register"),
     # сайт (публичные настройки)

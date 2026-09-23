@@ -700,7 +700,8 @@ export default function Shifts() {
       )}
 
       {/* ——— период ——— */}
-      {tab !== "day" && (
+      {/* Правилам оплаты период не нужен: они одни на все смены. */}
+      {tab !== "day" && tab !== "pay" && (
         <div className="wrap mt-3">
           <input
             className="input"

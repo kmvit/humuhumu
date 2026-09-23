@@ -125,3 +125,22 @@ class StaffApiTests(APITestCase):
     def test_delete_is_not_allowed(self):
         res = self.client.delete(f"/api/staff/{self.waiter.pk}/")
         self.assertEqual(res.status_code, 405)
+
+
+class LoginMessageTests(APITestCase):
+    """Отказ во входе читает официант у планшета, а не разработчик."""
+
+    def test_wrong_password_answers_in_russian(self):
+        User.objects.create_user("бариста", password="demo12345", role=User.Role.WAITER)
+        res = self.client.post(
+            "/api/auth/token/", {"username": "бариста", "password": "не тот"}, format="json"
+        )
+        self.assertEqual(res.status_code, 401)
+        self.assertEqual(res.data["detail"], "Неверный логин или пароль")
+
+    def test_unknown_login_answers_the_same(self):
+        """Разный текст выдал бы, какие логины существуют."""
+        res = self.client.post(
+            "/api/auth/token/", {"username": "никто", "password": "demo12345"}, format="json"
+        )
+        self.assertEqual(res.data["detail"], "Неверный логин или пароль")
