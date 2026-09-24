@@ -7,6 +7,7 @@ import { useToast } from "../../components/ui/Toast";
 import Staff from "./Staff";
 import Bonuses from "./Bonuses";
 import OnlinePayment from "./OnlinePayment";
+import OrderingPause from "./OrderingPause";
 import Subscription from "./Subscription";
 
 // Темы продукта: ключи совпадают с SiteSettings.Theme на бэкенде.
@@ -124,6 +125,10 @@ export default function Admin() {
       </div>
 
       <Subscription />
+
+      {/* Технический перерыв — вверху: за ним бегут в час пик, когда
+          кофемашина встала, а не ищут между темами оформления. */}
+      <OrderingPause />
 
       <h2 className="section-title">Формат работы</h2>
       <div className="card">

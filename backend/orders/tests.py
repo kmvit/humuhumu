@@ -174,6 +174,52 @@ class StaffOrderTests(OrderFlowBase):
         self.assertIsNone(order.daily_number)
 
 
+class OrderingPauseTests(OrderFlowBase):
+    """Технический перерыв: заказы с сайта выключены, заведение работает.
+
+    Смысл в том, чтобы закрыть ровно гостевую дверь: кофемашина встала —
+    приём по QR останавливают, а официант принимает заказы как обычно.
+    """
+
+    def pause(self, note=""):
+        site = SiteSettings.load()
+        site.ordering_paused = True
+        site.ordering_pause_note = note
+        site.save()
+
+    def test_guest_order_rejected_with_reason(self):
+        self.pause("Кофемашина на профилактике, ждём к 14:00")
+        res = self.place()
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("Кофемашина", res.data["detail"])
+        self.assertFalse(Order.objects.exists())
+
+    def test_guest_order_rejected_without_note(self):
+        """Причину написать забыли — гость всё равно должен понять, что к чему."""
+        self.pause()
+        res = self.place()
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("Технический перерыв", res.data["detail"])
+
+    def test_staff_order_still_works(self):
+        self.pause()
+        self.auth(self.waiter)
+        res = self.client.post(
+            "/api/orders/",
+            {"items": [{"product": self.latte.id, "quantity": 1}], "table": "3"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 201)
+
+    def test_guest_orders_again_after_pause_lifted(self):
+        self.pause("Перерыв")
+        self.place()
+        site = SiteSettings.load()
+        site.ordering_paused = False
+        site.save()
+        self.assertEqual(self.place().status_code, 201)
+
+
 class MoveItemsTests(OrderFlowBase):
     """Перенос отдельных позиций на другой стол: пересела часть компании.
 

@@ -123,6 +123,23 @@ export function useFeature(name: Feature): boolean {
   return site.features?.includes(name) ?? true;
 }
 
+// Подпись под заголовком «Технический перерыв», когда причину не написали.
+// Свой текст на этот случай есть и у бэка (orders/services.PAUSE_MESSAGE):
+// туда он идёт ошибкой на заказ и должен читаться сам по себе.
+const PAUSE_MESSAGE = "Скоро вернёмся — заказы пока не принимаем";
+
+/** Текст перерыва для гостя или null, если заказы принимаются.
+
+    Настройки грузятся один раз при старте: гость, открывший меню до
+    перерыва, кнопку увидит — его остановит бэк и тем же текстом объяснит
+    причину.
+*/
+export function useOrderingPause(): string | null {
+  const site = useSite();
+  if (!site?.ordering_paused) return null;
+  return site.ordering_pause_note || PAUSE_MESSAGE;
+}
+
 /** Текущая тема оформления заведения (не путать с день/ночь из theme.ts). */
 export function useAppearance() {
   return useContext(AppearanceContext);

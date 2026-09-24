@@ -12,6 +12,10 @@ class OrderError(Exception):
     pass
 
 
+# Что слышит гость, когда заказы с сайта выключены, а причину не написали.
+PAUSE_MESSAGE = "Технический перерыв — заказы сейчас не принимаем"
+
+
 def _resolve_variant(line: dict) -> ProductVariant:
     """Вариант из строки заказа: по variant, или по product старого клиента.
 
@@ -228,7 +232,15 @@ def create_request(
     if not items:
         raise OrderError("Пустой заказ")
 
-    counter = SiteSettings.load().service_mode == SiteSettings.ServiceMode.COUNTER
+    site = SiteSettings.load()
+    # Технический перерыв. Проверяем здесь, а не во вьюхе: это единственная
+    # дверь, через которую заказ попадает в базу без сотрудника, — и она же
+    # остаётся закрытой для гостя, у которого страница открыта со вчера.
+    # Официанта перерыв не касается: он заводит заказ своим create_order.
+    if site.ordering_paused:
+        raise OrderError(site.ordering_pause_note or PAUSE_MESSAGE)
+
+    counter = site.service_mode == SiteSettings.ServiceMode.COUNTER
     # На стойке с предоплатой заказ ждёт денег: ни номера, ни станций у
     # него пока нет (см. prepay_required и start_order).
     waits_payment = counter and prepay_required()

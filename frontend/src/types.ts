@@ -29,6 +29,10 @@ export interface Site {
   online_payment_on: boolean;
   /** Стойка: заказ гостя ждёт оплаты и не уходит на кухню без неё. */
   prepay_required: boolean;
+  /** Технический перерыв: меню видно, но заказ с сайта не отправить. */
+  ordering_paused: boolean;
+  /** Причина перерыва для гостя; пусто — текст по умолчанию (см. site.tsx). */
+  ordering_pause_note: string;
   accent_color: string;
   // Бонусная программа (тариф «Максимум»). 1 бонус = 1 ₽.
   bonus_enabled: boolean;

@@ -89,6 +89,10 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
             # Гостю это видно и так по статусу его заказа, а владельцу
             # нужен выключатель в панели.
             "prepay_required",
+            # Технический перерыв: гость по этим полям понимает, почему
+            # кнопка «Отправить» не работает, а панель владельца их правит.
+            "ordering_paused",
+            "ordering_pause_note",
             "plan",
             "features",
         )

@@ -52,8 +52,16 @@ class SiteSettingsAdmin(TenantAdminMixin, admin.ModelAdmin):
         (
             "Работа заведения",
             {
-                "fields": ("item_remove_code",),
-                "description": "Права официанта на удаление позиций.",
+                "fields": (
+                    "item_remove_code",
+                    "ordering_paused",
+                    "ordering_pause_note",
+                ),
+                "description": (
+                    "Права официанта на удаление позиций и технический "
+                    "перерыв — выключатель гостевого заказа с сайта. "
+                    "Владельцу удобнее ставить перерыв в своей панели."
+                ),
             },
         ),
         (

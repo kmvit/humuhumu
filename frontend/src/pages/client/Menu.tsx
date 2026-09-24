@@ -14,7 +14,7 @@ import { useToast } from "../../components/ui/Toast";
 import Stepper from "../../components/ui/Stepper";
 import OrderStatus from "./OrderStatus";
 import { useTrackedOrder } from "../../orderTrack";
-import { useAppearance, useSite, useFeature } from "../../site";
+import { useAppearance, useOrderingPause, useSite, useFeature } from "../../site";
 import { initTable } from "../../table";
 
 export default function Menu() {
@@ -46,6 +46,8 @@ export default function Menu() {
   const bonusOn = useFeature("loyalty") && !!site?.bonus_enabled;
   const welcome = site?.bonus_welcome ?? 0;
   const bonusPercent = Number(site?.bonus_earn_percent ?? 0);
+  // Технический перерыв: меню листается, заказ не отправить.
+  const pause = useOrderingPause();
 
   const { token, order: tracked, track, forget, reload: reloadTracked } = useTrackedOrder();
   const [table] = useState<string | null>(initTable);
@@ -120,6 +122,10 @@ export default function Menu() {
   }
 
   async function submit() {
+    if (pause) {
+      notify(pause, "bad");
+      return;
+    }
     if (!name.trim()) {
       setCartOpen(true);
       notify("Укажите имя, чтобы официант нашёл заказ", "bad");
@@ -181,6 +187,20 @@ export default function Menu() {
           ? "Соберите заказ — он придёт официанту с вашим столом"
           : "Соберите заказ и отправьте — потом подойдите к стойке"}
       </p>
+
+      {/* Технический перерыв. Меню оставляем на месте: гость пришёл по QR
+          и должен увидеть, куда попал и почему сейчас не принимают. */}
+      {pause && (
+        <div className="card note-warn">
+          <div className="inline">
+            <span className="tx-icon"><Icon name="lock" size={18} /></span>
+            <div>
+              <strong className="title">Технический перерыв</strong>
+              <p className="muted subtitle m-0">{pause}</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Два вида меню. По умолчанию гость попадает на ленту, список — сюда,
           на /menu; выбор дублируем крупными плитками, чтобы вернуться в ленту
@@ -404,9 +424,9 @@ export default function Menu() {
               <span className="total num">{total.toLocaleString("ru")} ₽</span>
             </span>
           </button>
-          <button className="btn" onClick={submit} disabled={submitting}>
-            <Icon name={submitting ? "spark" : "check"} size={18} />
-            Отправить
+          <button className="btn" onClick={submit} disabled={submitting || !!pause}>
+            <Icon name={pause ? "lock" : submitting ? "spark" : "check"} size={18} />
+            {pause ? "Перерыв" : "Отправить"}
           </button>
         </div>
       )}

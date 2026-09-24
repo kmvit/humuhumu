@@ -11,7 +11,7 @@ import Icon, { categoryIcon, type IconName } from "../../components/Icon";
 import Modal from "../../components/ui/Modal";
 import { useToast } from "../../components/ui/Toast";
 import { initTable } from "../../table";
-import { useSite, useFeature } from "../../site";
+import { useOrderingPause, useSite, useFeature } from "../../site";
 import { useTrackedOrder } from "../../orderTrack";
 import OrderStatus from "./OrderStatus";
 
@@ -58,6 +58,8 @@ export default function MenuReels() {
   // Телефон в форме заказа нужен только бонусной программе: по нему заказ
   // привяжется к гостю и ему будет что начислить.
   const bonusOn = useFeature("loyalty") && !!site?.bonus_enabled;
+  // Технический перерыв: ленту листаем, заказ не отправляем.
+  const pause = useOrderingPause();
   const welcome = site?.bonus_welcome ?? 0;
   const bonusPercent = Number(site?.bonus_earn_percent ?? 0);
 
@@ -194,6 +196,10 @@ export default function MenuReels() {
   }
 
   async function submit() {
+    if (pause) {
+      notify(pause, "bad");
+      return;
+    }
     if (!name.trim()) {
       notify("Укажите имя, чтобы официант нашёл заказ", "bad");
       return;
@@ -430,6 +436,12 @@ export default function MenuReels() {
             </div>
           }
         >
+            {pause && (
+              <div className="card note-warn">
+                <strong className="title">Технический перерыв</strong>
+                <p className="muted subtitle m-0">{pause}</p>
+              </div>
+            )}
             <div className="reels-sheet-items">
               {Object.entries(cart).map(([key, line]) => {
                 const found = byVariant.get(line.variant);
@@ -491,8 +503,9 @@ export default function MenuReels() {
             )}
             <div className="between mt-4">
               <strong className="num" style={{ fontSize: 20 }}>{total.toLocaleString("ru")} ₽</strong>
-              <button className="btn" onClick={submit} disabled={submitting}>
-                <Icon name={submitting ? "spark" : "check"} size={18} /> Отправить
+              <button className="btn" onClick={submit} disabled={submitting || !!pause}>
+                <Icon name={pause ? "lock" : submitting ? "spark" : "check"} size={18} />{" "}
+                {pause ? "Перерыв" : "Отправить"}
               </button>
             </div>
         </Modal>
