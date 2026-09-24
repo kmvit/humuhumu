@@ -95,10 +95,13 @@ class ModifierEffectInline(admin.TabularInline):
 
 @admin.register(Modifier)
 class ModifierAdmin(admin.ModelAdmin):
-    list_display = ("name", "group", "price_delta", "is_stopped", "sort_order")
+    list_display = ("name", "group", "price_delta", "is_stopped", "sort_order", "picks")
     list_filter = ("group", "is_stopped")
     list_editable = ("price_delta", "is_stopped", "sort_order")
     search_fields = ("name", "group__name")
+    # Счётчик выбора — только показываем: его считает ночная задача по
+    # заказам, и правка руками врала бы владельцу же (catalog/tasks.py).
+    readonly_fields = ("picks",)
     inlines = [ModifierEffectInline]
 
 

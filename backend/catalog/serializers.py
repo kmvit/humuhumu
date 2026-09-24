@@ -53,18 +53,49 @@ class ModifierSerializer(serializers.ModelSerializer):
     """Опция. effects отдаём только владельцу — гостю их знать незачем."""
 
     effects = ModifierEffectSerializer(many=True, read_only=True)
+    # Место в тройке ходовых (0 — самая частая) или null. Место, а не
+    # счётчик: сколько раз брали овсяное — дело заведения, а
+    # /api/products/ читают все подряд. Ставит его группа (ниже).
+    top = serializers.SerializerMethodField()
+
+    def get_top(self, obj) -> int | None:
+        return getattr(obj, "top_rank", None)
 
     class Meta:
         model = Modifier
-        fields = ("id", "name", "price_delta", "is_stopped", "sort_order", "effects")
+        fields = (
+            "id", "name", "price_delta", "is_stopped", "sort_order",
+            "top", "effects",
+        )
+
+
+#: Сколько опций группы помечаем ходовыми — столько чипов покажет гостю
+#: лист выбора. Три: больше не влезает в строку на телефоне.
+TOP_MODIFIERS = 3
 
 
 class ModifierGroupSerializer(serializers.ModelSerializer):
-    modifiers = ModifierSerializer(many=True, read_only=True)
+    modifiers = serializers.SerializerMethodField()
     is_required = serializers.BooleanField(read_only=True)
     products = serializers.PrimaryKeyRelatedField(
         many=True, queryset=Product.objects, required=False
     )
+
+    def get_modifiers(self, group) -> list:
+        """Опции в порядке владельца, с пометкой ходовых.
+
+        Порядок списка не трогаем: гость ищет «вишню» там, где она стоит в
+        меню. Популярность — отдельная пометка, по ней рисуются быстрые
+        чипы наверху. Кто ходовой, знает поле picks (его считает ночная
+        задача по заказам); у нового заведения статистики ещё нет — тогда
+        ходовыми считаются первые опции в порядке, заданном владельцем.
+        """
+        mods = list(group.modifiers.all())
+        ranked = sorted(mods, key=lambda m: (-m.picks, m.sort_order, m.id))
+        places = {m.id: i for i, m in enumerate(ranked[:TOP_MODIFIERS])}
+        for m in mods:
+            m.top_rank = places.get(m.id)
+        return ModifierSerializer(mods, many=True, context=self.context).data
 
     class Meta:
         model = ModifierGroup

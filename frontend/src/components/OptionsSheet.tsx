@@ -19,6 +19,10 @@ import type { ModifierGroup, Product } from "../types";
 /** Со скольких опций в группе показывать поиск. */
 const SEARCH_FROM = 8;
 
+/** Со скольких опций свёрнутая группа показывает быстрые чипы. Меньше —
+ *  чипы повторили бы почти весь список, и проще открыть его целиком. */
+const CHIPS_FROM = 6;
+
 /** «1 вариант», «2 варианта», «5 вариантов» — иначе в свёрнутой строке
  *  висит «4 вариантов». */
 function variants(n: number): string {
@@ -145,6 +149,7 @@ export default function OptionsSheet({
             const unmet = touched && missing.includes(group.name);
             const shown = open.includes(group.id);
             const chose = summary(group);
+            const chips = !shown && group.modifiers.length >= CHIPS_FROM;
             const q = (query[group.id] || "").trim().toLowerCase();
             const list = q
               ? group.modifiers.filter((m) => m.name.toLowerCase().includes(q))
@@ -168,22 +173,61 @@ export default function OptionsSheet({
                         <span className="muted"> · до {group.max_choices}</span>
                       ) : null}
                     </span>
-                    {/* Сводка вместо списка: свёрнутая группа всё равно
-                        показывает, что выбрано и почём. */}
-                    <span className={"opt-summary" + (chose ? " on" : "")}>
-                      {chose ||
-                        (group.min_choices > 0
-                          ? "выберите одно"
-                          : variants(group.modifiers.length))}
-                    </span>
+                    {/* Сводка вместо списка. Когда под строкой стоят чипы,
+                        «19 вариантов» не пишем — это же говорит кнопка
+                        «Все 19» рядом с ними. */}
+                    {(chose || !chips) && (
+                      <span className={"opt-summary" + (chose ? " on" : "")}>
+                        {chose ||
+                          (group.min_choices > 0
+                            ? "выберите одно"
+                            : variants(group.modifiers.length))}
+                      </span>
+                    )}
                   </span>
                   <span className="opt-caret">
                     <Icon name="chevronRight" size={16} />
                   </span>
                 </button>
 
+                {/* Ходовые опции — в один тап, не раскрывая список. Что
+                    ходовое, считает бэк по заказам за месяц; у нового
+                    заведения — первые в порядке, заданном владельцем. */}
+                {chips && (
+                  <div className="opt-chips">
+                    {group.modifiers
+                      .filter((m) => m.top != null && !m.is_stopped)
+                      .sort((a, b) => (a.top ?? 0) - (b.top ?? 0))
+                      .map((m) => {
+                        const on = chosen.includes(m.id);
+                        const delta = Number(m.price_delta);
+                        return (
+                          <button
+                            key={m.id}
+                            className={"opt-chip" + (on ? " on" : "")}
+                            aria-pressed={on}
+                            onClick={() => toggle(group.id, m.id, single)}
+                          >
+                            {m.name}
+                            {delta ? <span className="opt-chip-sum">{money(delta)}</span> : null}
+                          </button>
+                        );
+                      })}
+                    <button
+                      className="opt-chip more"
+                      onClick={() => toggleGroup(group.id)}
+                    >
+                      Все {group.modifiers.length}
+                    </button>
+                  </div>
+                )}
+
                 {shown && (
-                  <div className="opt-list">
+                  <div
+                    className={
+                      "opt-list" + (group.modifiers.length >= SEARCH_FROM ? " cols" : "")
+                    }
+                  >
                     {group.modifiers.length >= SEARCH_FROM && (
                       <input
                         className="input opt-search"

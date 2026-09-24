@@ -1024,3 +1024,112 @@ class RefineTests(CatalogAdminBase):
             format="json",
         )
         self.assertEqual(res.status_code, 400)
+
+
+class ModifierPicksTests(APITestCase):
+    """Ходовые опции: считаем по заказам гостей, а не по расходу склада.
+
+    Склад знает граммы, а не выбор: у сиропа тех карты может не быть вовсе,
+    а безлактозное и обычное молоко нередко лежат одной позицией. Поэтому
+    источник — то, что гости реально выбирали в чеках.
+    """
+
+    def setUp(self):
+        cat = Category.objects.create(name="Кофе", station="bar")
+        self.latte = Product.objects.create(category=cat, name="Латте")
+        self.variant = ProductVariant.objects.create(
+            product=self.latte, price=Decimal("300")
+        )
+        self.group = ModifierGroup.objects.create(name="Молоко", max_choices=1)
+        self.group.products.add(self.latte)
+        self.cow = Modifier.objects.create(group=self.group, name="Коровье", sort_order=1)
+        self.oat = Modifier.objects.create(group=self.group, name="Овсяное", sort_order=2)
+        self.coconut = Modifier.objects.create(
+            group=self.group, name="Кокосовое", sort_order=3
+        )
+        self.almond = Modifier.objects.create(
+            group=self.group, name="Миндальное", sort_order=4
+        )
+
+    def sell(self, modifier, times=1, status=Order.Status.PAID, days_ago=0):
+        """Продать латте с этой опцией столько-то раз."""
+        from datetime import timedelta
+
+        for _ in range(times):
+            order = Order.objects.create(status=status, total=Decimal("300"))
+            if days_ago:
+                Order.objects.filter(pk=order.pk).update(
+                    created_at=timezone.now() - timedelta(days=days_ago)
+                )
+            item = OrderItem.objects.create(
+                order=order, variant=self.variant, quantity=1,
+                unit_price=Decimal("300"),
+            )
+            item.modifiers.create(
+                modifier=modifier, name=modifier.name, price_delta=modifier.price_delta
+            )
+
+    def refresh(self):
+        from .tasks import refresh_modifier_picks_task
+
+        refresh_modifier_picks_task()
+
+    def test_counts_choices_from_orders(self):
+        self.sell(self.oat, times=3)
+        self.sell(self.cow, times=1)
+        self.refresh()
+        self.oat.refresh_from_db()
+        self.cow.refresh_from_db()
+        self.coconut.refresh_from_db()
+        self.assertEqual((self.oat.picks, self.cow.picks, self.coconut.picks), (3, 1, 0))
+
+    def test_cancelled_orders_do_not_count(self):
+        """Гость этой опции не получил — и топ она двигать не должна."""
+        self.sell(self.oat, times=2, status=Order.Status.CANCELLED)
+        self.refresh()
+        self.oat.refresh_from_db()
+        self.assertEqual(self.oat.picks, 0)
+
+    def test_old_orders_fall_out_of_window(self):
+        """Окно — месяц: тыквенный сироп осенью обгоняет прошлогоднюю мяту."""
+        self.sell(self.oat, times=5, days_ago=60)
+        self.sell(self.cow, times=1)
+        self.refresh()
+        self.oat.refresh_from_db()
+        self.cow.refresh_from_db()
+        self.assertEqual((self.oat.picks, self.cow.picks), (0, 1))
+
+    def test_api_marks_top_by_picks(self):
+        self.sell(self.almond, times=4)
+        self.sell(self.coconut, times=2)
+        self.refresh()
+        res = self.client.get("/api/products/")
+        mods = res.data[0]["modifier_groups"][0]["modifiers"]
+        top = [m["name"] for m in sorted(
+            (m for m in mods if m["top"] is not None), key=lambda m: m["top"]
+        )]
+        # по убыванию спроса, а третьим — первый в порядке владельца:
+        # статистики на всю тройку не набралось
+        self.assertEqual(top, ["Миндальное", "Кокосовое", "Коровье"])
+
+    def test_api_falls_back_to_owner_order(self):
+        """Заведение только открылось: статистики нет, ходовые — первые в меню."""
+        res = self.client.get("/api/products/")
+        mods = res.data[0]["modifier_groups"][0]["modifiers"]
+        self.assertEqual(
+            [m["name"] for m in sorted(
+                (m for m in mods if m["top"] is not None), key=lambda m: m["top"]
+            )],
+            ["Коровье", "Овсяное", "Кокосовое"],
+        )
+
+    def test_api_keeps_owner_order_in_list(self):
+        """Порядок списка не меняется: гость ищет опцию там, где она в меню."""
+        self.sell(self.almond, times=9)
+        self.refresh()
+        res = self.client.get("/api/products/")
+        mods = res.data[0]["modifier_groups"][0]["modifiers"]
+        self.assertEqual(
+            [m["name"] for m in mods],
+            ["Коровье", "Овсяное", "Кокосовое", "Миндальное"],
+        )

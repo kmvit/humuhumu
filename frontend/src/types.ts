@@ -143,6 +143,10 @@ export interface Modifier {
   price_delta: string;
   is_stopped: boolean;
   sort_order: number;
+  /** Место в тройке ходовых (0 — самая частая) или null: такие лист выбора
+   *  показывает чипами, не разворачивая список. Считает бэк по заказам за
+   *  месяц (catalog/tasks.py). */
+  top?: number | null;
 }
 
 /** Набор опций к блюду. Опции набираются ПОВЕРХ выбранного объёма. */

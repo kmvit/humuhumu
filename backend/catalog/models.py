@@ -242,6 +242,12 @@ class Modifier(TenantModel):
     )
     is_stopped = models.BooleanField("На стопе (временно)", default=False)
     sort_order = models.PositiveIntegerField("Порядок сортировки", default=0)
+    # Сколько раз опцию выбрали гости за последний месяц. Считается по
+    # заказам, а не по складу: склад знает граммы, а не выбор — у сиропа
+    # может не быть тех карты вовсе, а безлактозное и обычное молоко на
+    # складе бывают одной позицией. Пересчитывает ночная задача
+    # (catalog/tasks.py), руками это поле не правят.
+    picks = models.PositiveIntegerField("Выбирали за месяц", default=0)
 
     class Meta:
         verbose_name = "Опция"

@@ -210,6 +210,13 @@ CELERY_BEAT_SCHEDULE = {
         "task": "orders.tasks.cancel_stale_unpaid_orders_task",
         "schedule": crontab(minute="*/5"),
     },
+    # Ходовые опции («овсяное», «карамель») — их гость видит чипами, не
+    # разворачивая список. Топ меняется медленно, месячным окном: считать
+    # чаще раза в сутки нечего, а ночью это никому не мешает.
+    "refresh-modifier-picks": {
+        "task": "catalog.tasks.refresh_modifier_picks_task",
+        "schedule": crontab(hour=3, minute=41),
+    },
 }
 
 if LICENSE_KEY:
