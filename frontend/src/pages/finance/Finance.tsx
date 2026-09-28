@@ -16,6 +16,11 @@ function fmtMoney(v: string | number | null | undefined): string {
   return Number(v ?? 0).toLocaleString("ru", { maximumFractionDigits: 2 });
 }
 
+/** Расход со знаком минус — но без «−0», когда расхода нет. */
+function minus(v: string | number | null | undefined): string {
+  return Number(v) ? `−${fmtMoney(v)}` : fmtMoney(0);
+}
+
 function fmtDays(n: number): string {
   const ten = n % 100;
   const one = n % 10;
@@ -270,6 +275,8 @@ export default function Finance() {
                 <span className="muted">
                   {report.checks} чек. · средний {fmtMoney(report.avg_check)} ₽ ·
                   наличные {fmtMoney(report.cash)} · карта {fmtMoney(report.card)}
+                  {Number(report.refunds) > 0 &&
+                    ` · продажи ${fmtMoney(report.sales)} − возвраты ${fmtMoney(report.refunds)}`}
                 </span>
               </div>
               <strong className="num lg">{fmtMoney(report.revenue)} ₽</strong>
@@ -285,7 +292,7 @@ export default function Finance() {
                     : "нет ни одной тех. карты с ценами закупа"}
                 </span>
               </div>
-              <strong className="num">−{fmtMoney(report.cogs)} ₽</strong>
+              <strong className="num">{minus(report.cogs)} ₽</strong>
             </div>
 
             <div className="row">
@@ -304,13 +311,13 @@ export default function Finance() {
             <div className="row">
               <span className="tx-icon"><Icon name="user" size={17} /></span>
               <div className="row-body"><strong>Зарплата</strong></div>
-              <strong className="num">−{fmtMoney(report.payroll)} ₽</strong>
+              <strong className="num">{minus(report.payroll)} ₽</strong>
             </div>
 
             <div className="row">
               <span className="tx-icon"><Icon name="receipt" size={17} /></span>
               <div className="row-body"><strong>Прочие расходы</strong></div>
-              <strong className="num">−{fmtMoney(report.expenses)} ₽</strong>
+              <strong className="num">{minus(report.expenses)} ₽</strong>
             </div>
 
             <div className="row">

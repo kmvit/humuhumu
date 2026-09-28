@@ -195,11 +195,14 @@ def report(period: date_cls) -> dict:
         bonuses=Sum("bonus_spent"),
         checks=Count("id"),
     )
-    revenue = money(agg["received"]) - refunded
+    sales = money(agg["received"])
+    revenue = sales - refunded
     turnover = money(agg["turnover"])  # чек по меню — база для покрытия себестоимости
     bonuses_spent = money(agg["bonuses"])
     checks = agg["checks"] or 0
-    avg_check = money(revenue / checks) if checks else money(0)
+    # Средний чек — про продажи, а не про деньги после возвратов: иначе один
+    # возврат обнулит «средний чек» у честно пробитых заказов.
+    avg_check = money(sales / checks) if checks else money(0)
 
     by_method = {
         row["pay_method"]: money(row["s"])
@@ -207,8 +210,18 @@ def report(period: date_cls) -> dict:
     }
 
     # ——— себестоимость проданного ———
+    # Если при возврате продукты вернули на склад (позиция больше не числится
+    # списанной), расхода не было — такую позицию в себестоимость не берём.
+    # А вылитый кофе остаётся: продукты потрачены, деньги отданы — это убыток.
+    items = OrderItem.objects.filter(order__in=orders)
+    restocked = items.filter(
+        order__status=Order.Status.REFUNDED, stock_written_off_at__isnull=True
+    )
+    turnover -= money(
+        restocked.aggregate(s=Sum(F("unit_price") * F("quantity")))["s"]
+    )
     sold = list(
-        OrderItem.objects.filter(order__in=orders)
+        items.exclude(pk__in=restocked.values("pk"))
         .values("variant_id")
         .annotate(qty=Sum("quantity"), sum=Sum(F("unit_price") * F("quantity")))
     )
@@ -252,6 +265,8 @@ def report(period: date_cls) -> dict:
         "from": first.isoformat(),
         "to": last.isoformat(),
         "revenue": str(revenue),
+        "sales": str(sales),
+        "refunds": str(refunded),
         "checks": checks,
         "avg_check": str(avg_check),
         "cash": str(by_method.get("cash", money(0))),

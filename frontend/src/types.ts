@@ -27,6 +27,8 @@ export interface Site {
   online_payment: boolean;
   /** Выключатель владельца — сам по себе оплату не включает без доступов. */
   online_payment_on: boolean;
+  /** Подключена касса: гость может выбрать «Оплатить на кассе». */
+  kassa_payment: boolean;
   /** Стойка: заказ гостя ждёт оплаты и не уходит на кухню без неё. */
   prepay_required: boolean;
   /** Технический перерыв: меню видно, но заказ с сайта не отправить. */
@@ -268,6 +270,8 @@ export interface Order {
   bonus_spent: string;
   /** Сколько гость платит деньгами: total за вычетом бонусов. */
   payable: string;
+  /** Заказ лежит на кассе и ждёт оплаты — номер на кассе = id заказа. */
+  kassa_waiting: boolean;
   items: OrderItem[];
   created_at: string;
   food_started_at: string | null;
@@ -550,6 +554,10 @@ export interface ProfitReport {
   from: string;
   to: string;
   revenue: string;
+  /** Получено по проданным чекам, до вычета возвратов. */
+  sales: string;
+  /** Вернули гостям в этом месяце. */
+  refunds: string;
   checks: number;
   avg_check: string;
   cash: string;

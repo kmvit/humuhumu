@@ -406,6 +406,43 @@ class ProfitReportTests(APITestCase):
         # прибыль = 500 − 150 − 0 − 0, закуп не вычитается
         self.assertEqual(r["profit"], "350.00")
 
+    def refund(self, order, return_to_stock):
+        """Оплатить заказ по-настоящему, отдать на кухню и вернуть деньги."""
+        from payments.models import Payment
+        from payments.services import refund_order
+
+        order.paid_at = timezone.now()
+        order.save(update_fields=["paid_at"])
+        Payment.objects.create(
+            purpose=Payment.Purpose.ORDER, status=Payment.Status.SUCCEEDED,
+            amount=order.total, order=order, method=order.pay_method,
+            provider="manual",
+        )
+        order.items.update(stock_written_off_at=timezone.now())
+        refund_order(order, return_to_stock=return_to_stock)
+
+    def test_refund_restocked_leaves_no_cost(self):
+        """Вернули деньги и продукты — ни выручки, ни расхода, прибыль ноль."""
+        self.auth(self.manager)
+        self.refund(self.sell(self.burger, 2), return_to_stock=True)
+        r = self.report()
+        self.assertEqual(r["sales"], "1000.00")
+        self.assertEqual(r["refunds"], "1000.00")
+        self.assertEqual(r["revenue"], "0.00")
+        self.assertEqual(r["cogs"], "0.00")
+        self.assertEqual(r["profit"], "0.00")
+        # средний чек — по продажам, возврат его не обнуляет
+        self.assertEqual(r["avg_check"], "1000.00")
+
+    def test_refund_without_restock_is_a_loss(self):
+        """Готовое вылили, деньги вернули — продукты потрачены, это убыток."""
+        self.auth(self.manager)
+        self.refund(self.sell(self.burger, 2), return_to_stock=False)
+        r = self.report()
+        self.assertEqual(r["revenue"], "0.00")
+        self.assertEqual(r["cogs"], "300.00")
+        self.assertEqual(r["profit"], "-300.00")
+
     def test_empty_month_does_not_divide_by_zero(self):
         self.auth(self.manager)
         r = self.report()
