@@ -15,12 +15,16 @@ class Payment(TenantModel):
     class Purpose(models.TextChoices):
         ORDER = "order", "Оплата заказа"
         TOPUP = "topup", "Пополнение токенов"
+        # Возврат — отдельная запись реестра, а не правка исходной:
+        # деньги ушли обратно в свой день, и касса должна это видеть.
+        REFUND = "refund", "Возврат гостю"
 
     class Status(models.TextChoices):
         PENDING = "pending", "Создан"
         SUCCEEDED = "succeeded", "Оплачен"
         FAILED = "failed", "Ошибка"
         CANCELLED = "cancelled", "Отменён"
+        REFUNDED = "refunded", "Возвращён"
 
     class Method(models.TextChoices):
         CASH = "cash", "Наличные"

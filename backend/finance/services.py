@@ -159,6 +159,7 @@ def report(period: date_cls) -> dict:
     from decimal import Decimal as D
 
     from inventory.models import Receipt, ReceiptItem
+    from payments.models import Payment
     from orders.models import Order, OrderItem
     from shifts.models import ShiftSettings
 
@@ -166,11 +167,22 @@ def report(period: date_cls) -> dict:
     cfg = ShiftSettings.load()
     penalty_table = cfg.penalty_table.name if cfg.penalty_table else ""
 
+    # Возвращённые заказы из продаж не выкидываем: они были проданы и
+    # приготовлены, себестоимость по ним понесена. Деньги, ушедшие назад,
+    # вычитаем отдельной строкой — тем месяцем, когда их вернули.
     orders = Order.objects.filter(
-        status=Order.Status.PAID, closed_at__date__range=(first, last)
+        status__in=[Order.Status.PAID, Order.Status.REFUNDED],
+        closed_at__date__range=(first, last),
+    )
+    refunds = Payment.objects.filter(
+        purpose=Payment.Purpose.REFUND,
+        status=Payment.Status.SUCCEEDED,
+        created_at__date__range=(first, last),
     )
     if penalty_table:
         orders = orders.exclude(table=penalty_table)
+        refunds = refunds.exclude(order__table=penalty_table)
+    refunded = money(refunds.aggregate(s=Sum("amount"))["s"])
 
     # Выручка — деньги, которые заведение получило: чек за вычетом бонусов.
     # Списанные бонусы — не доход, а скидка за счёт заведения, поэтому идут
@@ -183,7 +195,7 @@ def report(period: date_cls) -> dict:
         bonuses=Sum("bonus_spent"),
         checks=Count("id"),
     )
-    revenue = money(agg["received"])
+    revenue = money(agg["received"]) - refunded
     turnover = money(agg["turnover"])  # чек по меню — база для покрытия себестоимости
     bonuses_spent = money(agg["bonuses"])
     checks = agg["checks"] or 0

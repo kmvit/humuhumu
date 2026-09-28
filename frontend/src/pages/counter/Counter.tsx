@@ -50,11 +50,43 @@ export default function Counter() {
   // Кто сегодня в смене: заказ по QR приходит без исполнителя, а сделает
   // его кто-то из стоящих за стойкой — отметить это можно на карточке.
   const [performers, setPerformers] = useState<Performer[]>([]);
+  // выданные за сегодня — экран возврата: у стойки это единственное место,
+  // где бариста может найти уже закрытый заказ
+  const [showClosed, setShowClosed] = useState(false);
+  const [closed, setClosed] = useState<Order[]>([]);
+  const [refundFor, setRefundFor] = useState<number | null>(null);
+  const [refundStock, setRefundStock] = useState(false);
 
   useEffect(() => {
     // Ошибка не должна мешать работе: без списка заказы принимаются как прежде.
     get<Performer[]>("/shifts/performers/").then(setPerformers).catch(() => {});
   }, []);
+
+  const loadClosed = useCallback(async () => {
+    setClosed(await get<Order[]>("/orders/?status=paid&closed=today&with_refunded=1").catch(() => []));
+  }, []);
+
+  useEffect(() => {
+    if (showClosed) loadClosed();
+  }, [showClosed, loadClosed]);
+
+  /** Вернуть гостю деньги. Карту возвращает банк, наличные — из ящика. */
+  async function refundOrder(order: Order) {
+    setBusy(order.id);
+    try {
+      const updated = await post<Order>(`/orders/${order.id}/refund/`, {
+        return_to_stock: refundStock,
+      });
+      setClosed((os) => os.map((o) => (o.id === updated.id ? updated : o)));
+      setRefundFor(null);
+      setRefundStock(false);
+      toast(`Возврат ${money(order.total)} ₽ проведён`);
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : "Не удалось вернуть деньги");
+    } finally {
+      setBusy(null);
+    }
+  }
   // Заказ на словах: гость подошёл к окну и назвал позиции. Столов на стойке
   // нет, поэтому Compose открываем без стола — он выдаст номер.
   const [composing, setComposing] = useState(false);
@@ -142,6 +174,12 @@ export default function Counter() {
           <span className="chip">
             <Icon name="spark" size={15} /> {orders.length}
           </span>
+          <button
+            className={"btn sm" + (showClosed ? "" : " ghost")}
+            onClick={() => setShowClosed((v) => !v)}
+          >
+            <Icon name="receipt" size={16} /> Выданные
+          </button>
           <button className="btn sm" onClick={() => setComposing(true)}>
             <Icon name="plus" size={16} /> Новый заказ
           </button>
@@ -151,7 +189,73 @@ export default function Counter() {
         Гость заказывает по QR или на словах — соберите и выдайте по номеру
       </p>
 
-      {orders.length === 0 ? (
+      {showClosed ? (
+        <div className="stack loose mt-4">
+          {closed.length === 0 ? (
+            <p className="muted center mt-5">Сегодня выданных заказов нет</p>
+          ) : (
+            closed.map((o) => (
+              <div className="card" key={o.id}>
+                <div className="between">
+                  <strong className="counter-no">№{o.daily_number ?? o.id}</strong>
+                  <span className="inline tight">
+                    {o.refunded_at ? (
+                      <span className="badge cancelled">Возврат</span>
+                    ) : (
+                      <span className="badge">
+                        <Icon name={o.pay_method === "card" ? "card" : "cash"} size={12} />{" "}
+                        {o.pay_method_display}
+                      </span>
+                    )}
+                    <span className="num">{money(o.total)} ₽</span>
+                  </span>
+                </div>
+                <div className="muted sm mt-1">
+                  {o.customer_name ? `${o.customer_name} · ` : ""}
+                  {o.items.map((it) => `${it.product_name} × ${it.quantity}`).join(", ")}
+                </div>
+
+                {!o.refunded_at &&
+                  (refundFor === o.id ? (
+                    <div className="rule-top mt-3 pt-3">
+                      <label className="inline tight">
+                        <input
+                          type="checkbox"
+                          checked={refundStock}
+                          onChange={(e) => setRefundStock(e.target.checked)}
+                        />
+                        <span className="sm">Вернуть продукты на склад</span>
+                      </label>
+                      <p className="muted sm m-0 mt-1">
+                        Не успели приготовить — продукты целы. Готовый напиток возвращать
+                        на склад не нужно.
+                      </p>
+                      <div className="wrap mt-2">
+                        <button
+                          className="btn sm danger"
+                          disabled={busy === o.id}
+                          onClick={() => refundOrder(o)}
+                        >
+                          <Icon name="check" size={15} /> Да, вернуть {money(o.total)} ₽
+                        </button>
+                        <button
+                          className="btn sm ghost"
+                          onClick={() => { setRefundFor(null); setRefundStock(false); }}
+                        >
+                          Отмена
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button className="btn sm ghost block mt-2" onClick={() => setRefundFor(o.id)}>
+                      <Icon name="cash" size={15} /> Вернуть деньги
+                    </button>
+                  ))}
+              </div>
+            ))
+          )}
+        </div>
+      ) : orders.length === 0 ? (
         <p className="muted center mt-5">Заказов нет — всё выдано.</p>
       ) : (
         <div className="kanban">

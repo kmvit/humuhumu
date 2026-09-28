@@ -26,7 +26,7 @@ from users.models import User
 from .acquiring import AcquiringError, SberAcquirer, TBankAcquirer, YooKassaAcquirer, get_acquirer
 from .models import AcquiringCredentials, Payment
 from .acquiring import Result
-from .services import apply_bank_result, apply_payment_result
+from .services import apply_bank_result, apply_payment_result, record_manual_payment
 from .tasks import settle_pending_payments_task
 
 
@@ -793,3 +793,173 @@ class SettleWithoutWebhookTests(APITestCase):
         with mock.patch.object(YooKassaAcquirer, "_get") as bank:
             settle_pending_payments_task()
         bank.assert_not_called()
+
+
+class RefundTests(APITestCase):
+    """Возврат денег за заказ: банк, реестр, бонусы, склад и выручка.
+
+    Возврат — не отмена. Отменяют то, чего не было; возвращают
+    проданное, и это должно быть видно и в кассе, и в смене.
+    """
+
+    ENV = {"YOOKASSA_SHOP_ID": "100500", "YOOKASSA_SECRET_KEY": SECRET}
+
+    def setUp(self):
+        cat = Category.objects.create(name="Кофе", station="bar")
+        product = Product.objects.create(category=cat, name="Раф")
+        self.variant = ProductVariant.objects.create(product=product, price=Decimal("320"))
+        self.order = Order.objects.create(
+            status=Order.Status.OPEN, total=Decimal("320"), public_token=uuid.uuid4()
+        )
+        self.order.items.create(variant=self.variant, quantity=1, unit_price=self.variant.price)
+        site = SiteSettings.load()
+        site.acquiring = SiteSettings.Acquiring.YOOKASSA
+        site.save()
+        env = mock.patch.dict("os.environ", self.ENV)
+        env.start()
+        self.addCleanup(env.stop)
+        self.waiter = User.objects.create_user(
+            "barista-refund", password="Sh4-staff", role=User.Role.WAITER
+        )
+        self.client.force_authenticate(self.waiter)
+
+    def pay_online(self):
+        payment = Payment.objects.create(
+            purpose=Payment.Purpose.ORDER,
+            status=Payment.Status.PENDING,
+            amount=self.order.payable,
+            order=self.order,
+            method=Payment.Method.CARD,
+            provider="yookassa",
+            external_id="pay-1",
+        )
+        apply_payment_result(payment, success=True)
+        self.order.refresh_from_db()
+        return payment
+
+    def refund(self, **body):
+        return self.client.post(f"/api/orders/{self.order.id}/refund/", body, format="json")
+
+    # ——— деньги ———
+
+    def test_online_payment_goes_back_through_the_bank(self):
+        self.pay_online()
+        with mock.patch.object(
+            YooKassaAcquirer, "_post", return_value={"id": "ref-1", "status": "succeeded"}
+        ) as bank:
+            res = self.refund()
+
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertIn("/refunds", bank.call_args[0][0])
+        self.assertEqual(bank.call_args[0][1]["payment_id"], "pay-1")
+
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, Order.Status.REFUNDED)
+        self.assertIsNotNone(self.order.refunded_at)
+
+    def test_registry_keeps_both_records(self):
+        """Исходный платёж не переписываем: он был, и касса должна его видеть."""
+        self.pay_online()
+        with mock.patch.object(YooKassaAcquirer, "_post", return_value={"id": "ref-1", "status": "succeeded"}):
+            self.refund()
+
+        paid = Payment.objects.get(purpose=Payment.Purpose.ORDER)
+        back = Payment.objects.get(purpose=Payment.Purpose.REFUND)
+        self.assertEqual(paid.status, Payment.Status.REFUNDED)
+        self.assertEqual(back.amount, Decimal("320"))
+        self.assertEqual(back.external_id, "ref-1")
+
+    def test_bank_refusal_leaves_everything_as_it_was(self):
+        """Сказать «готово», когда банк отказал, — отпустить гостя без денег."""
+        self.pay_online()
+        with mock.patch.object(
+            YooKassaAcquirer, "_post", side_effect=AcquiringError("Возврат невозможен")
+        ):
+            res = self.refund()
+
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("невозможен", res.data["detail"])
+        self.order.refresh_from_db()
+        # Заказ остаётся закрытым и оплаченным — ровно как до попытки.
+        self.assertEqual(self.order.status, Order.Status.PAID)
+        self.assertIsNone(self.order.refunded_at)
+        self.assertFalse(Payment.objects.filter(purpose=Payment.Purpose.REFUND).exists())
+
+    def test_cash_refund_needs_no_bank(self):
+        """Наличные кассир отдаёт из ящика — нам остаётся записать это."""
+        record_manual_payment(self.order, Payment.Method.CASH, user=self.waiter)
+        self.order.refresh_from_db()
+
+        res = self.refund()
+
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(Payment.objects.get(purpose=Payment.Purpose.REFUND).method, Payment.Method.CASH)
+
+    def test_unpaid_order_cannot_be_refunded(self):
+        self.assertEqual(self.refund().status_code, 400)
+
+    def test_second_refund_is_refused(self):
+        self.pay_online()
+        with mock.patch.object(YooKassaAcquirer, "_post", return_value={"id": "ref-1", "status": "succeeded"}):
+            self.refund()
+        with mock.patch.object(YooKassaAcquirer, "_post") as bank:
+            res = self.refund()
+        self.assertEqual(res.status_code, 400)
+        bank.assert_not_called()
+
+    # ——— заказ и отмена ———
+
+    def test_paid_order_cannot_be_cancelled_instead(self):
+        """Отмена оплаченного заказа оставляла бы деньги у заведения."""
+        self.pay_online()
+        res = self.client.patch(f"/api/orders/{self.order.id}/cancel/", {}, format="json")
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("вернуть", res.data["detail"])
+
+    # ——— выручка ———
+
+    def test_day_revenue_loses_the_refunded_money(self):
+        from shifts.services import day_revenue
+
+        record_manual_payment(self.order, Payment.Method.CASH, user=self.waiter)
+        self.order.refresh_from_db()
+        self.assertEqual(day_revenue(timezone.localdate()), Decimal("320.00"))
+
+        self.refund()
+        self.assertEqual(day_revenue(timezone.localdate()), Decimal("0.00"))
+
+    def test_yesterdays_revenue_is_not_rewritten(self):
+        """Иначе вчерашняя зарплата менялась бы задним числом."""
+        from shifts.services import day_revenue
+
+        record_manual_payment(self.order, Payment.Method.CASH, user=self.waiter)
+        yesterday = timezone.now() - timedelta(days=1)
+        Order.objects.filter(pk=self.order.pk).update(closed_at=yesterday)
+        Payment.objects.filter(order=self.order).update(created_at=yesterday)
+        self.order.refresh_from_db()
+
+        self.refund()
+
+        self.assertEqual(day_revenue(yesterday.date()), Decimal("320.00"))
+        self.assertEqual(day_revenue(timezone.localdate()), Decimal("-320.00"))
+
+    # ——— склад ———
+
+    def test_stock_returns_only_when_asked(self):
+        from inventory.models import StockCategory, StockItem
+
+        cat = StockCategory.objects.create(name="Молоко")
+        milk = StockItem.objects.create(category=cat, name="Молоко", unit=StockItem.Unit.MILLILITER)
+        self.variant.recipe.create(item=milk, quantity=Decimal("200"))
+        item = self.order.items.first()
+        from inventory.services import write_off_order_item
+
+        write_off_order_item(item, user=self.waiter)
+        milk.refresh_from_db()
+        self.assertEqual(milk.quantity, Decimal("-200.000"))
+
+        record_manual_payment(self.order, Payment.Method.CASH, user=self.waiter)
+        self.refund(return_to_stock=True)
+
+        milk.refresh_from_db()
+        self.assertEqual(milk.quantity, Decimal("0.000"))

@@ -74,6 +74,96 @@ def record_manual_payment(order: Order, method: str, user=None) -> Order:
 
 
 @transaction.atomic
+def refund_order(order: Order, *, user=None, return_to_stock: bool = False) -> Order:
+    """Вернуть гостю деньги за заказ целиком.
+
+    Возврат — не отмена. Отменённый заказ это тот, которого не было;
+    возвращённый был продан, приготовлен и попал в выручку дня, а потом
+    деньги ушли обратно. Поэтому исходный платёж остаётся в реестре, а
+    рядом появляется запись возврата своим днём: иначе не сойдётся ни
+    касса, ни выручка смены, по которой считают людям зарплату.
+
+    Карту возвращает банк, наличные — кассир из ящика: нам остаётся
+    записать, что деньги отданы, иначе в кассе будет недостача.
+    """
+    if order.paid_at is None:
+        raise PaymentError("Заказ не оплачен — возвращать нечего")
+    if order.status == Order.Status.REFUNDED:
+        raise PaymentError("Деньги по этому заказу уже вернули")
+
+    paid = list(
+        Payment.objects.filter(
+            order=order, purpose=Payment.Purpose.ORDER, status=Payment.Status.SUCCEEDED
+        )
+    )
+    if not paid:
+        raise PaymentError("По заказу нет успешного платежа")
+
+    for payment in paid:
+        external_id = ""
+        if payment.provider not in ("manual", "mock"):
+            # Онлайн-оплату возвращает банк. Ошибку наружу не глушим:
+            # сказать сотруднику «готово», когда банк отказал, значит
+            # отпустить гостя без денег.
+            acquirer = get_acquirer(payment.provider)
+            try:
+                external_id = acquirer.refund(payment)
+            except AcquiringError as e:
+                raise PaymentError(str(e)) from e
+
+        Payment.objects.create(
+            purpose=Payment.Purpose.REFUND,
+            status=Payment.Status.SUCCEEDED,
+            amount=payment.amount,
+            order=order,
+            method=payment.method,
+            provider=payment.provider,
+            external_id=external_id or None,
+        )
+        payment.status = Payment.Status.REFUNDED
+        payment.save(update_fields=["status", "updated_at"])
+
+    order.status = Order.Status.REFUNDED
+    order.refunded_at = timezone.now()
+    order.closed_by = user or order.closed_by
+    order.save(update_fields=["status", "refunded_at", "closed_by"])
+
+    _undo_bonuses(order)
+    if return_to_stock:
+        _return_to_stock(order, user)
+
+    logger.info(
+        "Возврат: заказ %s, %s ₽, вернул %s%s",
+        order.pk, order.payable, user, ", продукты на склад" if return_to_stock else "",
+    )
+    return order
+
+
+def _undo_bonuses(order: Order) -> None:
+    """Откатить бонусы возвращённого заказа: списанные вернуть, начисленные снять.
+
+    Иначе гость получает бонусы за покупку, которой в итоге не было, —
+    и может списать их ещё раз.
+    """
+    from loyalty.services import cancel_earned_for_order, return_for_order
+
+    return_for_order(order)
+    cancel_earned_for_order(order)
+
+
+def _return_to_stock(order: Order, user=None) -> None:
+    """Вернуть на склад то, что списали за позиции заказа.
+
+    Решает сотрудник при возврате: не успели приготовить — продукты
+    целы; вылили готовый кофе — возвращать нечего, и склад бы соврал.
+    """
+    from inventory.services import return_order_item
+
+    for item in order.items.all():
+        return_order_item(item, user=user)
+
+
+@transaction.atomic
 def record_prepayment(order: Order, method: str, user=None) -> Order:
     """Гость заплатил на кассе за заказ, который ждал оплаты.
 

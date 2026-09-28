@@ -50,6 +50,9 @@ export default function Waiter() {
   const [commentEdit, setCommentEdit] = useState<number | null>(null);
   const [commentText, setCommentText] = useState("");
   const [openClosed, setOpenClosed] = useState<Set<number>>(new Set());
+  // возврат денег: какой заказ подтверждаем и возвращать ли продукты
+  const [refundFor, setRefundFor] = useState<number | null>(null);
+  const [refundStock, setRefundStock] = useState(false);
   const [tables, setTables] = useState<string[]>([]);
   const [busyReq, setBusyReq] = useState<number | null>(null);
   const [moveFor, setMoveFor] = useState<number | null>(null);
@@ -80,8 +83,24 @@ export default function Waiter() {
     });
 
   useEffect(() => {
-    if (view === "closed") get<Order[]>("/orders/?status=paid&closed=today").then(setClosed).catch(() => {});
+    if (view === "closed") get<Order[]>("/orders/?status=paid&closed=today&with_refunded=1").then(setClosed).catch(() => {});
   }, [view]);
+
+  /** Вернуть гостю деньги за заказ целиком. Карту возвращает банк,
+   *  наличные кассир отдаёт из ящика — система записывает и то, и другое. */
+  async function refundOrder(order: Order) {
+    try {
+      const updated = await post<Order>(`/orders/${order.id}/refund/`, {
+        return_to_stock: refundStock,
+      });
+      setClosed((os) => os.map((o) => (o.id === updated.id ? updated : o)));
+      setRefundFor(null);
+      setRefundStock(false);
+      notify(`Возврат ${Number(order.total).toLocaleString("ru")} ₽ проведён`, "ok");
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Не удалось вернуть деньги", "bad");
+    }
+  }
 
   // при открытии стола подставляем N = число уже отмеченных гостей (минимум 2)
   useEffect(() => {
@@ -357,7 +376,11 @@ export default function Waiter() {
                     <div className="between">
                       <strong>Стол {o.table || "—"} <span className="muted" style={{ fontWeight: 400 }}>· №{o.id}</span></strong>
                       <span className="inline tight">
-                        <span className="badge"><Icon name={o.pay_method === "card" ? "card" : "cash"} size={12} /> {o.pay_method_display}</span>
+                        {o.refunded_at ? (
+                          <span className="badge cancelled">Возврат</span>
+                        ) : (
+                          <span className="badge"><Icon name={o.pay_method === "card" ? "card" : "cash"} size={12} /> {o.pay_method_display}</span>
+                        )}
                         <span className="num">{Number(o.total).toLocaleString("ru")} ₽</span>
                       </span>
                     </div>
@@ -387,6 +410,45 @@ export default function Waiter() {
                             </li>
                           ))}
                         </ul>
+                        {/* Возврат — действие с деньгами, поэтому только по
+                            раскрытой карточке и с подтверждением. */}
+                        {!o.refunded_at && (
+                          <div className="rule-top mt-3 pt-3" onClick={(e) => e.stopPropagation()}>
+                            {refundFor === o.id ? (
+                              <>
+                                <label className="inline tight">
+                                  <input
+                                    type="checkbox"
+                                    checked={refundStock}
+                                    onChange={(e) => setRefundStock(e.target.checked)}
+                                  />
+                                  <span className="sm">Вернуть продукты на склад</span>
+                                </label>
+                                <p className="muted sm m-0 mt-1">
+                                  Если заказ не успели приготовить — продукты целы. Готовое
+                                  блюдо возвращать на склад не нужно.
+                                </p>
+                                <div className="wrap mt-2">
+                                  <button className="btn sm danger" onClick={() => refundOrder(o)}>
+                                    <Icon name="check" size={15} /> Да, вернуть{" "}
+                                    {Number(o.total).toLocaleString("ru")} ₽
+                                  </button>
+                                  <button
+                                    className="btn sm ghost"
+                                    onClick={() => { setRefundFor(null); setRefundStock(false); }}
+                                  >
+                                    Отмена
+                                  </button>
+                                </div>
+                              </>
+                            ) : (
+                              <button className="btn sm ghost" onClick={() => setRefundFor(o.id)}>
+                                <Icon name="cash" size={15} /> Вернуть деньги
+                              </button>
+                            )}
+                          </div>
+                        )}
+
                         {bd.some(([g]) => g !== 0) && (
                           <div className="stack tight mt-2">
                             <div className="muted sm">По гостям:</div>

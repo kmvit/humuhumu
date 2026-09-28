@@ -75,6 +75,7 @@ class OrderSerializer(serializers.ModelSerializer):
             # Оплачен вперёд: бариста должен видеть на карточке, что
             # деньги уже получены, и не спрашивать их при выдаче.
             "paid_at",
+            "refunded_at",
             "food_status",
             "drinks_status",
             "food_served",

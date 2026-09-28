@@ -186,6 +186,22 @@ class BaseAcquirer:
         """
         return None
 
+    def refund(self, payment) -> str:
+        """Вернуть гостю деньги по уже оплаченному платежу.
+
+        Возвращает номер возврата у банка (для сверки). Возврат всегда
+        полный: частичные суммы продукт пока не умеет, и лучше честный
+        отказ, чем возврат «примерно на сколько-то».
+
+        Банк, которому такого запроса не задать, обязан сказать это
+        прямо: деньги нельзя «вернуть молча», иначе сотрудник решит,
+        что гость их получил.
+        """
+        raise AcquiringError(
+            f"{self.title}: возврат через приложение не поддерживается — "
+            "верните платёж в личном кабинете банка."
+        )
+
     def check(self) -> None:
         """Проверить доступы у банка. Молча — значит приняты.
 
@@ -229,6 +245,9 @@ class NoAcquirer(BaseAcquirer):
 
     def check(self) -> None:
         return None
+
+    def refund(self, payment) -> str:
+        raise AcquiringError("Онлайн-оплата у заведения не подключена")
 
 
 class TBankAcquirer(BaseAcquirer):
@@ -312,6 +331,22 @@ class TBankAcquirer(BaseAcquirer):
             pending=status in ("NEW", "FORM_SHOWED", "AUTHORIZING", "AUTHORIZED"),
         )
 
+    def refund(self, payment) -> str:
+        """Cancel у Т-Кассы делает и отмену холда, и возврат списанного —
+        банк сам выбирает по состоянию платежа. Сумму не передаём: без неё
+        возврат полный, а частичных мы и не делаем."""
+        self.require_configured()
+
+        body = {"TerminalKey": self.terminal, "PaymentId": str(payment.external_id)}
+        body["Token"] = self._token(body)
+
+        data = self._post(f"{self.api}/Cancel", body)
+        if not data.get("Success"):
+            raise AcquiringError(
+                data.get("Message") or data.get("Details") or "Банк отказал в возврате"
+            )
+        return str(data.get("PaymentId") or payment.external_id)
+
     def _post(self, url: str, body: dict) -> dict:
         try:
             response = httpx.post(url, json=body, timeout=TIMEOUT)
@@ -391,6 +426,23 @@ class SberAcquirer(BaseAcquirer):
         if not external_id:
             return None
         return self.status(external_id)
+
+    def refund(self, payment) -> str:
+        """У RBS-шлюза возврат — refund.do с суммой в копейках.
+
+        Свой номер возврата шлюз не выдаёт: успех — это errorCode 0, и
+        для сверки остаётся номер исходного заказа у банка.
+        """
+        self.require_configured()
+
+        data = self._post(f"{self.api_url}/refund.do", {
+            **self._auth(),
+            "orderId": str(payment.external_id),
+            "amount": _kopecks(payment.amount),
+        })
+        if data.get("errorCode") and str(data["errorCode"]) != "0":
+            raise AcquiringError(data.get("errorMessage") or "Банк отказал в возврате")
+        return str(payment.external_id)
 
     def status(self, external_id: str) -> Result | None:
         data = self._post(f"{self.api_url}/getOrderStatusExtended.do", {
@@ -493,6 +545,29 @@ class YooKassaAcquirer(BaseAcquirer):
         payment.external_id = str(data["id"])
         payment.save(update_fields=["external_id", "updated_at"])
         return url
+
+    def refund(self, payment) -> str:
+        """Возврат — отдельный объект у ЮKassa, со своим id и своим ключом
+        идемпотентности. Ключ выводим из id платежа, как и при создании:
+        повторное нажатие «вернуть» не отправит деньги дважды.
+        """
+        self.require_configured()
+
+        data = self._post(f"{self.api}/refunds", {
+            "payment_id": str(payment.external_id),
+            "amount": {"value": _rubles(payment.amount), "currency": "RUB"},
+        }, idempotence_key=str(
+            uuid.uuid5(uuid.NAMESPACE_URL, f"https://padacha.ru/refunds/{payment.pk}")
+        ))
+
+        refund_id = str(data.get("id") or "")
+        if not refund_id:
+            raise AcquiringError("ЮKassa не вернула номер возврата")
+        # canceled — возврат отклонён; «succeeded» и «pending» оба значат,
+        # что деньги пошли обратно (pending — банк гостя ещё проводит).
+        if str(data.get("status")) == "canceled":
+            raise AcquiringError("ЮKassa отклонила возврат")
+        return refund_id
 
     def read_callback(self, payload: dict, headers: dict) -> Result | None:
         obj = payload.get("object")

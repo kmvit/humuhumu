@@ -12,6 +12,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from django.db.models import Sum
 
 from orders.models import Order
+from payments.models import Payment
 
 from .models import Shift, ShiftMember, ShiftSettings
 
@@ -30,11 +31,26 @@ def user_name(user) -> str:
 
 
 def day_revenue(day, penalty_table: str = "") -> Decimal:
-    """Выручка дня — закрытые счета за этот день (без штрафного стола)."""
-    qs = Order.objects.filter(status=Order.Status.PAID, closed_at__date=day)
+    """Выручка дня — закрытые счета за этот день, минус возвраты этого дня.
+
+    Возвращённый заказ из выручки дня продажи НЕ убираем: он был продан,
+    смена его отработала, а деньги ушли обратно в другой день. Иначе
+    вчерашняя выручка (и посчитанная по ней зарплата) менялась бы задним
+    числом каждый раз, когда сегодня кому-то вернули деньги.
+    """
+    sold = Order.objects.filter(
+        status__in=[Order.Status.PAID, Order.Status.REFUNDED], closed_at__date=day
+    )
+    refunds = Payment.objects.filter(
+        purpose=Payment.Purpose.REFUND,
+        status=Payment.Status.SUCCEEDED,
+        created_at__date=day,
+    )
     if penalty_table:
-        qs = qs.exclude(table=penalty_table)
-    return money(qs.aggregate(s=Sum("total"))["s"])
+        sold = sold.exclude(table=penalty_table)
+        refunds = refunds.exclude(order__table=penalty_table)
+    returned = money(refunds.aggregate(s=Sum("amount"))["s"])
+    return money(sold.aggregate(s=Sum("total"))["s"]) - returned
 
 
 def day_penalty(day, penalty_table: str = "") -> Decimal:

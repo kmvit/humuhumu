@@ -44,6 +44,11 @@ class Order(TenantModel):
         OPEN = "open", "Открыт"
         AWAITING = "awaiting", "К оплате"  # отправлен на терминал, ждём результат
         PAID = "paid", "Закрыт"
+        # Деньги вернули гостю. Отдельно от «отменён»: отмена — это заказ,
+        # которого не было, а возврат — был и продан, просто потом
+        # отменён. Выручка дня продажи остаётся, а возврат вычитается
+        # тем днём, когда его сделали (shifts/services.day_revenue).
+        REFUNDED = "refunded", "Возврат"
         CANCELLED = "cancelled", "Отменён"
 
     class PayMethod(models.TextChoices):
@@ -112,6 +117,7 @@ class Order(TenantModel):
     # оплачен задолго до того, как его выдали и закрыли, и одним полем
     # status эти два события не различить — а закрытие пишет выручку.
     paid_at = models.DateTimeField("Оплачен", null=True, blank=True)
+    refunded_at = models.DateTimeField("Деньги возвращены", null=True, blank=True)
     pay_method = models.CharField(
         "Способ оплаты", max_length=16, choices=PayMethod.choices,
         blank=True, default=PayMethod.CASH,

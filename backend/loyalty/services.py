@@ -7,6 +7,7 @@
 from decimal import ROUND_DOWN, Decimal
 
 from django.db import transaction
+from django.db.models import Sum
 
 from core.models import SiteSettings
 
@@ -173,3 +174,37 @@ def return_for_order(order) -> BonusTransaction | None:
     order.bonus_spent = Decimal(0)
     order.save(update_fields=["bonus_spent"])
     return txn
+
+
+@transaction.atomic
+def cancel_earned_for_order(order) -> BonusTransaction | None:
+    """Снять бонусы, начисленные за заказ, которому сделали возврат.
+
+    Без этого гость получает бонусы за покупку, которой не было: деньги
+    ему вернули, а баллы остались — и он спишет их со следующего заказа.
+    Ниже нуля баланс не уводим: гость мог успеть их потратить, и уходить
+    в минус из-за нашей же задержки нечестно.
+    """
+    member = getattr(order.client, "loyalty", None) if order.client else None
+    if member is None:
+        return None
+
+    earned = (
+        BonusTransaction.objects.filter(order=order, type=BonusTransaction.Type.EARN)
+        .aggregate(s=Sum("amount"))["s"]
+    )
+    earned = Decimal(earned or 0)
+    if earned <= 0:
+        return None
+
+    member = LoyaltyMember.objects.select_for_update().get(pk=member.pk)
+    amount = min(earned, member.balance)
+    if amount <= 0:
+        return None
+    return _apply(
+        member,
+        type_=BonusTransaction.Type.ADJUST,
+        amount=-amount,
+        order=order,
+        comment=f"Снятие начисленных: возврат по заказу №{order.pk}",
+    )

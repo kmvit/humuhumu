@@ -35,6 +35,7 @@ from payments.services import (
     apply_payment_result,
     record_manual_payment,
     record_prepayment,
+    refund_order,
     settle_order,
     start_online_payment,
     start_terminal_payment,
@@ -84,7 +85,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             return [IsBarOrAdmin(), RequiresStations()]
         if self.action == "item_status":
             return [IsAuthenticated(), RequiresStations()]
-        if self.action in ("close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "item_qty", "confirm", "prepaid", "performer", "set_comment", "move", "move_items", "serve", "pay_terminal", "pay_result"):
+        if self.action in ("close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "item_qty", "confirm", "prepaid", "performer", "refund", "set_comment", "move", "move_items", "serve", "pay_terminal", "pay_result"):
             return [IsWaiterOrAdmin()]
         # item_status — право проверяем внутри по станции позиции
         return [IsAuthenticated()]
@@ -135,6 +136,11 @@ class OrderViewSet(viewsets.ModelViewSet):
                 if params.get("with_unpaid") == "1":
                     board.append(Order.Status.UNPAID)
                 qs = qs.filter(status__in=board)
+            elif st == Order.Status.PAID and params.get("with_refunded") == "1":
+                # Список закрытых за день: возвращённые заказы из него
+                # пропадать не должны — по ним сотрудник и видит, что
+                # деньги уже вернули, и не возвращает второй раз.
+                qs = qs.filter(status__in=[Order.Status.PAID, Order.Status.REFUNDED])
             else:
                 qs = qs.filter(status=st)
         if params.get("table"):
@@ -636,12 +642,40 @@ class OrderViewSet(viewsets.ModelViewSet):
             write_off_order_item(item, user=request.user)
         return self._reload_and_respond(order.pk, st)
 
+    @action(detail=True, methods=["post"])
+    def refund(self, request, pk=None):
+        """Вернуть гостю деньги за заказ целиком.
+
+        Отдельно от «отменить»: отменяют то, чего не было, а возвращают
+        проданное. Возврат карты уходит в банк, наличные кассир отдаёт
+        из ящика — мы записываем и то, и другое, иначе касса не сойдётся.
+
+        Продукты на склад возвращаются по галочке: не успели приготовить
+        — целы, вылили готовый кофе — возвращать нечего.
+        """
+        order = self.get_object()
+        to_stock = bool(request.data.get("return_to_stock"))
+        try:
+            refund_order(order, user=request.user, return_to_stock=to_stock)
+        except PaymentError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        order.refresh_from_db()
+        return Response(OrderSerializer(order).data)
+
     @action(detail=True, methods=["patch"])
     def cancel(self, request, pk=None):
         """Официант: отменить заказ."""
         from loyalty.services import return_for_order
 
         order = self.get_object()
+        # Оплаченный заказ отменять нельзя: деньги остались бы у
+        # заведения, а заказ пропал бы из выручки — недостача в кассе и
+        # обиженный гость. Для таких заказов есть возврат.
+        if order.paid_at is not None:
+            return Response(
+                {"detail": "Заказ оплачен — деньги нужно вернуть, а не отменять заказ"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         # списанные бонусы возвращаем: заказа не будет, а бонусы гость потерял бы
         return_for_order(order)
         order.refresh_from_db()
