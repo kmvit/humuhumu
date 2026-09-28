@@ -31,12 +31,17 @@ export default function OrderStatus({
   // кнопку оплаты показываем, только если банк подключён, — иначе гость
   // упрётся в ошибку провайдера
   const canPayOnline = site?.online_payment === true;
+  // «Оплатить на кассе» — заказ уходит на кассу заведения. Только на
+  // стойке: в зале счёт на кассу отправляет официант.
+  const canPayKassa = counter && site?.kassa_payment === true;
   const notify = useToast();
   const [paying, setPaying] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
 
   const st = order.status;
+  // Заказ ждёт гостя на кассе — экран только показывает номер.
+  const atKassa = order.kassa_waiting && !order.paid_at && st !== "cancelled";
   // Сколько ещё ждёт оплаты неоплаченный заказ. Без этой строки гость не
   // понимает, что заказ живёт не вечно, и возвращается к отменённому.
   const leftToPay = Math.max(0, 15 - minutesBetween(order.created_at));
@@ -49,9 +54,11 @@ export default function OrderStatus({
   const note =
     st === "requested" ? `Подойдите к стойке и назовите имя «${order.customer_name}» — официант оформит заказ.`
     : st === "unpaid"
-      ? `Оплатите заказ — и мы сразу начнём готовить. Номер для выдачи появится после оплаты.${
-          leftToPay > 0 ? ` Заказ ждёт ещё ${leftToPay} мин.` : ""
-        }`
+      ? order.kassa_waiting
+        ? `Подойдите к кассе и назовите номер ${order.id} — оплатить можно наличными или картой. Начнём готовить сразу после оплаты.`
+        : `Оплатите заказ — и мы сразу начнём готовить. Номер для выдачи появится после оплаты.${
+            leftToPay > 0 ? ` Заказ ждёт ещё ${leftToPay} мин.` : ""
+          }`
     : st === "open"
       ? order.is_ready
         ? counter ? "Готово — подойдите к окну и назовите свой номер." : "Ваш заказ готов, можно забирать."
@@ -72,6 +79,21 @@ export default function OrderStatus({
       window.location.href = payment_url;
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "Не удалось начать оплату", "bad");
+      setPaying(false);
+    }
+  }
+
+  /** Заказ уходит на кассу. Оплату касса подтвердит сама — опрос заказа
+   *  покажет гостю номер выдачи, как только бариста пробьёт чек. */
+  async function payAtKassa() {
+    if (!token) return;
+    setPaying(true);
+    try {
+      await post("/orders/pay_at_kassa/", { token });
+      await onReload();
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Не удалось отправить заказ на кассу", "bad");
+    } finally {
       setPaying(false);
     }
   }
@@ -98,6 +120,14 @@ export default function OrderStatus({
         <div className="pickup-no mt-4">
           <span className="muted">Ваш номер</span>
           <strong>{order.daily_number}</strong>
+        </div>
+      )}
+
+      {/* Пока заказ ждёт на кассе, главное для гостя — какой номер назвать. */}
+      {order.kassa_waiting && !order.paid_at && st !== "cancelled" && (
+        <div className="pickup-no mt-4">
+          <span className="muted">Номер на кассе</span>
+          <strong>{order.id}</strong>
         </div>
       )}
 
@@ -147,36 +177,54 @@ export default function OrderStatus({
         )}
       </div>
 
-      <GuestBonus order={order} onDone={onReload} />
+      {/* Гость выбрал «Оплатить на кассе» — выбор сделан, больше кнопок
+          нет: ни другой оплаты, ни бонусов (сумма на кассе уже зафиксирована),
+          ни отмены — ушедшего гостя отменяет бариста. Иначе гость, стоящий
+          в очереди, не понимает, чего от него ещё хотят. */}
+      {atKassa ? null : (
+        <>
+          <GuestBonus order={order} onDone={onReload} />
 
-      {/* Оплаченный заказ кнопку не показывает, даже пока готовится: при
-          предоплате деньги уже взяты, а статус ещё «открыт» — гость
-          заплатил бы второй раз. */}
-      {canPayOnline && !order.paid_at && st !== "paid" && st !== "cancelled" && (
-        <button className="btn block mt-4" disabled={paying} onClick={payOnline}>
-          <Icon name="card" size={18} /> Оплатить картой ·{" "}
-          {Number(order.payable).toLocaleString("ru")} ₽
-        </button>
-      )}
-
-      {st === "requested" || st === "unpaid" ? (
-        confirmCancel ? (
-          <div className="wrap mt-4" style={{ justifyContent: "center" }}>
-            <span className="muted" style={{ alignSelf: "center" }}>Точно отменить заказ?</span>
-            <button className="btn sm danger" disabled={cancelling} onClick={cancelRequest}>
-              <Icon name="check" size={16} /> Да, отменить
+          {/* Оплаченный заказ кнопку не показывает, даже пока готовится: при
+              предоплате деньги уже взяты, а статус ещё «открыт» — гость
+              заплатил бы второй раз. «Онлайн», а не «картой»: на кассе картой
+              тоже можно, и гость путался, чем эти две кнопки отличаются. */}
+          {canPayOnline && !order.paid_at && st !== "paid" && st !== "cancelled" && (
+            <button className="btn block mt-4" disabled={paying} onClick={payOnline}>
+              <Icon name="card" size={18} /> Оплатить онлайн ·{" "}
+              {Number(order.payable).toLocaleString("ru")} ₽
             </button>
-            <button className="btn sm ghost" onClick={() => setConfirmCancel(false)}>Нет</button>
-          </div>
-        ) : (
-          <button className="btn ghost block mt-4" onClick={() => setConfirmCancel(true)}>
-            <Icon name="minus" size={18} /> Отменить заказ
-          </button>
-        )
-      ) : (
-        <button className="btn ghost block mt-4" onClick={onForget}>
-          <Icon name="plus" size={18} /> Новый заказ
-        </button>
+          )}
+          {canPayKassa && !order.paid_at && (st === "unpaid" || st === "open") && (
+            <button
+              className={"btn block mt-3" + (canPayOnline ? " ghost" : "")}
+              disabled={paying}
+              onClick={payAtKassa}
+            >
+              <Icon name="cash" size={18} /> Оплатить на кассе
+            </button>
+          )}
+
+          {st === "requested" || st === "unpaid" ? (
+            confirmCancel ? (
+              <div className="wrap mt-4" style={{ justifyContent: "center" }}>
+                <span className="muted" style={{ alignSelf: "center" }}>Точно отменить заказ?</span>
+                <button className="btn sm danger" disabled={cancelling} onClick={cancelRequest}>
+                  <Icon name="check" size={16} /> Да, отменить
+                </button>
+                <button className="btn sm ghost" onClick={() => setConfirmCancel(false)}>Нет</button>
+              </div>
+            ) : (
+              <button className="btn ghost block mt-4" onClick={() => setConfirmCancel(true)}>
+                <Icon name="minus" size={18} /> Отменить заказ
+              </button>
+            )
+          ) : (
+            <button className="btn ghost block mt-4" onClick={onForget}>
+              <Icon name="plus" size={18} /> Новый заказ
+            </button>
+          )}
+        </>
       )}
     </>
   );

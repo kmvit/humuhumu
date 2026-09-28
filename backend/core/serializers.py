@@ -15,6 +15,10 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
     # доступов — дело владельца, для него есть GET /api/acquiring/.
     # Раньше они отдавались отсюда же и уезжали всем подряд.
     online_payment = serializers.SerializerMethodField()
+    # Можно ли гостю выбрать «Оплатить на кассе» — заказ уйдёт на кассу
+    # заведения. Тоже только «да/нет»: какая касса и её ключ — не для
+    # публичной ручки.
+    kassa_payment = serializers.SerializerMethodField()
     accent_color = serializers.RegexField(
         regex=r"^#[0-9a-fA-F]{6}$",
         allow_blank=True,
@@ -44,6 +48,11 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
         from payments.acquiring import get_acquirer
 
         return obj.online_payment_on and get_acquirer(obj.acquiring).configured()
+
+    def get_kassa_payment(self, obj) -> bool:
+        from payments.providers import kassa_available
+
+        return kassa_available()
 
     class Meta:
         model = SiteSettings
@@ -85,6 +94,7 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
             "legal_updated",
             "online_payment",
             "online_payment_on",
+            "kassa_payment",
             # Ждёт ли заказ гостя оплаты, прежде чем уйти на кухню.
             # Гостю это видно и так по статусу его заказа, а владельцу
             # нужен выключатель в панели.

@@ -117,6 +117,8 @@ export default function OnlinePayment() {
   }
 
   const counter = site?.service_mode === "counter";
+  // Предоплате нужно, чтобы гостю было чем платить: онлайн или на кассе.
+  const payable = live || site?.kassa_payment === true;
   const prepayOn = prepay ?? site?.prepay_required ?? true;
 
   /** Готовить только после оплаты — смысл есть лишь на стойке (см. ниже). */
@@ -146,7 +148,7 @@ export default function OnlinePayment() {
             <strong className="title">Онлайн-оплата</strong>
             <p className="muted subtitle m-0">
               {live
-                ? "Гость видит кнопку «Оплатить картой» в своём заказе"
+                ? "Гость видит кнопку «Оплатить онлайн» в своём заказе"
                 : "Гость платит наличными или картой у официанта"}
             </p>
           </div>
@@ -174,13 +176,13 @@ export default function OnlinePayment() {
               <strong className="title">Готовить только после оплаты</strong>
               <p className="muted subtitle m-0">
                 {prepayOn
-                  ? "Заказ по QR ждёт оплаты: бар начнёт, когда придут деньги"
+                  ? "Заказ по QR ждёт оплаты — картой или на кассе: бар начнёт, когда придут деньги"
                   : "Заказ уходит на кухню сразу, гость платит при выдаче"}
               </p>
             </div>
             <button
               className={"btn sm" + (prepayOn ? "" : " ghost")}
-              disabled={saving || !live}
+              disabled={saving || !payable}
               onClick={togglePrepay}
             >
               <Icon name={prepayOn ? "check" : "close"} size={15} />
@@ -188,10 +190,10 @@ export default function OnlinePayment() {
             </button>
           </div>
         )}
-        {counter && prepayOn && !live && (
+        {counter && prepayOn && !payable && (
           <p className="muted sm mt-2 m-0">
-            Пока оплата картой не работает, заказы принимаются как раньше — платить
-            гостю было бы нечем.
+            Пока не работают ни оплата картой, ни касса, заказы принимаются как раньше —
+            платить гостю было бы нечем.
           </p>
         )}
 

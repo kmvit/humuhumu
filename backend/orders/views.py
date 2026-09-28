@@ -33,10 +33,13 @@ from payments.models import Payment
 from payments.services import (
     PaymentError,
     apply_payment_result,
+    drop_kassa_orders,
     record_manual_payment,
     record_prepayment,
     refund_order,
+    settle_kassa,
     settle_order,
+    settle_waiting_kassa,
     start_online_payment,
     start_terminal_payment,
 )
@@ -69,7 +72,7 @@ class OrderViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch"]
 
     def get_permissions(self):
-        if self.action in ("place", "track", "cancel_request", "pay_online"):
+        if self.action in ("place", "track", "cancel_request", "pay_online", "pay_at_kassa"):
             return [AllowAny()]  # клиент без авторизации
         # bonus обслуживает и официанта, и гостя — кто именно, решает сама
         # вьюха: у сценариев разные настройки-выключатели
@@ -91,7 +94,22 @@ class OrderViewSet(viewsets.ModelViewSet):
         return [IsAuthenticated()]
 
     def get_queryset(self):
-        qs = Order.objects.prefetch_related("items__variant__product__category", "items__modifiers")
+        from django.db.models import Exists, OuterRef
+
+        from payments.providers import _PROVIDERS
+
+        qs = Order.objects.prefetch_related(
+            "items__variant__product__category", "items__modifiers"
+        ).annotate(
+            kassa_waiting_ann=Exists(
+                Payment.objects.filter(
+                    order=OuterRef("pk"),
+                    purpose=Payment.Purpose.ORDER,
+                    status=Payment.Status.PENDING,
+                    provider__in=list(_PROVIDERS),
+                )
+            )
+        )
         params = self.request.query_params
         # активные заказы: открытые + оплаченные сегодня (оплата вперёд — кухня
         # ещё готовит). Историю оплаченных не тянем, чтобы не залить доску.
@@ -149,6 +167,15 @@ class OrderViewSet(viewsets.ModelViewSet):
         if params.get("closed") == "today":
             qs = qs.filter(closed_at__date=timezone.localdate())
         return qs
+
+    def list(self, request, *args, **kwargs):
+        # Доска открытых заказов — то, на что смотрит бариста, пока гость
+        # платит на кассе. Пока доска открыта, касса опрашивается отсюда,
+        # и заказ уходит в работу через секунды после оплаты, а не ждёт
+        # фоновой задачи. Частоту держит settle_waiting_kassa.
+        if request.query_params.get("status") == Order.Status.OPEN:
+            settle_waiting_kassa()
+        return super().list(request, *args, **kwargs)
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -252,6 +279,8 @@ class OrderViewSet(viewsets.ModelViewSet):
             return Response(
                 {"detail": "Заказ не найден"}, status=status.HTTP_404_NOT_FOUND
             )
+        settle_kassa(order)
+        order.refresh_from_db()
         if order.status not in (Order.Status.REQUESTED, Order.Status.UNPAID):
             return Response(
                 {"detail": "Заказ уже в работе — отмена только через сотрудника"},
@@ -260,6 +289,37 @@ class OrderViewSet(viewsets.ModelViewSet):
         order.status = Order.Status.CANCELLED
         order.closed_at = timezone.now()
         order.save(update_fields=["status", "closed_at"])
+        drop_kassa_orders(order)
+        return Response(OrderSerializer(order).data)
+
+    @action(detail=False, methods=["post"], url_path="pay_at_kassa")
+    def pay_at_kassa(self, request):
+        """Гость выбирает «Оплатить на кассе»: заказ уходит на кассу заведения.
+
+        По токену, как и онлайн-оплата: id заказа перебирается. На кассе
+        заказ ждёт в «отложенных» под номером заказа — его гость и называет
+        баристе. Оплату касса подтвердит сама, см. payments.services.
+        """
+        from payments.providers import kassa_available
+
+        token = request.data.get("token")
+        order = Order.objects.filter(public_token=token).first() if token else None
+        if not order:
+            return Response(
+                {"detail": "Заказ не найден"}, status=status.HTTP_404_NOT_FOUND
+            )
+        # Проверяем здесь, а не только прячем кнопку: без настоящей кассы
+        # заказ ушёл бы в эмуляцию и завис бы навсегда.
+        if not kassa_available():
+            return Response(
+                {"detail": "Оплата на кассе сейчас недоступна — подойдите к баристе"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            start_terminal_payment(order)
+        except PaymentError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        order.refresh_from_db()
         return Response(OrderSerializer(order).data)
 
     @action(detail=False, methods=["post"], url_path="pay_online")
@@ -381,6 +441,15 @@ class OrderViewSet(viewsets.ModelViewSet):
         if order.status not in (Order.Status.OPEN, Order.Status.UNPAID) or order.paid_at:
             return Response(
                 {"detail": "Бонусы списываются до оплаты заказа"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # Заказ уже на кассе с прежней суммой: списание разошлось бы с ней,
+        # и кассир взял бы больше, чем гость должен.
+        from payments.services import pending_kassa_payments
+
+        if pending_kassa_payments(order).exists():
+            return Response(
+                {"detail": "Заказ уже на кассе — бонусы списываются до отправки на кассу"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         staff = request.user.is_authenticated and request.user.is_staff_role
@@ -668,6 +737,10 @@ class OrderViewSet(viewsets.ModelViewSet):
         from loyalty.services import return_for_order
 
         order = self.get_object()
+        # Заказ мог лежать на кассе и быть оплаченным там минуту назад —
+        # спрашиваем кассу до того, как решать, можно ли его отменить.
+        settle_kassa(order)
+        order.refresh_from_db()
         # Оплаченный заказ отменять нельзя: деньги остались бы у
         # заведения, а заказ пропал бы из выручки — недостача в кассе и
         # обиженный гость. Для таких заказов есть возврат.
@@ -683,6 +756,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         order.closed_by = request.user
         order.closed_at = timezone.now()
         order.save(update_fields=["status", "closed_by", "closed_at"])
+        drop_kassa_orders(order)
         return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["post"], url_path="add_items")

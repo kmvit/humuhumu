@@ -31,7 +31,7 @@ from inventory.views import (
 )
 from orders.views import OrderViewSet, TableViewSet
 from billing.views import license_view
-from payments.views import AcquiringSettingsView
+from payments.views import AcquiringSettingsView, KassaSettingsView
 from payments.views import callback as payment_callback
 from shifts.views import ShiftViewSet
 from users.staff import StaffViewSet
@@ -107,6 +107,7 @@ api_patterns = [
     path("license/refresh/", license_refresh, name="license-refresh"),
     # эквайринг: банк заведения и доступы к нему (только владелец)
     path("acquiring/", AcquiringSettingsView.as_view(), name="acquiring"),
+    path("kassa/", KassaSettingsView.as_view(), name="kassa"),
     # уведомления банка об оплате (без авторизации, подлинность — в провайдере)
     path(
         "payments/callback/<str:provider>/",

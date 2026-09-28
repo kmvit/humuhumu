@@ -26,7 +26,7 @@ def cancel_stale_unpaid_orders_task():
 
     from core.models import Organization
     from core.tenancy import organization_context
-    from payments.services import settle_order
+    from payments.services import drop_kassa_orders, pending_kassa_payments, settle_order
 
     from .models import Order
 
@@ -40,9 +40,15 @@ def cancel_stale_unpaid_orders_task():
                 order.refresh_from_db()
                 if order.status != Order.Status.UNPAID:
                     continue  # успел оплатить
+                # Заказ на кассе не отменяем: гость стоит в очереди, а касса
+                # могла лечь — заведение ждёт, пока заработает, и принимает
+                # деньги только через неё. Ушедшего гостя отменяет бариста.
+                if pending_kassa_payments(order).exists():
+                    continue
                 order.status = Order.Status.CANCELLED
                 order.closed_at = timezone.now()
                 order.save(update_fields=["status", "closed_at"])
+                drop_kassa_orders(order)
                 cancelled += 1
             if cancelled:
                 report[org.slug] = cancelled

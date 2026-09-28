@@ -37,7 +37,11 @@ export default function Counter() {
   const site = useSite();
   // Предоплата: заказы, ждущие денег, приезжают этой же доской —
   // отдельный поток разъехался бы с основным по времени опроса.
-  const prepay = site?.prepay_required === true && site?.online_payment === true;
+  // Гостю должно быть чем заплатить: онлайн или на кассе (см. prepay_required
+  // на бэке) — иначе колонка «Ждут оплаты» так и стоит пустой.
+  const kassa = site?.kassa_payment === true;
+  const prepay =
+    site?.prepay_required === true && (site?.online_payment === true || kassa);
   const { orders, setOrders, highlight, reload } = useLiveOrders(
     prepay ? "/orders/?status=open&with_unpaid=1" : "/orders/?status=open",
     // Сигнал — на оплаченный заказ, а не на оформленный: у окна один
@@ -47,6 +51,9 @@ export default function Counter() {
   const [busy, setBusy] = useState<number | null>(null);
   const [payFor, setPayFor] = useState<number | null>(null);
   const [cashFor, setCashFor] = useState<number | null>(null);
+  // Заказ на кассе сам не отменяется — ушедшего гостя отменяет бариста.
+  // Подтверждение в карточке: нативный confirm в киоск-браузере глушится.
+  const [dropFor, setDropFor] = useState<number | null>(null);
   // Кто сегодня в смене: заказ по QR приходит без исполнителя, а сделает
   // его кто-то из стоящих за стойкой — отметить это можно на карточке.
   const [performers, setPerformers] = useState<Performer[]>([]);
@@ -131,6 +138,39 @@ export default function Counter() {
       toast(`Оплачен · ${money(order.total)} ₽ — заказ пошёл в работу`);
     } catch (e) {
       toast(e instanceof ApiError ? e.message : "Не удалось принять оплату");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** Положить заказ на кассу: гость подошёл к окну, а сам кнопку не нажал. */
+  async function sendToKassa(order: Order) {
+    setBusy(order.id);
+    try {
+      apply(await post<Order>(`/orders/${order.id}/pay_terminal/`, {}));
+      toast(`Заказ на кассе под номером ${order.id}`);
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : "Не удалось отправить на кассу");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** Гость ушёл, не заплатив: отменить заказ — он снимется и с кассы. */
+  async function cancelOrder(order: Order) {
+    setBusy(order.id);
+    try {
+      const updated = await patch<Order>(`/orders/${order.id}/cancel/`, {});
+      setDropFor(null);
+      if (updated.status === "cancelled") {
+        setOrders((os) => os.filter((o) => o.id !== order.id));
+        toast(`Заказ №${order.id} отменён и снят с кассы`);
+      } else {
+        // Касса успела сказать, что заказ оплачен, — он уже в работе.
+        apply(updated);
+      }
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : "Не удалось отменить заказ");
     } finally {
       setBusy(null);
     }
@@ -342,6 +382,53 @@ export default function Counter() {
                             <Icon name="card" size={16} /> Картой
                           </button>
                         </div>
+                      ) : o.kassa_waiting ? (
+                        // Оплату подтверждает только касса — заказ сам уедет
+                        // в «Новые». Ручной отметки при кассе нет: мимо неё
+                        // заведение деньги не принимает.
+                        <>
+                          <span className="badge preparing">
+                            <Icon name="cash" size={13} /> На кассе · №{o.id}
+                          </span>
+                          <p className="muted sm m-0 mt-1">
+                            Пробейте заказ №{o.id} на кассе — он сам уйдёт в работу.
+                          </p>
+                          {dropFor === o.id ? (
+                            <div className="wrap mt-2">
+                              <span className="muted sm" style={{ alignSelf: "center" }}>
+                                Отменить и снять с кассы?
+                              </span>
+                              <button
+                                className="btn sm danger"
+                                disabled={busy === o.id}
+                                onClick={() => cancelOrder(o)}
+                              >
+                                Да, отменить
+                              </button>
+                              <button className="btn sm ghost" onClick={() => setDropFor(null)}>
+                                Нет
+                              </button>
+                            </div>
+                          ) : (
+                            <button className="btn sm ghost block mt-2" onClick={() => setDropFor(o.id)}>
+                              Гость ушёл — отменить
+                            </button>
+                          )}
+                        </>
+                      ) : kassa ? (
+                        <>
+                          <p className="muted sm m-0">
+                            Гость платит на телефоне или на кассе. Подошёл к окну — отправьте
+                            заказ на кассу.
+                          </p>
+                          <button
+                            className="btn sm block mt-2"
+                            disabled={busy === o.id}
+                            onClick={() => sendToKassa(o)}
+                          >
+                            <Icon name="cash" size={16} /> На кассу
+                          </button>
+                        </>
                       ) : (
                         <>
                           <p className="muted sm m-0">

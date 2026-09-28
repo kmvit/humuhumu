@@ -180,17 +180,19 @@ def prepay_required() -> bool:
     Только формат «Стойка»: в зале за стол отвечает официант, и заявка
     ему нужна как раз до оплаты — иначе он не примет гостя вовсе.
 
-    И только при работающей онлайн-оплате. Требовать предоплату, когда
-    банк не подключён, — это не принимать заказы совсем: заплатить
-    гостю нечем, и каждый заказ через четверть часа отменялся бы сам.
+    И только когда гостю есть чем заплатить: работает онлайн-оплата или
+    подключена касса, на которую уходит заказ. Требовать предоплату без
+    того и другого — это не принимать заказы совсем: каждый заказ через
+    четверть часа отменялся бы сам.
     """
     from core.models import SiteSettings
     from payments.acquiring import online_payment_available
+    from payments.providers import kassa_available
 
     site = SiteSettings.load()
     if site.service_mode != SiteSettings.ServiceMode.COUNTER or not site.prepay_required:
         return False
-    return site.online_payment_on and online_payment_available()
+    return (site.online_payment_on and online_payment_available()) or kassa_available()
 
 
 @transaction.atomic

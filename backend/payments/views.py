@@ -181,3 +181,99 @@ class AcquiringSettingsView(APIView):
                 for cls in acquirers()
             ],
         }
+
+
+class KassaSettingsView(APIView):
+    """GET/PUT/DELETE /api/kassa/ — касса заведения и ключ к ней.
+
+    Устроена как ручка банков: только владелец, секреты наружу не отдаются
+    — видно лишь «задан». Необязательные несекретные поля (магазин, ставка
+    НДС) отдаём значениями: без них форма не покажет, что выбрано сейчас.
+    """
+
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        return Response(self._state())
+
+    def put(self, request):
+        from .providers import NONE, KassaError, kassas, provider_class
+
+        provider = str(request.data.get("provider", "")).strip()
+        if provider not in [k.name for k in kassas()] + [NONE]:
+            return Response({"detail": "Неизвестная касса"}, status=400)
+        values = request.data.get("values") or {}
+        if not isinstance(values, dict):
+            return Response({"detail": "Доступы должны быть объектом"}, status=400)
+
+        if provider != NONE:
+            cls = provider_class(provider)
+            known = {f.key for f in cls.fields}
+            row = AcquiringCredentials.objects.filter(provider=provider).first()
+            stored = row.values() if row else {}
+            for key, value in values.items():
+                if key in known and isinstance(value, str) and value.strip():
+                    stored[key] = value.strip()
+            # Проверяем у кассы до записи и до переключения: иначе неверный
+            # ключ первым найдёт гость, нажавший «Оплатить на кассе».
+            try:
+                cls(stored).check()
+            except KassaError as e:
+                return Response({"detail": str(e)}, status=400)
+            if row is None:
+                row = AcquiringCredentials(provider=provider)
+            row.set_values(stored)
+            row.save()
+
+        site = SiteSettings.load()
+        if provider != site.kassa:
+            site.kassa = provider
+            site.save(update_fields=["kassa"])
+        return Response(self._state())
+
+    def delete(self, request):
+        """Стереть ключ кассы и отключить её (сменили кассу, утёк ключ)."""
+        from .providers import NONE
+
+        site = SiteSettings.load()
+        if site.kassa != NONE:
+            AcquiringCredentials.objects.filter(provider=site.kassa).delete()
+            site.kassa = NONE
+            site.save(update_fields=["kassa"])
+        return Response(self._state())
+
+    def _state(self) -> dict:
+        from .providers import NONE, get_provider, kassa_available, kassas
+
+        site = SiteSettings.load()
+        chosen = site.kassa != NONE
+        provider = get_provider(site.kassa) if chosen else None
+        return {
+            "provider": site.kassa,
+            "ready": kassa_available(),
+            "filled": provider.filled() if provider else {},
+            "values": {
+                f.key: provider.value(f.key)
+                for f in (provider.fields if provider else ())
+                if not f.secret
+            },
+            "kassas": [
+                {
+                    "name": cls.name,
+                    "title": cls.title,
+                    "fields": [
+                        {
+                            "key": f.key,
+                            "label": f.label,
+                            "hint": f.hint,
+                            "secret": f.secret,
+                            "required": f.required,
+                            "choices": [{"value": v, "label": t} for v, t in f.choices],
+                            "default": f.default,
+                        }
+                        for f in cls.fields
+                    ],
+                }
+                for cls in kassas()
+            ],
+        }

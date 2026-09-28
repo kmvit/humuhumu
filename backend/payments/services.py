@@ -16,7 +16,7 @@ from orders.services import start_order
 
 from .acquiring import AcquiringError, get_acquirer
 from .models import Payment
-from .providers import get_provider
+from .providers import KassaError, get_provider, is_kassa
 
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,7 @@ def record_manual_payment(order: Order, method: str, user=None) -> Order:
     # Предоплаченный заказ закрывается без второго платежа: деньги уже
     # в реестре. Иначе выручка дня удвоилась бы на каждом таком заказе.
     if order.paid_at is None:
+        drop_kassa_orders(order)
         Payment.objects.create(
             purpose=Payment.Purpose.ORDER,
             status=Payment.Status.SUCCEEDED,
@@ -101,7 +102,9 @@ def refund_order(order: Order, *, user=None, return_to_stock: bool = False) -> O
 
     for payment in paid:
         external_id = ""
-        if payment.provider not in ("manual", "mock"):
+        # Оплату на кассе возвращает сама касса — чеком возврата, который
+        # бариста пробивает на ней же. Нам остаётся записать возврат.
+        if payment.provider != "manual" and not is_kassa(payment.provider):
             # Онлайн-оплату возвращает банк. Ошибку наружу не глушим:
             # сказать сотруднику «готово», когда банк отказал, значит
             # отпустить гостя без денег.
@@ -174,6 +177,13 @@ def record_prepayment(order: Order, method: str, user=None) -> Order:
     """
     if order.status != Order.Status.UNPAID:
         raise PaymentError("Этот заказ не ждёт оплаты")
+    # Заведение с подключённой кассой принимает деньги только через неё:
+    # касса не работает — ждут, пока заработает. Ручная отметка здесь
+    # означала бы деньги без чека и заказ, который касса не видела.
+    from .providers import kassa_available
+
+    if kassa_available():
+        raise PaymentError("Оплата принимается только через кассу — отправьте заказ на кассу")
 
     pm = method if method in Payment.Method.values else Payment.Method.CASH
     Payment.objects.create(
@@ -198,14 +208,33 @@ def record_prepayment(order: Order, method: str, user=None) -> Order:
     return order
 
 
-@transaction.atomic
 def start_terminal_payment(order: Order, method: str = Payment.Method.CARD) -> Payment:
-    """Отправить заказ на терминал: создать платёж и перевести заказ в «к оплате»."""
-    if order.status != Order.Status.OPEN:
-        raise PaymentError("Отправить на оплату можно только открытый заказ")
+    """Отправить заказ на кассу: создать платёж и положить заказ на кассу.
+
+    Два случая. Официант в зале отправляет открытый счёт — заказ уходит
+    в «к оплате», стол занят, пока не придёт результат. Гость на стойке
+    с предоплатой выбирает «Оплатить на кассе» — заказ остаётся «ждёт
+    оплаты»: готовить его рано, а на доски станций «к оплате» попадает.
+
+    Повторная отправка не плодит заказов на кассе: если заказ уже там и
+    ждёт, возвращаем тот же платёж (гость нажал кнопку дважды, бариста
+    переспросил).
+    """
+    if order.status not in (Order.Status.OPEN, Order.Status.UNPAID):
+        raise PaymentError("Отправить на кассу можно только неоплаченный заказ")
+    if order.paid_at is not None:
+        raise PaymentError("Заказ уже оплачен")
     if method not in Payment.Method.values:
         method = Payment.Method.CARD
+
     provider = get_provider()
+    waiting = pending_kassa_payments(order).filter(provider=provider.name).first()
+    if waiting is not None and waiting.amount == order.payable:
+        return waiting
+
+    # Сумма изменилась (списали бонусы, дописали позицию) — старый заказ
+    # с кассы снимаем, иначе кассир возьмёт по нему прежнюю сумму.
+    drop_kassa_orders(order)
     payment = Payment.objects.create(
         purpose=Payment.Purpose.ORDER,
         status=Payment.Status.PENDING,
@@ -214,10 +243,95 @@ def start_terminal_payment(order: Order, method: str = Payment.Method.CARD) -> P
         method=method,
         provider=provider.name,
     )
-    provider.start(payment)
-    order.status = Order.Status.AWAITING
-    order.save(update_fields=["status"])
+    try:
+        provider.start(payment)
+    except KassaError as e:
+        # Пустышку в реестре не оставляем: она висела бы «создан» и
+        # опрашивалась бы у кассы, которая о ней не знает.
+        payment.delete()
+        raise PaymentError(str(e)) from e
+    if order.status == Order.Status.OPEN:
+        order.status = Order.Status.AWAITING
+        order.save(update_fields=["status"])
+    logger.info(
+        "Заказ %s отправлен на кассу %s: платёж %s, %s ₽",
+        order.pk, provider.name, payment.pk, payment.amount,
+    )
     return payment
+
+
+def pending_kassa_payments(order: Order):
+    """Платежи заказа, которые сейчас лежат на кассе и ждут оплаты."""
+    from .providers import _PROVIDERS
+
+    return Payment.objects.filter(
+        order=order,
+        purpose=Payment.Purpose.ORDER,
+        status=Payment.Status.PENDING,
+        provider__in=list(_PROVIDERS),
+    )
+
+
+def drop_kassa_orders(order: Order, *, keep: Payment | None = None) -> None:
+    """Снять с кассы заказы, которые больше не нужно оплачивать.
+
+    Заказ оплатили иначе (онлайн, наличными мимо кассы) или отменили, а на
+    кассе он так и лежит в «отложенных» — и кассир может взять за него
+    деньги ещё раз. Касса недоступна — это не повод не закрыть заказ у
+    нас: платёж всё равно гасим, а в лог пишем, что снять не удалось.
+    """
+    qs = pending_kassa_payments(order)
+    if keep is not None:
+        qs = qs.exclude(pk=keep.pk)
+    for payment in qs:
+        try:
+            get_provider(payment.provider).cancel(payment)
+        except KassaError as e:
+            logger.warning(
+                "Заказ %s: не удалось снять с кассы платёж %s (%s) — снимите вручную",
+                order.pk, payment.pk, e,
+            )
+        payment.status = Payment.Status.CANCELLED
+        payment.save(update_fields=["status", "updated_at"])
+
+
+def settle_kassa_payment(payment: Payment) -> bool:
+    """Спросить кассу, оплачен ли лежащий на ней заказ, и применить ответ.
+
+    Возвращает True, если статус платежа изменился.
+    """
+    if payment.status != Payment.Status.PENDING or not payment.external_id:
+        return False
+    try:
+        result = get_provider(payment.provider).status(payment)
+    except KassaError as e:
+        logger.warning("Платёж %s: касса не ответила (%s)", payment.pk, e)
+        return False
+
+    if result is None or result.pending:
+        payment.save(update_fields=["updated_at"])
+        return False
+
+    if result.success and result.method in Payment.Method.values:
+        # Чем заплатили, знает только касса: гость мог передумать у окна
+        # и отдать наличные вместо карты.
+        Payment.objects.filter(pk=payment.pk).update(method=result.method)
+    if not apply_bank_result(payment, result):
+        return False
+    logger.info(
+        "Платёж %s доведён кассой: %s (заказ %s)",
+        payment.pk, "оплачен" if result.success else "снят с кассы", payment.order_id,
+    )
+    return True
+
+
+def settle_kassa(order: Order) -> None:
+    """Спросить кассу обо всех ждущих платежах заказа. Не падает никогда."""
+    for payment in pending_kassa_payments(order):
+        try:
+            settle_kassa_payment(payment)
+        except Exception:  # ни одна ошибка кассы не стоит экрана сотрудника
+            logger.exception("Не удалось довести платёж %s", payment.pk)
 
 
 @transaction.atomic
@@ -302,6 +416,10 @@ def apply_payment_result(payment: Payment, *, success: bool, fiscal_receipt: str
                     "closed_by", "closed_at",
                 ])
             accrue_bonuses(order)
+            # Заплатили одним путём — заказ, отправленный на кассу другим,
+            # снимаем, чтобы кассир не взял деньги второй раз. После
+            # коммита: снятие ходит в сеть, строку платежа держать незачем.
+            transaction.on_commit(lambda: drop_kassa_orders(order, keep=payment))
     else:
         payment.status = Payment.Status.CANCELLED
         payment.save(update_fields=["status", "updated_at"])
@@ -315,6 +433,11 @@ def apply_payment_result(payment: Payment, *, success: bool, fiscal_receipt: str
 # опрашивает свой заказ каждые пять секунд, и без этой паузы каждый его
 # опрос превращался бы в запрос к банку.
 SETTLE_EVERY = timedelta(seconds=15)
+
+# Кассу спрашиваем чаще банка: гость стоит у окна, бариста ждёт, когда
+# заказ появится в «Новых», и полминуты там — это очередь. Запрос к кассе
+# дешёвый, а ждущих заказов на ней — единицы.
+KASSA_EVERY = timedelta(seconds=5)
 
 # Насколько старые платежи ещё имеет смысл доводить. Гость, не заплативший
 # за сутки, не заплатит уже никогда, а вот повторно закрыть по ошибке заказ,
@@ -357,6 +480,8 @@ def settle_payment(payment: Payment) -> bool:
     """
     if payment.status != Payment.Status.PENDING or not payment.external_id:
         return False
+    if is_kassa(payment.provider):
+        return settle_kassa_payment(payment)
 
     acquirer = get_acquirer(payment.provider)
     try:
@@ -382,10 +507,10 @@ def settle_payment(payment: Payment) -> bool:
     return True
 
 
-def pending_online_payments(order: Order | None = None):
-    """Незавершённые онлайн-платежи, которые пора переспросить у банка."""
+def pending_online_payments(order: Order | None = None, *, every: timedelta = SETTLE_EVERY):
+    """Незавершённые платежи, которые пора переспросить у банка или кассы."""
     since = timezone.now() - SETTLE_WINDOW
-    stale = timezone.now() - SETTLE_EVERY
+    stale = timezone.now() - every
     qs = Payment.objects.filter(
         status=Payment.Status.PENDING,
         purpose=Payment.Purpose.ORDER,
@@ -396,6 +521,23 @@ def pending_online_payments(order: Order | None = None):
     if order is not None:
         qs = qs.filter(order=order)
     return qs
+
+
+def settle_waiting_kassa() -> None:
+    """Спросить кассу о заказах, которые на ней ждут оплаты.
+
+    Зовётся с доски баристы, которую планшет перечитывает каждые несколько
+    секунд, поэтому каждый платёж спрашиваем не чаще SETTLE_EVERY. Эмуляцию
+    не трогаем: ей результат подаёт сотрудник.
+    """
+    from .providers import MockProvider, _PROVIDERS
+
+    kassas = [name for name in _PROVIDERS if name != MockProvider.name]
+    for payment in pending_online_payments(every=KASSA_EVERY).filter(provider__in=kassas):
+        try:
+            settle_kassa_payment(payment)
+        except Exception:  # касса не должна ронять доску
+            logger.exception("Не удалось довести платёж %s", payment.pk)
 
 
 def settle_order(order: Order) -> None:

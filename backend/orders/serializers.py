@@ -52,6 +52,19 @@ class OrderSerializer(serializers.ModelSerializer):
     food_served = serializers.SerializerMethodField()
     drinks_served = serializers.SerializerMethodField()
     payable = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    # Заказ лежит на кассе и ждёт оплаты: гостю — «назовите номер на
+    # кассе», баристе — не принимать деньги мимо кассы второй раз.
+    kassa_waiting = serializers.SerializerMethodField()
+
+    def get_kassa_waiting(self, obj) -> bool:
+        # Списки приходят с аннотацией (OrderViewSet.get_queryset) — без
+        # неё доска делала бы по запросу на каждую карточку.
+        annotated = getattr(obj, "kassa_waiting_ann", None)
+        if annotated is not None:
+            return bool(annotated)
+        from payments.services import pending_kassa_payments
+
+        return pending_kassa_payments(obj).exists()
 
     class Meta:
         model = Order
@@ -86,6 +99,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "total",
             "bonus_spent",
             "payable",
+            "kassa_waiting",
             "items",
             "created_at",
             "food_started_at",
