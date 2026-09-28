@@ -120,6 +120,11 @@ def write_off_order_item(order_item, user=None) -> list[StockItem]:
     """
     if order_item.stock_written_off_at:
         return []
+    # По возвращённому заказу больше ничего не списываем: если продукты
+    # вернули на склад, «готово» с планшета, не успевшего обновиться,
+    # списало бы их второй раз.
+    if order_item.order.status == order_item.order.Status.REFUNDED:
+        return []
 
     comment = f"Заказ №{order_item.order_id} · {order_item.display_name}"
     options = order_item.options_text

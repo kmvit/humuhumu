@@ -984,6 +984,83 @@ class RefundTests(APITestCase):
         self.assertEqual(r["bonus_pool"], "0.00")
         self.assertEqual(r["payout"], "2000.00")
 
+    # ——— бонусы ———
+
+    def with_bonus_guest(self, balance="500", spend=None):
+        """Гость в бонусной программе, 10% начисления; по желанию — часть чека бонусами."""
+        from loyalty.models import LoyaltyMember
+        from loyalty.services import redeem
+
+        site = SiteSettings.load()
+        site.bonus_enabled = True
+        site.bonus_earn_percent = Decimal("10")
+        site.save()
+        guest = User.objects.create_user("guest-refund", role=User.Role.CLIENT)
+        member = LoyaltyMember.objects.create(user=guest, balance=Decimal(balance))
+        Order.objects.filter(pk=self.order.pk).update(client=guest)
+        self.order.refresh_from_db()
+        if spend:
+            redeem(member.pk, Decimal(spend), self.order)
+            self.order.refresh_from_db()
+        return member
+
+    def test_refund_returns_spent_and_takes_earned_bonuses(self):
+        member = self.with_bonus_guest(balance="500", spend="100")
+        record_manual_payment(self.order, Payment.Method.CASH, user=self.waiter)
+        member.refresh_from_db()
+        # 500 − 100 списано + 22 начислено (10% от 220 деньгами)
+        self.assertEqual(member.balance, Decimal("422"))
+
+        self.assertEqual(self.refund().status_code, 200)
+        member.refresh_from_db()
+        self.assertEqual(member.balance, Decimal("500"))
+
+    def test_refund_keeps_bonus_part_on_the_order(self):
+        """Списание остаётся на заказе: на нём стоит выручка дня и отчёт месяца."""
+        from finance.services import report
+
+        self.with_bonus_guest(balance="500", spend="100")
+        record_manual_payment(self.order, Payment.Method.CASH, user=self.waiter)
+        self.refund()
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.bonus_spent, Decimal("100"))
+        refund = Payment.objects.get(order=self.order, purpose=Payment.Purpose.REFUND)
+        self.assertEqual(refund.amount, Decimal("220"))
+        # продали на 220 деньгами, 220 вернули — выручки ноль, а не фантомные 100
+        r = report(timezone.localdate())
+        self.assertEqual(r["revenue"], "0.00")
+        self.assertEqual(r["bonuses_spent"], "100.00")
+
+    def test_spent_earned_bonuses_do_not_push_balance_below_zero(self):
+        from loyalty.models import LoyaltyMember
+
+        member = self.with_bonus_guest(balance="0")
+        record_manual_payment(self.order, Payment.Method.CASH, user=self.waiter)
+        LoyaltyMember.objects.filter(pk=member.pk).update(balance=Decimal("10"))  # 32 − потратил 22
+        self.refund()
+        member.refresh_from_db()
+        self.assertEqual(member.balance, Decimal("0"))
+
+    def test_stale_ready_does_not_write_off_refunded_order(self):
+        """Вернули продукты на склад, а планшет ещё жмёт «готово» — второго списания нет."""
+        from inventory.models import StockCategory, StockItem
+        from inventory.services import write_off_order_item
+
+        cat = StockCategory.objects.create(name="Молоко")
+        milk = StockItem.objects.create(category=cat, name="Молоко", unit=StockItem.Unit.MILLILITER)
+        self.variant.recipe.create(item=milk, quantity=Decimal("200"))
+        item = self.order.items.first()
+        write_off_order_item(item, user=self.waiter)
+        record_manual_payment(self.order, Payment.Method.CASH, user=self.waiter)
+        self.refund(return_to_stock=True)
+        milk.refresh_from_db()
+        self.assertEqual(milk.quantity, Decimal("0.000"))
+
+        item.refresh_from_db()
+        write_off_order_item(item, user=self.waiter)
+        milk.refresh_from_db()
+        self.assertEqual(milk.quantity, Decimal("0.000"))
+
     # ——— склад ———
 
     def test_stock_returns_only_when_asked(self):

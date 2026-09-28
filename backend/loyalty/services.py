@@ -153,11 +153,17 @@ def earn_for_order(order) -> BonusTransaction | None:
 
 
 @transaction.atomic
-def return_for_order(order) -> BonusTransaction | None:
-    """Вернуть списанные бонусы, если заказ отменили.
+def return_for_order(order, *, refund: bool = False) -> BonusTransaction | None:
+    """Вернуть списанные бонусы, если заказ отменили или по нему вернули деньги.
 
     Без возврата гость теряет бонусы за отменённый заказ — деньги ему
     возвращают, а бонусы нет.
+
+    При отмене списание с заказа снимаем: заказа не было, и повторная
+    отмена не вернёт бонусы дважды. При возврате денег (refund=True) —
+    оставляем: заказ был продан с оплатой частью бонусами, на этом стоит
+    выручка дня продажи и сумма платежа возврата. Дважды не вернёт статус
+    «Возврат» — второй раз refund_order не пропустит.
     """
     member = getattr(order.client, "loyalty", None) if order.client else None
     spent = Decimal(order.bonus_spent or 0)
@@ -169,10 +175,15 @@ def return_for_order(order) -> BonusTransaction | None:
         type_=BonusTransaction.Type.RETURN,
         amount=spent,
         order=order,
-        comment=f"Возврат по отменённому заказу №{order.pk}",
+        comment=(
+            f"Возврат денег по заказу №{order.pk}"
+            if refund
+            else f"Возврат по отменённому заказу №{order.pk}"
+        ),
     )
-    order.bonus_spent = Decimal(0)
-    order.save(update_fields=["bonus_spent"])
+    if not refund:
+        order.bonus_spent = Decimal(0)
+        order.save(update_fields=["bonus_spent"])
     return txn
 
 

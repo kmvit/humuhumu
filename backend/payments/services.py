@@ -150,7 +150,7 @@ def _undo_bonuses(order: Order) -> None:
     """
     from loyalty.services import cancel_earned_for_order, return_for_order
 
-    return_for_order(order)
+    return_for_order(order, refund=True)
     cancel_earned_for_order(order)
 
 
