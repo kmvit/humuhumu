@@ -12,7 +12,6 @@ from decimal import ROUND_HALF_UP, Decimal
 from django.db.models import Sum
 
 from orders.models import Order
-from payments.models import Payment
 
 from .models import Shift, ShiftMember, ShiftSettings
 
@@ -41,15 +40,16 @@ def day_revenue(day, penalty_table: str = "") -> Decimal:
     sold = Order.objects.filter(
         status__in=[Order.Status.PAID, Order.Status.REFUNDED], closed_at__date=day
     )
-    refunds = Payment.objects.filter(
-        purpose=Payment.Purpose.REFUND,
-        status=Payment.Status.SUCCEEDED,
-        created_at__date=day,
+    # Вычитаем чек возвращённого заказа, а не сумму платежа возврата: выручка
+    # смены считается по чеку вместе с бонусами, а платёж — только деньгами.
+    # Иначе при оплате частью бонусами возврат оставлял бы их в выручке дня.
+    refunded = Order.objects.filter(
+        status=Order.Status.REFUNDED, refunded_at__date=day
     )
     if penalty_table:
         sold = sold.exclude(table=penalty_table)
-        refunds = refunds.exclude(order__table=penalty_table)
-    returned = money(refunds.aggregate(s=Sum("amount"))["s"])
+        refunded = refunded.exclude(table=penalty_table)
+    returned = money(refunded.aggregate(s=Sum("total"))["s"])
     return money(sold.aggregate(s=Sum("total"))["s"]) - returned
 
 
@@ -80,8 +80,12 @@ def performer_stats(day, penalty_table: str = "") -> dict[int, dict]:
     """
     from django.db.models import Count
 
+    # Возвращённый заказ тоже сделан: работа была, деньги ушли назад позже.
+    # Иначе возврат задним числом вычёркивал бы заказ у того, кто его готовил.
     qs = Order.objects.filter(
-        status=Order.Status.PAID, closed_at__date=day, performer__isnull=False
+        status__in=[Order.Status.PAID, Order.Status.REFUNDED],
+        closed_at__date=day,
+        performer__isnull=False,
     )
     if penalty_table:
         qs = qs.exclude(table=penalty_table)
@@ -146,7 +150,10 @@ def shift_report(shift=None, day=None) -> dict:
     revenue = day_revenue(day, penalty_table)
     penalty = day_penalty(day, penalty_table)
     by_performer = performer_stats(day, penalty_table)
-    bonus_pool = money(revenue * percent / 100)
+    # Выручка дня уходит в минус, когда сегодня вернули вчерашний заказ.
+    # Бонус тогда просто ноль: вычитать его из ставки значило бы заставить
+    # сегодняшних людей платить за чужую продажу (решение владельца).
+    bonus_pool = money(max(revenue, Decimal("0")) * percent / 100)
     count = len(members)
 
     if count:

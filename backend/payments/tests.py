@@ -943,6 +943,47 @@ class RefundTests(APITestCase):
         self.assertEqual(day_revenue(yesterday.date()), Decimal("320.00"))
         self.assertEqual(day_revenue(timezone.localdate()), Decimal("-320.00"))
 
+    def test_refund_with_bonuses_leaves_no_revenue(self):
+        """Часть чека оплачена бонусами — возврат всё равно обнуляет выручку дня."""
+        from shifts.services import day_revenue
+
+        Order.objects.filter(pk=self.order.pk).update(bonus_spent=Decimal("100"))
+        self.order.refresh_from_db()
+        record_manual_payment(self.order, Payment.Method.CASH, user=self.waiter)
+        self.assertEqual(day_revenue(timezone.localdate()), Decimal("320.00"))
+
+        self.refund()
+        self.assertEqual(day_revenue(timezone.localdate()), Decimal("0.00"))
+
+    def test_refunded_order_still_counts_for_performer(self):
+        """Бариста заказ сделал — возврат не вычёркивает его работу."""
+        from shifts.services import performer_stats
+
+        Order.objects.filter(pk=self.order.pk).update(performer=self.waiter)
+        record_manual_payment(self.order, Payment.Method.CASH, user=self.waiter)
+        self.refund()
+        stats = performer_stats(timezone.localdate())
+        self.assertEqual(stats[self.waiter.id]["orders"], 1)
+
+    def test_refund_of_yesterday_does_not_eat_todays_rate(self):
+        """Выручка дня в минусе — бонус ноль, ставка смены целая."""
+        from shifts.models import Shift, ShiftMember
+        from shifts.services import shift_report
+
+        record_manual_payment(self.order, Payment.Method.CASH, user=self.waiter)
+        yesterday = timezone.now() - timedelta(days=1)
+        Order.objects.filter(pk=self.order.pk).update(closed_at=yesterday)
+        self.refund()
+
+        shift = Shift.objects.create(
+            date=timezone.localdate(), daily_rate=Decimal("2000"), bonus_percent=Decimal("9")
+        )
+        ShiftMember.objects.create(shift=shift, user=self.waiter, role="waiter")
+        r = shift_report(shift)
+        self.assertEqual(r["revenue"], "-320.00")
+        self.assertEqual(r["bonus_pool"], "0.00")
+        self.assertEqual(r["payout"], "2000.00")
+
     # ——— склад ———
 
     def test_stock_returns_only_when_asked(self):
