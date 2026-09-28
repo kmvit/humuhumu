@@ -355,7 +355,7 @@ export default function Counter() {
                       ))}
                     {col.key === "new" && (
                       <button
-                        className="btn sm block"
+                        className="btn sm block mt-2"
                         disabled={busy === o.id}
                         onClick={() => move(o, "in_progress")}
                       >
@@ -364,7 +364,7 @@ export default function Counter() {
                     )}
                     {col.key === "in_progress" && (
                       <button
-                        className="btn sm block"
+                        className="btn sm block mt-2"
                         disabled={busy === o.id}
                         onClick={() => move(o, "ready")}
                       >
@@ -373,7 +373,7 @@ export default function Counter() {
                     )}
                     {col.key === "ready" && o.paid_at && (
                       <button
-                        className="btn sm block"
+                        className="btn sm block mt-2"
                         disabled={busy === o.id}
                         onClick={() => handOut(o, o.pay_method)}
                       >
@@ -399,7 +399,7 @@ export default function Counter() {
                           </button>
                         </div>
                       ) : (
-                        <button className="btn sm block" onClick={() => setPayFor(o.id)}>
+                        <button className="btn sm block mt-2" onClick={() => setPayFor(o.id)}>
                           <Icon name="share" size={16} /> Выдать
                         </button>
                       ))}
