@@ -7,7 +7,6 @@ import { useToast } from "../../components/ui/Toast";
 import Staff from "./Staff";
 import Bonuses from "./Bonuses";
 import OnlinePayment from "./OnlinePayment";
-import Kassa from "./Kassa";
 import OrderingPause from "./OrderingPause";
 import Subscription from "./Subscription";
 
@@ -234,8 +233,6 @@ export default function Admin() {
       </div>
 
       <OnlinePayment />
-
-      <Kassa />
 
       <Bonuses />
 
