@@ -233,8 +233,10 @@ export default function Warehouse() {
         item: l.item,
         quantity: Number(l.quantity),
         // Сумма делится на количество — так цена всегда за базовую единицу.
+        // Хвост деления обрезаем здесь же: бэкенд округлит и сам, но гонять
+        // по сети 0,010526315789473684 незачем.
         ...(l.amount.trim() && Number(l.quantity) > 0
-          ? { unit_cost: Number(l.amount) / Number(l.quantity) }
+          ? { unit_cost: Number((Number(l.amount) / Number(l.quantity)).toFixed(6)) }
           : {}),
         // Название из чека — чтобы в следующий раз строка сопоставилась сама.
         ...(l.rawName ? { raw_name: l.rawName } : {}),

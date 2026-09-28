@@ -21,6 +21,7 @@ from users.models import User
 
 from .models import (
     Receipt,
+    ReceiptItem,
     ReceiptScan,
     RecipeItem,
     ScanQuota,
@@ -606,3 +607,65 @@ class StockCategoryCrudTests(APITestCase):
             403,
         )
 
+
+
+class ReceiptPriceScaleTests(APITestCase):
+    """Цена за грамм и миллилитр в копейки не укладывается.
+
+    Боевой случай Монти: канистра концентрата 5 л за 1 148 ₽ — это
+    0,2296 ₽ за мл. Приход не сохранялся вовсе: «убедитесь, что вы ввели
+    не более 2 цифр после запятой». Склад в граммах и миллилитрах, так
+    что это был не редкий случай, а почти любой приход с ценой.
+    """
+
+    def setUp(self):
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.HALL
+        site.save()
+        self.manager = User.objects.create_user(
+            username="manager-price", password="pw", role=User.Role.WAREHOUSE
+        )
+        cat = StockCategory.objects.create(name="Сиропы")
+        self.item = StockItem.objects.create(
+            category=cat, name="Концентрат клубника", unit=StockItem.Unit.MILLILITER
+        )
+        res = self.client.post(
+            "/api/auth/token/", {"username": "manager-price", "password": "pw"}, format="json"
+        )
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {res.data['access']}")
+
+    def receipt(self, quantity, unit_cost):
+        return self.client.post(
+            "/api/inventory/receipts/",
+            {"items": [{"item": self.item.id, "quantity": quantity, "unit_cost": unit_cost}]},
+            format="json",
+        )
+
+    def test_price_per_millilitre_is_accepted(self):
+        res = self.receipt("5000", "0.2296")
+        self.assertEqual(res.status_code, 201, res.data)
+        self.assertEqual(ReceiptItem.objects.get().unit_cost, Decimal("0.229600"))
+
+    def test_cheap_goods_keep_their_price(self):
+        """Бутыль воды 19 л за 200 ₽ — 0,010526 ₽ за мл; округление до копейки
+        превратило бы её в 0,01 и соврало бы в себестоимости на проценты."""
+        res = self.receipt("19000", "0.010526")
+        self.assertEqual(res.status_code, 201, res.data)
+        self.assertEqual(ReceiptItem.objects.get().unit_cost, Decimal("0.010526"))
+
+    def test_sum_of_receipt_stays_correct(self):
+        self.receipt("5000", "0.2296")
+        self.assertEqual(Receipt.objects.get().total_cost, Decimal("1148.0000000"))
+
+    def test_endless_fraction_is_rounded_not_refused(self):
+        """Фронт шлёт частное как есть: 200 ₽ ÷ 19 000 мл = 0,010526315789…
+
+        Отказ здесь означал бы «приход провести нельзя» — деление почти
+        всегда даёт длинный хвост.
+        """
+        res = self.receipt("19000", "0.010526315789473684")
+        self.assertEqual(res.status_code, 201, res.data)
+        self.assertEqual(ReceiptItem.objects.get().unit_cost, Decimal("0.010526"))
+
+    def test_price_still_cannot_be_negative(self):
+        self.assertEqual(self.receipt("5000", "-1").status_code, 400)

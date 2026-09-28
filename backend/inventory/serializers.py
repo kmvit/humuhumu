@@ -106,6 +106,19 @@ class ReceiptSerializer(serializers.ModelSerializer):
         )
 
 
+class RoundedDecimalField(serializers.DecimalField):
+    """Decimal, который округляет лишние знаки вместо отказа.
+
+    Обычный DecimalField отвечает «убедитесь, что вы ввели не более N
+    цифр после запятой» — на складе это означало бы, что приход нельзя
+    провести вовсе: цену за единицу считает деление, а оно почти всегда
+    даёт длинный хвост.
+    """
+
+    def validate_precision(self, value):
+        return super().validate_precision(self.quantize(value))
+
+
 class ReceiptItemCreateSerializer(serializers.Serializer):
     # Менеджер, а не .all(): DRF вызовет его на каждый запрос, и выбор
     # ограничится складом своего заведения. С .all() фильтр по
@@ -113,8 +126,13 @@ class ReceiptItemCreateSerializer(serializers.Serializer):
     # на позицию склада другого.
     item = serializers.PrimaryKeyRelatedField(queryset=StockItem.objects)
     quantity = serializers.DecimalField(max_digits=12, decimal_places=3, min_value=Decimal("0.001"))
-    unit_cost = serializers.DecimalField(
-        max_digits=10, decimal_places=2, required=False, allow_null=True, min_value=Decimal("0")
+    # Точность как у модели: цена за грамм или миллилитр в копейки не
+    # укладывается. Поле своё, потому что фронт присылает ровно частное
+    # «сумма ÷ количество», а у него бывает бесконечный хвост: 200 ₽ за
+    # бутыль 19 000 мл — это 0,010526315789… Отказывать в приходе из-за
+    # длины дроби нельзя, поэтому округляем молча.
+    unit_cost = RoundedDecimalField(
+        max_digits=14, decimal_places=6, required=False, allow_null=True, min_value=Decimal("0")
     )
     # Как позиция называлась в чеке — запоминаем как алиас варианта, чтобы в
     # следующий раз распознавание сопоставило строку точно.
