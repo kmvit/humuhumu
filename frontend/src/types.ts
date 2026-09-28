@@ -230,7 +230,8 @@ export interface Performer {
   in_shift: boolean;
 }
 
-export type OrderStatus = "requested" | "unpaid" | "open" | "awaiting" | "paid" | "cancelled";
+export type OrderStatus =
+  | "requested" | "unpaid" | "open" | "awaiting" | "paid" | "cancelled" | "refunded";
 
 export type PayMethod = "cash" | "card";
 

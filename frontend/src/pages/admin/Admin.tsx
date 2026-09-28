@@ -7,6 +7,7 @@ import { useToast } from "../../components/ui/Toast";
 import Staff from "./Staff";
 import Bonuses from "./Bonuses";
 import OnlinePayment from "./OnlinePayment";
+import Kassa from "./Kassa";
 import OrderingPause from "./OrderingPause";
 import Subscription from "./Subscription";
 
@@ -83,8 +84,17 @@ export default function Admin() {
     }
   }
 
+  // Возвращённые заказы в оборот не идут — деньги ушли назад; показываем
+  // их отдельной плиткой, иначе оборот не сходится с налом и картой.
   const revenue = useMemo(
-    () => orders.filter((o) => o.status !== "cancelled").reduce((s, o) => s + Number(o.total), 0),
+    () =>
+      orders
+        .filter((o) => o.status !== "cancelled" && o.status !== "refunded")
+        .reduce((s, o) => s + Number(o.total), 0),
+    [orders]
+  );
+  const refunded = useMemo(
+    () => orders.filter((o) => o.status === "refunded").reduce((s, o) => s + Number(o.total), 0),
     [orders]
   );
   // разбивка оплаченного по способу оплаты (нал/карта)
@@ -102,9 +112,10 @@ export default function Admin() {
 
   const stats = [
     { icon: "receipt", label: "Всего заказов", value: orders.length },
-    { icon: "chart", label: "Оборот (без отмен)", value: money(revenue) },
+    { icon: "chart", label: "Оборот (без отмен и возвратов)", value: money(revenue) },
     { icon: "cash", label: "Наличными", value: money(cash) },
     { icon: "card", label: "Картой", value: money(card) },
+    ...(refunded ? [{ icon: "minus", label: "Возвраты", value: money(refunded) } as const] : []),
     { icon: "store", label: "В работе", value: active },
   ] as const;
 
@@ -223,6 +234,8 @@ export default function Admin() {
       </div>
 
       <OnlinePayment />
+
+      <Kassa />
 
       <Bonuses />
 
