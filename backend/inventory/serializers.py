@@ -37,15 +37,22 @@ class StockItemSerializer(serializers.ModelSerializer):
         max_digits=12, decimal_places=3, read_only=True
     )
     aliases = serializers.SerializerMethodField()
+    # Последняя цена за базовую единицу. Есть только у выборки вьюсета
+    # (аннотация), в ответе на создание товара — null.
+    last_unit_cost = serializers.SerializerMethodField()
 
     class Meta:
         model = StockItem
         fields = (
             "id", "category", "category_name", "name", "unit", "unit_display",
             "quantity", "min_quantity", "target_quantity", "shortage",
-            "is_low", "is_active", "aliases",
+            "is_low", "is_active", "aliases", "last_unit_cost",
         )
         read_only_fields = ("quantity",)
+
+    def get_last_unit_cost(self, obj) -> str | None:
+        cost = getattr(obj, "last_unit_cost", None)
+        return None if cost is None else str(cost)
 
     def get_aliases(self, obj) -> list[dict]:
         return [{"id": a.id, "name": a.name} for a in obj.aliases.all()]

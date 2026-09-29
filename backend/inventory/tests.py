@@ -170,6 +170,19 @@ class ReceiptDeleteTests(APITestCase):
         )
         self.assertTrue(Receipt.objects.filter(id=receipt.id).exists())
 
+    def test_item_list_has_last_unit_cost(self):
+        """Форма прихода подставляет сумму по цене из последнего прихода."""
+        def cost():
+            res = self.client.get("/api/inventory/items/")
+            row = next(r for r in res.data if r["id"] == self.item.id)
+            return row["last_unit_cost"]
+
+        self.assertIsNone(cost())  # приходов ещё не было
+        self._receipt(cost="0.05")
+        self._receipt(cost="0.314700")
+        self._receipt(cost=None)  # приход без цены прошлую не затирает
+        self.assertEqual(Decimal(cost()), Decimal("0.3147"))
+
 
 class RecipeApiTests(APITestCase):
     """Тех карта блюда: сохранили — значит она есть и в списке, и в блюде."""

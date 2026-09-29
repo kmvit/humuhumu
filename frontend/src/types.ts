@@ -334,6 +334,8 @@ export interface StockItem {
   is_low: boolean;
   is_active: boolean;
   aliases: StockAlias[];
+  /** Цена за базовую единицу из последнего прихода; null — приходов с ценой не было. */
+  last_unit_cost: string | null;
 }
 
 /** Строка тех карты: расход товара на одну порцию блюда. */

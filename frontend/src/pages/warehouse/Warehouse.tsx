@@ -40,6 +40,9 @@ type Line = {
   hint?: string; // как позиция называется в чеке
   rawName?: string; // название из чека — запомнится вариантом товара
   warn?: boolean; // не удалось уверенно сопоставить/сконвертировать
+  /** Сумму подставили по прошлой цене, а не ввёл человек. Такую пересчитываем
+   *  при смене товара или количества; введённую руками — не трогаем. */
+  auto?: boolean;
 };
 
 export default function Warehouse() {
@@ -131,8 +134,23 @@ export default function Warehouse() {
   function addLine() {
     setLines((l) => [...l, { item: items[0]?.id ?? "", quantity: "", amount: "" }]);
   }
+  /** Подставить сумму по прошлой цене, если её не вводили руками. */
+  function autoAmount(line: Line): Line {
+    if (line.amount.trim() && !line.auto) return line;
+    const cost = line.item !== "" ? itemById[line.item]?.last_unit_cost : null;
+    const qty = Number(line.quantity);
+    if (cost == null || !(qty > 0)) return { ...line, amount: "", auto: false };
+    return { ...line, amount: String(round2(Number(cost) * qty)), auto: true };
+  }
   function setLine(idx: number, patch: Partial<Line>) {
-    setLines((l) => l.map((x, i) => (i === idx ? { ...x, ...patch } : x)));
+    setLines((l) =>
+      l.map((x, i) => {
+        if (i !== idx) return x;
+        // Сумму правят руками — дальше она своя, пересчёт отключаем.
+        if ("amount" in patch) return { ...x, ...patch, auto: false };
+        return autoAmount({ ...x, ...patch });
+      })
+    );
   }
   function removeLine(idx: number) {
     setLines((l) => l.filter((_, i) => i !== idx));
@@ -154,7 +172,7 @@ export default function Warehouse() {
     setSupplier("");
     setComment("");
     setLines(
-      preset.map((p) => ({ item: p.item, quantity: String(p.quantity), amount: "" }))
+      preset.map((p) => autoAmount({ item: p.item, quantity: String(p.quantity), amount: "" }))
     );
     setReceiptOpen(true);
   }
@@ -173,7 +191,7 @@ export default function Warehouse() {
       p.lines.map((l) => {
         const matched = l.matched_item_id != null && !!itemById[l.matched_item_id];
         const qty = l.unit_ok && l.base_quantity != null ? l.base_quantity : l.raw_quantity;
-        return {
+        return autoAmount({
           item: matched ? (l.matched_item_id as number) : "",
           quantity: qty != null ? String(qty) : "",
           amount:
@@ -183,7 +201,7 @@ export default function Warehouse() {
           hint: `${l.raw_name}${l.raw_quantity != null ? ` · ${l.raw_quantity} ${l.raw_unit}` : ""}`,
           rawName: l.raw_name,
           warn: !matched || !l.unit_ok,
-        };
+        });
       })
     );
     setReceiptOpen(true);
@@ -235,7 +253,11 @@ export default function Warehouse() {
         // Сумма делится на количество — так цена всегда за базовую единицу.
         // Хвост деления обрезаем здесь же: бэкенд округлит и сам, но гонять
         // по сети 0,010526315789473684 незачем.
-        ...(l.amount.trim() && Number(l.quantity) > 0
+        // Сумма по прошлой цене — отдаём саму цену: сумма округлена до
+        // копеек, и цена, пересчитанная из неё, уплывала бы с каждым приходом.
+        ...(l.auto && l.item !== "" && itemById[l.item]?.last_unit_cost != null
+          ? { unit_cost: Number(itemById[l.item].last_unit_cost) }
+          : l.amount.trim() && Number(l.quantity) > 0
           ? { unit_cost: Number((Number(l.amount) / Number(l.quantity)).toFixed(6)) }
           : {}),
         // Название из чека — чтобы в следующий раз строка сопоставилась сама.
@@ -641,10 +663,13 @@ export default function Warehouse() {
                   </div>
                   {it && Number(l.amount) > 0 && Number(l.quantity) > 0 && (
                     <span className="muted sm">
-                      ≈ {(Number(l.amount) / Number(l.quantity)).toLocaleString("ru", {
-                        maximumFractionDigits: 4,
-                      })}{" "}
+                      {l.auto ? "по прошлой цене: " : "≈ "}
+                      {(l.auto
+                        ? Number(it.last_unit_cost)
+                        : Number(l.amount) / Number(l.quantity)
+                      ).toLocaleString("ru", { maximumFractionDigits: 4 })}{" "}
                       ₽ за 1 {it.unit_display}
+                      {l.auto && " — цена другая? впишите сумму из чека"}
                     </span>
                   )}
                 </div>

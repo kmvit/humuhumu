@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Count
+from django.db.models import Count, OuterRef, Subquery
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -18,6 +18,7 @@ from .models import (
     PurchaseLine,
     PurchaseList,
     Receipt,
+    ReceiptItem,
     ReceiptScan,
     RecipeItem,
     StockCategory,
@@ -90,7 +91,19 @@ class StockItemViewSet(viewsets.ModelViewSet):
         # get_queryset, а не queryset на классе: запрос с фильтром по
         # заведению вычислился бы один раз при импорте и обслуживал бы
         # всех тенантов данными первого. См. core/tenancy.py.
-        return StockItem.objects.select_related("category").prefetch_related("aliases")
+        # Последняя цена за единицу из приходов — форма прихода подставляет
+        # по ней сумму строки, как только введено количество. Порядок тот же,
+        # что в services.last_unit_costs.
+        last_cost = (
+            ReceiptItem.objects.filter(item=OuterRef("pk"), unit_cost__isnull=False)
+            .order_by("-receipt__created_at", "-id")
+            .values("unit_cost")[:1]
+        )
+        return (
+            StockItem.objects.select_related("category")
+            .prefetch_related("aliases")
+            .annotate(last_unit_cost=Subquery(last_cost))
+        )
     serializer_class = StockItemSerializer
     permission_classes = [IsWarehouseOrAdmin, RequiresInventory]
 
