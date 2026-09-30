@@ -114,6 +114,7 @@ def user_days(period: date_cls, user_id: int) -> list[dict]:
                 # расшифровка надбавок: КПД и старшему отдельно
                 "kpi": me["kpi"],
                 "kpi_bonus": me["kpi_bonus"] or "0.00",
+                "focus_bonus": me["focus_bonus"],
                 "senior_bonus": me["senior_bonus"],
                 "penalty_share": report["penalty_share"],
                 "manual_penalty_share": report["manual_penalty_share"],

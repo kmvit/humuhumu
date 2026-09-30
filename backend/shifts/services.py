@@ -9,8 +9,8 @@
 Две схемы оплаты (Scheme):
   «поровну»        — ставка за день + доля процента от выручки − списания;
   «за результат»   — ставка по типу смены и роли + надбавка старшему
-                     + бонус за КПД по сетке − списания. Фокус и
-                     допродажи добавляются следующими этапами.
+                     + бонус за КПД по сетке + фокусные позиции
+                     − списания. Допродажи — следующим этапом.
 
 КПД — личная выручка в час. Каждый оплаченный заказ делится поровну
 между участниками КПД, которые были на смене в момент закрытия счёта;
@@ -23,7 +23,7 @@ from django.utils import timezone
 
 from orders.models import Order
 
-from .models import Scheme, Shift, ShiftMember, ShiftRate, ShiftSettings, ShiftType
+from .models import FocusItem, Scheme, Shift, ShiftMember, ShiftRate, ShiftSettings, ShiftType
 
 CENT = Decimal("0.01")
 
@@ -101,6 +101,51 @@ def performer_stats(day, penalty_table: str = "") -> dict[int, dict]:
         qs = qs.exclude(table=penalty_table)
     rows = qs.values("performer").annotate(n=Count("id"), total=Sum("total"))
     return {r["performer"]: {"orders": r["n"], "orders_total": money(r["total"])} for r in rows}
+
+
+def clean_amount(raw, label: str) -> Decimal:
+    """Сумма из формы: число, конечное, не отрицательное — иначе ValueError."""
+    from decimal import InvalidOperation
+
+    try:
+        value = Decimal(str(raw))
+    except (InvalidOperation, TypeError):
+        raise ValueError(f"{label}: нужно число")
+    if not value.is_finite():
+        raise ValueError(f"{label}: нужно число")
+    if value < 0:
+        raise ValueError(f"{label}: не может быть отрицательной")
+    return value
+
+
+def clean_kpi_grid(raw) -> list[dict]:
+    """Сетка КПД: ступени «от ₽/час → надбавка», по возрастанию, без повторов.
+
+    Одна проверка для приложения и Django-админки: кривая сетка уронила
+    бы расчёт выплат у всех смен, где она лежит снимком.
+    """
+    if not isinstance(raw, list):
+        raise ValueError("Сетка КПД: нужен список ступеней")
+    steps = {}
+    for row in raw:
+        if not isinstance(row, dict):
+            raise ValueError("Сетка КПД: неверная ступень")
+        start = clean_amount(row.get("from"), "Сетка КПД, «от»")
+        bonus = clean_amount(row.get("bonus"), "Сетка КПД, надбавка")
+        if start in steps:
+            raise ValueError(f"Сетка КПД: ступень «от {start:g}» повторяется")
+        steps[start] = bonus
+    return [
+        {"from": str(money(s)), "bonus": str(money(b))} for s, b in sorted(steps.items())
+    ]
+
+
+def clean_kpi_roles(raw) -> list[str]:
+    from .models import STAFF_ROLES
+
+    if not isinstance(raw, list) or any(r not in STAFF_ROLES for r in raw):
+        raise ValueError("Роли в КПД: неизвестная роль")
+    return list(dict.fromkeys(raw))
 
 
 def member_interval(day, member):
@@ -186,6 +231,73 @@ def kpi_step(grid, kpi: Decimal) -> tuple[Decimal, dict | None]:
         elif upcoming is None:
             upcoming = {"from": str(money(start)), "bonus": str(money(amount))}
     return money(bonus), upcoming
+
+
+def sold_orders(day, penalty_table: str = ""):
+    """Оплаченные за день заказы, которые идут в личные бонусы.
+
+    Возврат в тот же день — вне бонусов; вернули позже — смену не
+    переписываем. Штрафной стол — подарки за косяки, не продажа.
+    """
+    from django.db.models import Q
+
+    qs = Order.objects.filter(closed_at__date=day).filter(
+        Q(status=Order.Status.PAID)
+        | Q(status=Order.Status.REFUNDED, refunded_at__date__gt=day)
+    )
+    if penalty_table:
+        qs = qs.exclude(table=penalty_table)
+    return qs
+
+
+def focus_sales(day, penalty_table: str = "") -> dict[int, dict]:
+    """Фокусные позиции, проданные за день, — по исполнителям заказов.
+
+    Продажа засчитывается по надбавке, действовавшей в момент закрытия
+    счёта. Если на товар заведены и «любой объём», и конкретный объём,
+    берётся конкретный: он точнее выражает, что хотели продвинуть.
+    Заказ без исполнителя никому не засчитывается.
+    """
+    from datetime import datetime, time, timedelta
+
+    from orders.models import OrderItem
+
+    start = timezone.make_aware(datetime.combine(day, time.min))
+    focus = list(
+        FocusItem.objects.filter(starts_at__lt=start + timedelta(days=1), ends_at__gt=start)
+        .select_related("product", "variant")
+    )
+    if not focus:
+        return {}
+    by_product: dict[int, list] = {}
+    for f in focus:
+        by_product.setdefault(f.product_id, []).append(f)
+
+    items = (
+        OrderItem.objects.filter(
+            order__in=sold_orders(day, penalty_table).filter(performer__isnull=False),
+            variant__product_id__in=by_product,
+        )
+        .select_related("variant", "order")
+    )
+    out: dict[int, dict] = {}
+    for it in items:
+        at = it.order.closed_at
+        live = [f for f in by_product[it.variant.product_id] if f.starts_at <= at < f.ends_at]
+        match = next((f for f in live if f.variant_id == it.variant_id), None) or next(
+            (f for f in live if f.variant_id is None), None
+        )
+        if match is None:
+            continue
+        row = out.setdefault(
+            it.order.performer_id, {"count": 0, "bonus": Decimal("0"), "items": {}}
+        )
+        row["count"] += it.quantity
+        row["bonus"] += match.bonus * it.quantity
+        row["items"][match.title] = row["items"].get(match.title, 0) + it.quantity
+    for row in out.values():
+        row["bonus"] = money(row["bonus"])
+    return out
 
 
 def get_shift(day, create: bool = False):
@@ -367,9 +479,10 @@ def shift_report(shift=None, day=None) -> dict:
         bonus_share = penalty_share = manual_share = money(0)
 
     if even:
-        personal, unassigned = {}, money(0)
+        personal, unassigned, focus = {}, money(0), {}
     else:
         personal, unassigned = kpi_revenue(day, members, penalty_table)
+        focus = focus_sales(day, penalty_table)
 
     rows = []
     for m in members:
@@ -384,7 +497,8 @@ def shift_report(shift=None, day=None) -> dict:
             hours = m.hours or Decimal("0")
             kpi = money(personal[m.user_id] / hours) if hours else money(0)
             kpi_bonus, upcoming = kpi_step(kpi_grid, kpi)
-        bonus = bonus_share if even else (kpi_bonus or money(0))
+        mine = focus.get(m.user_id, {"count": 0, "bonus": money(0), "items": {}})
+        bonus = bonus_share if even else money((kpi_bonus or 0) + mine["bonus"])
         payout = max(
             money(base + bonus + senior - penalty_share - manual_share), money(0)
         )
@@ -413,6 +527,12 @@ def shift_report(shift=None, day=None) -> dict:
                 "kpi": str(kpi) if kpi is not None else None,
                 "kpi_bonus": str(kpi_bonus) if kpi_bonus is not None else None,
                 "kpi_next": upcoming,
+                # фокусные позиции: сколько штук продал и что именно
+                "focus_count": mine["count"],
+                "focus_bonus": str(mine["bonus"]),
+                "focus_items": [
+                    {"title": t, "count": n} for t, n in sorted(mine["items"].items())
+                ],
                 "penalty": str(money(penalty_share + manual_share)),
                 "payout": str(payout),
                 # Сделанное за день. На выплату пока не влияет — это
@@ -457,14 +577,19 @@ def shift_report(shift=None, day=None) -> dict:
         "members": rows,
         # Те, кто выполнял заказы, но в смену не поставлен: менеджер забыл
         # отметить, а работа сделана. Без этой строки она пропала бы.
-        "outsiders": _outsiders(by_performer, members),
+        "outsiders": _outsiders(by_performer, members, focus),
     }
 
 
-def _outsiders(by_performer: dict[int, dict], members) -> list[dict]:
-    """Исполнители заказов, которых нет в составе смены."""
+def _outsiders(by_performer: dict[int, dict], members, focus=None) -> list[dict]:
+    """Исполнители заказов, которых нет в составе смены.
+
+    Их фокусные продажи тоже показываем: денег без смены не начислить,
+    но менеджер должен увидеть, что человек работал и продавал.
+    """
     from users.models import User
 
+    focus = focus or {}
     ids = set(by_performer) - {m.user_id for m in members}
     if not ids:
         return []
@@ -474,6 +599,7 @@ def _outsiders(by_performer: dict[int, dict], members) -> list[dict]:
             "name": user_name(u),
             "orders": by_performer[u.id]["orders"],
             "orders_total": str(by_performer[u.id]["orders_total"]),
+            "focus_count": focus.get(u.id, {}).get("count", 0),
         }
         for u in User.tenant.filter(pk__in=ids).order_by("first_name", "username")
     ]
@@ -502,6 +628,8 @@ def payroll(shifts, user=None) -> list[dict]:
                     # расшифровки не проверить
                     "bonus": Decimal("0"),
                     "kpi_bonus": Decimal("0"),
+                    "focus_bonus": Decimal("0"),
+                    "focus_count": 0,
                     "senior_bonus": Decimal("0"),
                     "penalty": Decimal("0"),
                     "total": Decimal("0"),
@@ -520,6 +648,8 @@ def payroll(shifts, user=None) -> list[dict]:
             # надбавка старшему — тоже бонус сверх ставки
             row["bonus"] += Decimal(m["bonus"]) + Decimal(m["senior_bonus"])
             row["kpi_bonus"] += Decimal(m["kpi_bonus"] or 0)
+            row["focus_bonus"] += Decimal(m["focus_bonus"])
+            row["focus_count"] += m["focus_count"]
             row["senior_bonus"] += Decimal(m["senior_bonus"])
             # в «списания» идут и подарки со штрафного стола, и ручной штраф
             row["penalty"] += Decimal(m["penalty"])
@@ -530,7 +660,7 @@ def payroll(shifts, user=None) -> list[dict]:
             **{
                 k: str(money(r[k]))
                 for k in (
-                    "hours", "base", "bonus", "kpi_bonus", "senior_bonus",
+                    "hours", "base", "bonus", "kpi_bonus", "focus_bonus", "senior_bonus",
                     "penalty", "total", "orders_total",
                 )
             },

@@ -14,11 +14,23 @@ from users.permissions import IsAdminRole, IsStaffRole, IsWarehouseOrAdmin
 
 from orders.models import Table
 
-from .models import STAFF_ROLES, Scheme, Shift, ShiftMember, ShiftRate, ShiftSettings, ShiftType
+from .models import (
+    STAFF_ROLES,
+    FocusItem,
+    Scheme,
+    Shift,
+    ShiftMember,
+    ShiftRate,
+    ShiftSettings,
+    ShiftType,
+)
 from .services import (
     _MISSING,
     add_member,
     apply_rules_from,
+    clean_amount,
+    clean_kpi_grid,
+    clean_kpi_roles,
     money,
     retime_type,
     payroll,
@@ -39,6 +51,12 @@ class ShiftViewSet(viewsets.ViewSet):
     permission_classes = [IsStaffRole, RequiresShifts]
 
     def get_permissions(self):
+        # Список фокусных позиций видит весь персонал — им и продавать;
+        # заводит и правит менеджер или админ.
+        if self.action == "focus" and self.request.method == "GET":
+            return super().get_permissions()
+        if self.action in ("focus", "focus_item"):
+            return [IsWarehouseOrAdmin(), RequiresShifts()]
         if self.action in (
             "add_member", "remove_member", "update_member", "staff", "set_penalty",
             "options",
@@ -364,12 +382,9 @@ class ShiftViewSet(viewsets.ViewSet):
                     request.data["senior_bonus"], "Надбавка старшему"
                 )
             if "kpi_roles" in request.data:
-                roles = request.data["kpi_roles"] or []
-                if not isinstance(roles, list) or any(r not in STAFF_ROLES for r in roles):
-                    raise ValueError("Роли в КПД: неизвестная роль")
-                cfg.kpi_roles = roles
+                cfg.kpi_roles = clean_kpi_roles(request.data["kpi_roles"] or [])
             if "kpi_grid" in request.data:
-                cfg.kpi_grid = self._grid(request.data["kpi_grid"])
+                cfg.kpi_grid = clean_kpi_grid(request.data["kpi_grid"])
             if "daily_rate" in request.data:
                 cfg.daily_rate = self._money(request.data["daily_rate"], "Оплата за смену")
             if "bonus_percent" in request.data:
@@ -387,35 +402,9 @@ class ShiftViewSet(viewsets.ViewSet):
         apply_rules_from(timezone.localdate())
         return Response(self._settings_payload(cfg))
 
-    @classmethod
-    def _grid(cls, raw):
-        """Сетка КПД: ступени «от ₽/час → надбавка», по возрастанию, без повторов."""
-        if not isinstance(raw, list):
-            raise ValueError("Сетка КПД: нужен список ступеней")
-        steps = {}
-        for row in raw:
-            if not isinstance(row, dict):
-                raise ValueError("Сетка КПД: неверная ступень")
-            start = cls._money(row.get("from"), "Сетка КПД, «от»")
-            bonus = cls._money(row.get("bonus"), "Сетка КПД, надбавка")
-            if start in steps:
-                raise ValueError(f"Сетка КПД: ступень «от {start:g}» повторяется")
-            steps[start] = bonus
-        return [
-            {"from": str(money(s)), "bonus": str(money(b))} for s, b in sorted(steps.items())
-        ]
-
     @staticmethod
     def _money(raw, label: str) -> Decimal:
-        try:
-            value = Decimal(str(raw))
-        except (InvalidOperation, TypeError):
-            raise ValueError(f"{label}: нужно число")
-        if not value.is_finite():
-            raise ValueError(f"{label}: нужно число")
-        if value < 0:
-            raise ValueError(f"{label}: не может быть отрицательной")
-        return value
+        return clean_amount(raw, label)
 
     @staticmethod
     def _settings_payload(cfg) -> dict:
@@ -530,6 +519,176 @@ class ShiftViewSet(viewsets.ViewSet):
                 ShiftRate.objects.update_or_create(
                     shift_type=shift_type, role=role, defaults={"rate": rate}
                 )
+
+    # ——— фокусные позиции ———
+
+    @action(detail=False, methods=["get", "post"], url_path="focus")
+    def focus(self, request):
+        """Фокусные позиции: действующие и будущие; завести новую.
+
+        Период задаётся датами (включительно), но действует позиция не
+        раньше, чем её завели: иначе утренние продажи сегодняшнего дня
+        задним числом получили бы надбавку, о которой никто не знал.
+        """
+        if request.method == "POST":
+            try:
+                self._create_focus(request)
+            except ValueError as e:
+                return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(self._focus_payload(request), status=status.HTTP_201_CREATED)
+        return Response(self._focus_payload(request))
+
+    @action(
+        detail=False, methods=["patch", "delete"], url_path=r"focus/(?P<focus_id>\d+)"
+    )
+    def focus_item(self, request, focus_id=None):
+        """Поправить надбавку или срок; снять позицию.
+
+        Идущую позицию не переписываем: правка суммы закрывает её «сейчас»
+        и открывает новую с новой суммой — проданное раньше остаётся по
+        старой. Закончившуюся не трогаем вовсе: это история выплат.
+        """
+        item = FocusItem.objects.filter(pk=focus_id).first()
+        if item is None:
+            return Response({"detail": "Позиция не найдена"}, status=status.HTTP_404_NOT_FOUND)
+        now = timezone.now()
+        if item.ends_at <= now:
+            return Response(
+                {"detail": "Позиция уже закончилась — по ней посчитаны выплаты"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        started = item.starts_at <= now
+        if request.method == "DELETE":
+            if started:
+                item.ends_at = now
+                item.save(update_fields=["ends_at"])
+            else:
+                item.delete()
+            return Response(self._focus_payload(request))
+
+        try:
+            ends_at = item.ends_at
+            if "date_to" in request.data:
+                ends_at = self._focus_end(request.data["date_to"])
+                if ends_at <= max(now, item.starts_at):
+                    raise ValueError("Дата окончания уже прошла")
+            bonus = item.bonus
+            if "bonus" in request.data:
+                bonus = self._money(request.data["bonus"], "Надбавка")
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if started and bonus != item.bonus:
+            FocusItem.objects.create(
+                product=item.product, variant=item.variant, bonus=bonus,
+                starts_at=now, ends_at=ends_at, created_by=request.user,
+            )
+            item.ends_at = now
+            item.save(update_fields=["ends_at"])
+        else:
+            item.bonus = bonus
+            item.ends_at = ends_at
+            item.save(update_fields=["bonus", "ends_at"])
+        return Response(self._focus_payload(request))
+
+    @staticmethod
+    def _focus_end(raw):
+        """Дата «по» включительно → начало следующего дня."""
+        from datetime import datetime, time
+
+        try:
+            day = date_cls.fromisoformat(str(raw))
+        except ValueError:
+            raise ValueError("Дата в формате ГГГГ-ММ-ДД")
+        return timezone.make_aware(datetime.combine(day + timedelta(days=1), time.min))
+
+    def _create_focus(self, request):
+        from datetime import datetime, time
+
+        from catalog.models import Product, ProductVariant
+
+        data = request.data
+        product = Product.objects.filter(pk=data.get("product")).first()
+        if product is None:
+            raise ValueError("Выберите позицию меню")
+        variant = None
+        if data.get("variant"):
+            variant = ProductVariant.objects.filter(
+                pk=data["variant"], product=product
+            ).first()
+            if variant is None:
+                raise ValueError("У этой позиции нет такого варианта")
+        bonus = self._money(data.get("bonus"), "Надбавка")
+        if bonus <= 0:
+            raise ValueError("Надбавка должна быть больше нуля")
+        try:
+            day_from = date_cls.fromisoformat(str(data.get("date_from")))
+        except ValueError:
+            raise ValueError("Дата в формате ГГГГ-ММ-ДД")
+        ends_at = self._focus_end(data.get("date_to"))
+        now = timezone.now()
+        starts_at = max(
+            timezone.make_aware(datetime.combine(day_from, time.min)), now
+        )
+        if ends_at <= starts_at:
+            raise ValueError("Период уже прошёл или «по» раньше «с»")
+        # Две записи на одно и то же в одно время — непонятно, какую
+        # надбавку платить. «Любой объём» и конкретный объём — можно:
+        # конкретный точнее и побеждает (см. focus_sales).
+        clash = FocusItem.objects.filter(
+            product=product, variant=variant, starts_at__lt=ends_at, ends_at__gt=starts_at
+        ).exists()
+        if clash:
+            raise ValueError("Эта позиция уже в фокусе на эти дни — поправьте её")
+        FocusItem.objects.create(
+            product=product, variant=variant, bonus=bonus,
+            starts_at=starts_at, ends_at=ends_at, created_by=request.user,
+        )
+
+    def _focus_payload(self, request) -> dict:
+        now = timezone.now()
+        items = (
+            FocusItem.objects.filter(ends_at__gt=now)
+            .select_related("product", "variant")
+            .order_by("starts_at", "product__name")
+        )
+        out = {
+            "items": [
+                {
+                    "id": f.id,
+                    "title": f.title,
+                    "product": f.product_id,
+                    "variant": f.variant_id,
+                    "bonus": str(money(f.bonus)),
+                    "starts_at": timezone.localtime(f.starts_at).isoformat(),
+                    # последний день включительно — так его и задавали
+                    "date_to": (timezone.localtime(f.ends_at) - timedelta(seconds=1))
+                    .date()
+                    .isoformat(),
+                    "active": f.starts_at <= now,
+                }
+                for f in items
+            ],
+            "can_edit": self.is_manager,
+        }
+        if self.is_manager:
+            from catalog.models import Product
+
+            out["products"] = [
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "variants": [
+                        {"id": v.id, "label": v.label}
+                        for v in p.variants.all()
+                        if v.is_active and v.label
+                    ],
+                }
+                for p in Product.objects.filter(is_available=True)
+                .prefetch_related("variants")
+                .order_by("name")
+            ]
+        return out
 
     @action(detail=False, methods=["post"], url_path="set_penalty")
     def set_penalty(self, request):

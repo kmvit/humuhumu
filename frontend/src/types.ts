@@ -471,6 +471,10 @@ export interface ShiftMember {
   kpi_bonus: string | null;
   /** Следующая ступень сетки; null — выше некуда. */
   kpi_next: KpiStep | null;
+  /** Фокусные позиции за день: штук, надбавка, что именно продал. */
+  focus_count: number;
+  focus_bonus: string;
+  focus_items: { title: string; count: number }[];
   penalty: string;
   /** К выплате этому человеку за смену. */
   payout: string;
@@ -496,6 +500,27 @@ export interface ShiftTypeInfo {
   hours: string;
   /** Ставка по роли; нет ключа — клетка пустая, берётся общая ставка. */
   rates?: Partial<Record<Role, string>>;
+}
+
+/** Фокусная позиция: надбавка за каждую проданную штуку. */
+export interface FocusItemInfo {
+  id: number;
+  title: string;
+  product: number;
+  variant: number | null;
+  bonus: string;
+  starts_at: string;
+  /** Последний день, включительно. */
+  date_to: string;
+  /** Уже действует (иначе — начнётся позже). */
+  active: boolean;
+}
+
+export interface FocusPayload {
+  items: FocusItemInfo[];
+  can_edit: boolean;
+  /** Только менеджеру и админу — для выбора позиции. */
+  products?: { id: number; name: string; variants: { id: number; label: string }[] }[];
 }
 
 export interface Choice<T extends string = string> {
@@ -562,7 +587,13 @@ export interface Shift {
   payout_total: string;
   members: ShiftMember[];
   /** Кто выполнял заказы, но в смену не поставлен — менеджер забыл отметить. */
-  outsiders: { user: number; name: string; orders: number; orders_total: string }[];
+  outsiders: {
+    user: number;
+    name: string;
+    orders: number;
+    orders_total: string;
+    focus_count: number;
+  }[];
   /** Только в /shifts/day/: я в этой смене. */
   in_shift?: boolean;
   /** Только в /shifts/day/: можно менять состав (менеджер или админ). */
@@ -583,6 +614,8 @@ export interface PayrollRow {
   /** Все надбавки вместе; ниже — из них за КПД и старшему. */
   bonus: string;
   kpi_bonus: string;
+  focus_bonus: string;
+  focus_count: number;
   senior_bonus: string;
   penalty: string;
   total: string;
@@ -689,6 +722,7 @@ export interface StatementDay {
   bonus_share: string;
   kpi: string | null;
   kpi_bonus: string;
+  focus_bonus: string;
   senior_bonus: string;
   penalty_share: string;
   manual_penalty_share: string;

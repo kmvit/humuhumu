@@ -1149,3 +1149,298 @@ class KpiTests(APITestCase):
         self.sale("7000", 9)
         row = payroll(Shift.objects.all())[0]
         self.assertEqual((row["kpi_bonus"], row["senior_bonus"], row["bonus"]), ("700.00", "300.00", "1000.00"))
+
+
+class FocusTests(APITestCase):
+    """Фокусные позиции — этап 3: надбавка исполнителю за каждую штуку."""
+
+    def setUp(self):
+        from datetime import time
+
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.HALL
+        site.save()
+        self.owner = User.objects.create_user("owner-f", password="demo12345", role=User.Role.ADMIN)
+        self.manager = User.objects.create_user("manager-f", password="demo12345", role=User.Role.WAREHOUSE)
+        self.vika = User.objects.create_user("vika-f", password="demo12345", role=User.Role.BAR)
+        self.dima = User.objects.create_user("dima-f", password="demo12345", role=User.Role.BAR)
+        cfg = ShiftSettings.load()
+        cfg.scheme = "result"
+        cfg.daily_rate = Decimal("2000")
+        cfg.penalty_table = Table.objects.create(name="Штраф")
+        cfg.save()
+        self.shift_type = ShiftType.objects.create(name="Полная", starts_at=time(8), ends_at=time(20))
+        cat = Category.objects.create(name="Кофе", station="bar")
+        self.raf = Product.objects.create(category=cat, name="Раф")
+        self.raf_s = ProductVariant.objects.create(product=self.raf, label="0,3", price=Decimal("250"))
+        self.raf_l = ProductVariant.objects.create(product=self.raf, label="0,4", price=Decimal("300"))
+        latte = Product.objects.create(category=cat, name="Латте")
+        self.latte = ProductVariant.objects.create(product=latte, price=Decimal("240"))
+        self.day = timezone.localdate() - timedelta(days=1)
+        for u in (self.vika, self.dima):
+            add_member(u, self.day, shift_type=self.shift_type)
+
+    def at(self, hh, day=None):
+        from datetime import datetime, time
+
+        return timezone.make_aware(datetime.combine(day or self.day, time(hh)))
+
+    def focus(self, bonus, variant=None, start=8, end=20, product=None):
+        from .models import FocusItem
+
+        return FocusItem.objects.create(
+            product=product or self.raf, variant=variant, bonus=Decimal(bonus),
+            starts_at=self.at(start), ends_at=self.at(end),
+        )
+
+    def sell(self, variant, qty=1, performer=None, hh=12, **kw):
+        from orders.models import OrderItem
+
+        order = Order.objects.create(
+            table=kw.pop("table", "1"), status=kw.pop("status", Order.Status.PAID),
+            closed_at=self.at(hh), total=variant.price * qty,
+            performer=performer if performer is not None else self.vika, **kw,
+        )
+        OrderItem.objects.create(order=order, variant=variant, quantity=qty, unit_price=variant.price)
+        return order
+
+    def row(self, user):
+        report = shift_report(shift=get_shift(self.day))
+        return next(m for m in report["members"] if m["user"] == user.id)
+
+    def test_each_piece_pays(self):
+        self.focus("50")
+        self.sell(self.raf_s, qty=2)
+        self.sell(self.raf_l)
+        self.sell(self.latte)
+        vika = self.row(self.vika)
+        self.assertEqual((vika["focus_count"], vika["focus_bonus"]), (3, "150.00"))
+        self.assertEqual(vika["payout"], "2150.00")
+        self.assertEqual(vika["focus_items"], [{"title": "Раф", "count": 3}])
+
+    def test_goes_to_the_performer(self):
+        self.focus("50")
+        self.sell(self.raf_s, performer=self.dima)
+        self.assertEqual(self.row(self.vika)["focus_count"], 0)
+        self.assertEqual(self.row(self.dima)["focus_bonus"], "50.00")
+
+    def test_no_performer_no_bonus(self):
+        self.focus("50")
+        order = self.sell(self.raf_s)
+        Order.objects.filter(pk=order.pk).update(performer=None)
+        self.assertEqual(self.row(self.vika)["focus_count"], 0)
+
+    def test_specific_volume_wins(self):
+        """«Раф любой» по 30 и «Раф 0,4» по 80 — за большой платим 80."""
+        self.focus("30")
+        self.focus("80", variant=self.raf_l)
+        self.sell(self.raf_l)
+        self.sell(self.raf_s)
+        self.assertEqual(self.row(self.vika)["focus_bonus"], "110.00")
+
+    def test_only_this_volume(self):
+        self.focus("80", variant=self.raf_l)
+        self.sell(self.raf_s)
+        self.assertEqual(self.row(self.vika)["focus_count"], 0)
+
+    def test_bonus_at_the_moment_of_sale(self):
+        """До 14:00 — 50, после — 70: утренняя продажа остаётся по 50."""
+        self.focus("50", end=14)
+        self.focus("70", start=14)
+        self.sell(self.raf_s, hh=10)
+        self.sell(self.raf_s, hh=15)
+        self.assertEqual(self.row(self.vika)["focus_bonus"], "120.00")
+
+    def test_outside_period_not_counted(self):
+        self.focus("50", start=13)
+        self.sell(self.raf_s, hh=10)
+        self.assertEqual(self.row(self.vika)["focus_count"], 0)
+
+    def test_refund_same_day_and_penalty_table_are_out(self):
+        self.focus("50")
+        self.sell(self.raf_s, status=Order.Status.REFUNDED, refunded_at=self.at(13))
+        self.sell(self.raf_s, table="Штраф")
+        self.sell(self.raf_s, status=Order.Status.OPEN)
+        self.assertEqual(self.row(self.vika)["focus_count"], 0)
+
+    def test_in_payroll_itemized(self):
+        self.focus("50")
+        self.sell(self.raf_s, qty=2)
+        row = next(r for r in payroll(Shift.objects.all()) if r["user"] == self.vika.id)
+        self.assertEqual((row["focus_bonus"], row["focus_count"], row["bonus"]), ("100.00", 2, "100.00"))
+
+    def test_even_scheme_ignores_focus(self):
+        Shift.objects.update(scheme="even", bonus_percent=Decimal("0"))
+        self.focus("50")
+        self.sell(self.raf_s)
+        self.assertEqual(self.row(self.vika)["focus_count"], 0)
+
+    # ——— API ———
+
+    def api(self, user, method, url, body=None):
+        self.client.force_authenticate(user)
+        return getattr(self.client, method)(url, body, format="json")
+
+    def create(self, **body):
+        today = timezone.localdate()
+        data = {
+            "product": self.raf.id, "bonus": "50",
+            "date_from": today.isoformat(), "date_to": (today + timedelta(days=6)).isoformat(),
+            **body,
+        }
+        return self.api(self.manager, "post", "/api/shifts/focus/", data)
+
+    def test_manager_creates_and_staff_sees(self):
+        res = self.create()
+        self.assertEqual(res.status_code, 201)
+        res = self.api(self.vika, "get", "/api/shifts/focus/")
+        self.assertEqual([i["title"] for i in res.data["items"]], ["Раф"])
+        self.assertNotIn("products", res.data)
+        self.assertFalse(res.data["can_edit"])
+
+    def test_staff_cannot_create(self):
+        self.client.force_authenticate(self.vika)
+        res = self.client.post("/api/shifts/focus/", {"product": self.raf.id}, format="json")
+        self.assertEqual(res.status_code, 403)
+
+    def test_today_start_is_not_retroactive(self):
+        """Завели в обед — утренние продажи сегодня надбавку не получают."""
+        from .models import FocusItem
+
+        self.create()
+        self.assertGreaterEqual(FocusItem.objects.get().starts_at, timezone.now() - timedelta(minutes=1))
+
+    def test_bonus_change_splits_the_record(self):
+        from .models import FocusItem
+
+        self.create()
+        item = FocusItem.objects.get()
+        FocusItem.objects.filter(pk=item.pk).update(starts_at=timezone.now() - timedelta(hours=3))
+        res = self.api(self.manager, "patch", f"/api/shifts/focus/{item.id}/", {"bonus": "80"})
+        self.assertEqual(res.status_code, 200)
+        old, new = FocusItem.objects.order_by("starts_at")
+        self.assertEqual((old.bonus, new.bonus), (Decimal("50"), Decimal("80")))
+        self.assertEqual(old.ends_at, new.starts_at)
+        self.assertEqual([i["bonus"] for i in res.data["items"]], ["80.00"])
+
+    def test_future_item_is_edited_in_place(self):
+        from .models import FocusItem
+
+        tomorrow = timezone.localdate() + timedelta(days=1)
+        self.create(date_from=tomorrow.isoformat())
+        item = FocusItem.objects.get()
+        self.api(self.manager, "patch", f"/api/shifts/focus/{item.id}/", {"bonus": "80"})
+        self.assertEqual(FocusItem.objects.count(), 1)
+        self.assertEqual(FocusItem.objects.get().bonus, Decimal("80"))
+
+    def test_remove_ends_now_or_deletes_future(self):
+        from .models import FocusItem
+
+        self.create()
+        running = FocusItem.objects.get()
+        FocusItem.objects.filter(pk=running.pk).update(starts_at=timezone.now() - timedelta(hours=1))
+        res = self.api(self.manager, "delete", f"/api/shifts/focus/{running.id}/")
+        self.assertEqual(res.data["items"], [])
+        self.assertTrue(FocusItem.objects.filter(pk=running.pk).exists())  # история цела
+
+        tomorrow = timezone.localdate() + timedelta(days=1)
+        self.create(product=self.raf.id, variant=self.raf_l.id, date_from=tomorrow.isoformat())
+        future = FocusItem.objects.get(variant=self.raf_l)
+        self.api(self.manager, "delete", f"/api/shifts/focus/{future.id}/")
+        self.assertFalse(FocusItem.objects.filter(pk=future.pk).exists())
+
+    def test_finished_item_is_history(self):
+        item = self.focus("50")
+        res = self.api(self.manager, "patch", f"/api/shifts/focus/{item.id}/", {"bonus": "999"})
+        self.assertEqual(res.status_code, 400)
+        res = self.api(self.manager, "delete", f"/api/shifts/focus/{item.id}/")
+        self.assertEqual(res.status_code, 400)
+
+    def test_validation(self):
+        today = timezone.localdate()
+        self.assertEqual(self.create(bonus="0").status_code, 400)
+        self.assertEqual(self.create(bonus="-5").status_code, 400)
+        self.assertEqual(self.create(product=999999).status_code, 400)
+        self.assertEqual(self.create(variant=self.latte.id).status_code, 400)
+        self.assertEqual(
+            self.create(date_to=(today - timedelta(days=1)).isoformat()).status_code, 400
+        )
+        self.assertEqual(self.create(date_from="завтра").status_code, 400)
+        self.assertEqual(self.create().status_code, 201)
+        self.assertEqual(self.create().status_code, 400)  # то же на те же дни
+        self.assertEqual(self.create(variant=self.raf_l.id).status_code, 201)  # конкретный объём — можно
+
+    def test_products_for_the_picker(self):
+        res = self.api(self.manager, "get", "/api/shifts/focus/")
+        raf = next(p for p in res.data["products"] if p["name"] == "Раф")
+        self.assertEqual([v["label"] for v in raf["variants"]], ["0,3", "0,4"])
+
+
+class ShiftsAdminTests(APITestCase):
+    """Django-админка не должна обходить правила приложения."""
+
+    def setUp(self):
+        from datetime import time
+
+        from django.contrib.admin.sites import site as admin_site
+
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.HALL
+        site.save()
+        self.site = admin_site
+        self.bar = User.objects.create_user("bar-adm", password="demo12345", role=User.Role.BAR)
+        self.full = ShiftType.objects.create(name="Полная", starts_at=time(8), ends_at=time(20))
+
+    def test_bad_grid_is_refused(self):
+        from .admin import ShiftSettingsForm
+
+        cfg = ShiftSettings.load()
+        data = {
+            "organization": cfg.organization_id, "scheme": "result", "senior_bonus": "0",
+            "kpi_roles": '["bar"]', "daily_rate": "2000", "bonus_percent": "0",
+            "kpi_grid": '[{"from": "2500", "bonus": "500"}, {"from": "2500", "bonus": "700"}]',
+        }
+        form = ShiftSettingsForm(data, instance=cfg)
+        self.assertFalse(form.is_valid())
+        self.assertIn("kpi_grid", form.errors)
+
+    def test_type_in_open_shift_cannot_be_deleted(self):
+        from .admin import ShiftTypeAdmin
+
+        add_member(self.bar, timezone.localdate(), shift_type=self.full)
+        admin = ShiftTypeAdmin(ShiftType, self.site)
+        self.assertFalse(admin.has_delete_permission(None, self.full))
+
+    def test_started_focus_item_is_view_only(self):
+        from catalog.models import Category, Product
+        from django.test import RequestFactory
+
+        from .admin import FocusItemAdmin
+        from .models import FocusItem
+
+        owner = User.objects.create_superuser("root-adm", password="demo12345")
+        request = RequestFactory().get("/")
+        request.user = owner
+        product = Product.objects.create(category=Category.objects.create(name="К"), name="Раф")
+        now = timezone.now()
+        started = FocusItem.objects.create(
+            product=product, bonus=Decimal("50"), starts_at=now - timedelta(hours=1),
+            ends_at=now + timedelta(days=1),
+        )
+        future = FocusItem.objects.create(
+            product=product, bonus=Decimal("50"), starts_at=now + timedelta(days=2),
+            ends_at=now + timedelta(days=3),
+        )
+        admin = FocusItemAdmin(FocusItem, self.site)
+        self.assertFalse(admin.has_change_permission(request, started))
+        self.assertFalse(admin.has_delete_permission(request, started))
+        self.assertTrue(admin.has_change_permission(request, future))
+        self.assertNotIn("delete_selected", admin.get_actions(request))
+
+    def test_equal_type_times_are_invalid(self):
+        from datetime import time
+
+        from django.core.exceptions import ValidationError
+
+        with self.assertRaises(ValidationError):
+            ShiftType(name="X", starts_at=time(10), ends_at=time(10)).clean()

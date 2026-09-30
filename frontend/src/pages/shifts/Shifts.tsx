@@ -15,6 +15,7 @@ import { useToast } from "../../components/ui/Toast";
 import Modal from "../../components/ui/Modal";
 import PayRules, { fmtHours } from "./PayRules";
 import { payParts } from "./pay";
+import FocusTab from "./FocusTab";
 
 // «2000.00» → «2 000», «1234.50» → «1 234,5»
 function fmtMoney(v: string | number | null | undefined): string {
@@ -63,7 +64,7 @@ export default function Shifts() {
   const isManager = user?.role === "admin" || user?.role === "warehouse";
 
   const today = useMemo(() => isoDay(new Date()), []);
-  const [tab, setTab] = useState<"day" | "history" | "payroll" | "pay">("day");
+  const [tab, setTab] = useState<"day" | "history" | "payroll" | "focus" | "pay">("day");
   const [day, setDay] = useState(today);
   const [month, setMonth] = useState(() => today.slice(0, 7));
   const [monthDays, setMonthDays] = useState<Shift[]>([]);
@@ -311,6 +312,18 @@ export default function Shifts() {
               },
             ]
           : []),
+        ...(result && mine
+          ? [
+              {
+                icon: "gift" as IconName,
+                label: `Фокус · бонус ${fmtMoney(mine.focus_bonus)}`,
+                value: `${mine.focus_count} шт`,
+                hint: mine.focus_items.length
+                  ? mine.focus_items.map((f) => `${f.title} × ${f.count}`).join(", ")
+                  : "Список — во вкладке «Фокус»",
+              },
+            ]
+          : []),
       ]
     : null;
 
@@ -337,6 +350,16 @@ export default function Shifts() {
         >
           <Icon name="wallet" size={16} /> К выплате
         </button>
+        {/* Фокусные позиции платят только в оплате за результат —
+            при оплате поровну вкладка только сбивала бы с толку. */}
+        {shift?.scheme === "result" && (
+          <button
+            className={"navlink" + (tab === "focus" ? " active" : "")}
+            onClick={() => setTab("focus")}
+          >
+            <Icon name="spark" size={16} /> Фокус
+          </button>
+        )}
         {/* Ставка и процент — деньги персонала, их задаёт владелец.
             Менеджер ставит состав смены, но не цену рабочего дня. */}
         {user?.role === "admin" && (
@@ -348,6 +371,15 @@ export default function Shifts() {
           </button>
         )}
       </div>
+
+      {tab === "focus" && (
+        <FocusTab
+          onChanged={() => {
+            loadDay(day).catch(() => {});
+            loadPeriod().catch(() => {});
+          }}
+        />
+      )}
 
       {/* ——— правила оплаты (владелец) ——— */}
       {tab === "pay" &&
@@ -627,6 +659,12 @@ export default function Shifts() {
                       {fmtHours(m.hours)}) → +{fmtMoney(m.kpi_bonus)}
                     </span>
                   )}
+                  {result && m.focus_count > 0 && (
+                    <span className="muted">
+                      Фокус: {m.focus_items.map((f) => `${f.title} × ${f.count}`).join(", ")} → +
+                      {fmtMoney(m.focus_bonus)}
+                    </span>
+                  )}
                   {m.in_kpi && result && !m.hours && (
                     <span className="muted">Нет времени смены — КПД не посчитать</span>
                   )}
@@ -715,7 +753,10 @@ export default function Shifts() {
                 </span>
               </div>
               <p className="muted subtitle m-0">
-                Закрытые заказы с отметкой исполнителя. На выплату пока не влияет.
+                Закрытые заказы с отметкой исполнителя.{" "}
+                {result
+                  ? "По ней засчитываются фокусные позиции; КПД считается по времени смены."
+                  : "На выплату пока не влияет."}
               </p>
 
               {made.rows.map((r) => (
@@ -801,7 +842,7 @@ export default function Shifts() {
 
       {/* ——— период ——— */}
       {/* Правилам оплаты период не нужен: они одни на все смены. */}
-      {tab !== "day" && tab !== "pay" && (
+      {(tab === "history" || tab === "payroll") && (
         <div className="wrap mt-3">
           <input
             className="input"
@@ -848,7 +889,7 @@ export default function Shifts() {
               {s.scheme === "result" ? (
                 <div className="row mt-2">
                   <span className="muted">
-                    ставки по типу смены и роли
+                    ставка, КПД, фокус и надбавки — у каждого свои
                     {Number(s.penalty) > 0
                       ? ` − списания ${fmtMoney(s.penalty_share)} с каждого`
                       : ""}

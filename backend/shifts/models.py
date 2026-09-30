@@ -135,6 +135,13 @@ class ShiftType(TenantModel):
     def hours(self) -> Decimal:
         return hours_between(self.starts_at, self.ends_at)
 
+    def clean(self):
+        # равные отметки считались бы сутками работы — это опечатка
+        from django.core.exceptions import ValidationError
+
+        if self.starts_at is not None and self.starts_at == self.ends_at:
+            raise ValidationError("Начало и конец смены совпадают")
+
 
 def hours_between(start, end) -> Decimal:
     """Часы между двумя отметками времени; конец раньше начала — через полночь."""
@@ -272,3 +279,44 @@ class ShiftMember(TenantModel):
         if self.starts_at is None or self.ends_at is None:
             return None
         return hours_between(self.starts_at, self.ends_at)
+
+
+class FocusItem(TenantModel):
+    """Фокусная позиция: за каждую проданную штуку — надбавка исполнителю.
+
+    Надбавку меняют хоть каждый день, а продажа засчитывается по сумме,
+    действовавшей в момент продажи. Поэтому запись живёт отрезком
+    [starts_at, ends_at): правка суммы посреди отрезка закрывает эту
+    запись «сейчас» и открывает новую — прошлые продажи не пересчитываются.
+    """
+
+    product = models.ForeignKey(
+        "catalog.Product", on_delete=models.PROTECT, related_name="focus_items",
+        verbose_name="Товар",
+    )
+    # Пусто — любой объём товара; указан — только этот («Латте 0,4»).
+    variant = models.ForeignKey(
+        "catalog.ProductVariant", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="focus_items", verbose_name="Вариант",
+    )
+    bonus = models.DecimalField("Надбавка за штуку", max_digits=10, decimal_places=2)
+    starts_at = models.DateTimeField("Действует с")
+    ends_at = models.DateTimeField("Действует до", help_text="Не включительно.")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+", verbose_name="Завёл",
+    )
+    created_at = models.DateTimeField("Создана", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Фокусная позиция"
+        verbose_name_plural = "Фокусные позиции"
+        ordering = ["starts_at", "id"]
+
+    def __str__(self):
+        name = self.variant.full_name if self.variant_id else self.product.name
+        return f"{name}: +{self.bonus}"
+
+    @property
+    def title(self) -> str:
+        return self.variant.full_name if self.variant_id else self.product.name

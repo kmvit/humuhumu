@@ -461,6 +461,7 @@ export default function Finance() {
                           base: d.daily_rate,
                           bonus: d.bonus_share,
                           kpi_bonus: d.kpi_bonus,
+                          focus_bonus: d.focus_bonus,
                           senior_bonus: d.senior_bonus,
                           penalty: Number(d.penalty_share) + Number(d.manual_penalty_share),
                         })}
