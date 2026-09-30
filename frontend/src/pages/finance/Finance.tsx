@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { payParts } from "../shifts/pay";
 import { get, post, del, ApiError } from "../../api";
 import type {
   Expense,
@@ -388,9 +389,7 @@ export default function Finance() {
               <div className="row-body">
                 <strong>{r.name}</strong>
                 <span className="muted">
-                  {r.role_display} · {fmtDays(r.days)} · ставка {fmtMoney(r.base)} + бонус{" "}
-                  {fmtMoney(r.bonus)}
-                  {Number(r.penalty) > 0 ? ` − списания ${fmtMoney(r.penalty)}` : ""}
+                  {r.role_display} · {fmtDays(r.days)} · {payParts(r)}
                 </span>
               </div>
               <div style={{ textAlign: "right" }}>
@@ -450,16 +449,21 @@ export default function Finance() {
                 {days.map((d) => (
                   <li key={d.date} className="between">
                     <span className="muted">
-                      {fmtDay(d.date)} · {d.members_count} чел. в смене
+                      {fmtDay(d.date)}
+                      {d.shift_type_name ? ` · ${d.shift_type_name}` : ""}
+                      {d.hours ? `, ${fmtMoney(d.hours)} ч` : ""}
+                      {d.kpi != null ? ` · КПД ${fmtMoney(d.kpi)} ₽/ч` : ""} ·{" "}
+                      {d.members_count} чел. в смене
                     </span>
                     <span>
                       <span className="muted sm">
-                        {fmtMoney(d.daily_rate)} + {fmtMoney(d.bonus_share)}
-                        {Number(d.penalty_share) + Number(d.manual_penalty_share) > 0
-                          ? ` − ${fmtMoney(
-                              Number(d.penalty_share) + Number(d.manual_penalty_share)
-                            )}`
-                          : ""}
+                        {payParts({
+                          base: d.daily_rate,
+                          bonus: d.bonus_share,
+                          kpi_bonus: d.kpi_bonus,
+                          senior_bonus: d.senior_bonus,
+                          penalty: Number(d.penalty_share) + Number(d.manual_penalty_share),
+                        })}
                       </span>{" "}
                       <strong className="num">{fmtMoney(d.payout)} ₽</strong>
                     </span>

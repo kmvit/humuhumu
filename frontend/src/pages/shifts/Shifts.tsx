@@ -14,6 +14,7 @@ import { useAuth } from "../../auth";
 import { useToast } from "../../components/ui/Toast";
 import Modal from "../../components/ui/Modal";
 import PayRules, { fmtHours } from "./PayRules";
+import { payParts } from "./pay";
 
 // «2000.00» → «2 000», «1234.50» → «1 234,5»
 function fmtMoney(v: string | number | null | undefined): string {
@@ -278,7 +279,7 @@ export default function Shifts() {
   // смены, работник — свою выплату. «На человека» там смысла не имеет.
   const result = shift?.scheme === "result";
   const mine = shift?.members.find((m) => m.user === user?.id);
-  const stats: { icon: IconName; label: string; value: string }[] | null = shift
+  const stats: { icon: IconName; label: string; value: string; hint?: string }[] | null = shift
     ? [
         ...(isManager
           ? [{ icon: "chart" as IconName, label: "Выручка за день", value: fmtMoney(shift.revenue) }]
@@ -298,6 +299,18 @@ export default function Shifts() {
           : isManager
             ? { icon: "wallet", label: "К выплате за смену", value: fmtMoney(shift.payout_total) }
             : { icon: "wallet", label: "Моя выплата", value: fmtMoney(mine?.payout ?? 0) },
+        // Свой КПД и сколько до следующей ступени — ради этого экрана
+        // система и затевалась: человек видит, за что получает.
+        ...(result && mine?.kpi != null
+          ? [
+              {
+                icon: "spark" as IconName,
+                label: `Мой КПД · бонус ${fmtMoney(mine.kpi_bonus)}`,
+                value: `${fmtMoney(mine.kpi)} ₽/ч`,
+                hint: kpiHint(mine.kpi, mine.kpi_next),
+              },
+            ]
+          : []),
       ]
     : null;
 
@@ -456,6 +469,7 @@ export default function Shifts() {
                   <div className="stat-value">
                     {s.value}
                   </div>
+                  {s.hint && <div className="muted sm mt-1">{s.hint}</div>}
                 </div>
               ))}
 
@@ -607,8 +621,19 @@ export default function Shifts() {
                       ? ` · ${m.orders} зак. на ${fmtMoney(m.orders_total)}`
                       : ""}
                   </span>
+                  {m.kpi != null && (
+                    <span className="muted">
+                      КПД {fmtMoney(m.kpi)} ₽/ч ({fmtMoney(m.kpi_revenue)} за{" "}
+                      {fmtHours(m.hours)}) → +{fmtMoney(m.kpi_bonus)}
+                    </span>
+                  )}
+                  {m.in_kpi && result && !m.hours && (
+                    <span className="muted">Нет времени смены — КПД не посчитать</span>
+                  )}
                   {m.is_senior && (
-                    <span className="badge open mini mt-1">Старший</span>
+                    <span className="badge open mini mt-1" style={{ alignSelf: "flex-start" }}>
+                      Старший
+                    </span>
                   )}
                 </div>
                 <strong className="num">{fmtMoney(m.payout)}</strong>
@@ -657,6 +682,16 @@ export default function Shifts() {
                 )}
               </div>
             ))}
+            {/* Заказы, закрытые, когда на смене не было ни одного участника
+                КПД, никому не засчитаны. Молча делить их нельзя, прятать —
+                тоже: обычно это значит, что время в смене стоит неверно. */}
+            {isManager && result && Number(shift.kpi_unassigned) > 0 && (
+              <p className="muted sm m-0 mt-2">
+                Заказы на {fmtMoney(shift.kpi_unassigned)} ₽ закрыты, когда на смене не
+                было никого из делящих выручку, — в КПД они не попали. Проверьте время
+                прихода и ухода.
+              </p>
+            )}
             {shift.members.length === 0 && (
               <p className="muted">
                 {canEdit
@@ -731,6 +766,7 @@ export default function Shifts() {
             {result ? (
               <>
                 Ставка по типу смены и роли
+                {shift.kpi_grid.length ? " + бонус за КПД по сетке" : ""}
                 {Number(shift.senior_bonus) > 0
                   ? ` + ${fmtMoney(shift.senior_bonus)} старшему`
                   : ""}
@@ -850,12 +886,7 @@ export default function Shifts() {
                 <strong>{r.name}</strong>
                 <span className="muted">
                   {r.role_display} · {fmtDays(r.days)}
-                  {Number(r.hours) > 0 ? ` (${fmtHours(r.hours)})` : ""} · ставка{" "}
-                  {fmtMoney(r.base)} +
-                  бонус {fmtMoney(r.bonus)}
-                  {Number(r.penalty) > 0
-                    ? ` − списания ${fmtMoney(r.penalty)}`
-                    : ""}
+                  {Number(r.hours) > 0 ? ` (${fmtHours(r.hours)})` : ""} · {payParts(r)}
                 </span>
                 {/* Сделанное за период — рядом с выплатой, чтобы одно
                     было видно вместе с другим, когда решают про сдельную. */}
@@ -968,4 +999,11 @@ function MemberEditor({
       </div>
     </Modal>
   );
+}
+
+// «До +900 не хватает 1 000 ₽/ч» — или что выше уже некуда.
+function kpiHint(kpi: string | null, next: { from: string; bonus: string } | null): string {
+  if (!next) return "Максимальная ступень";
+  const gap = Number(next.from) - Number(kpi ?? 0);
+  return `До +${fmtMoney(next.bonus)} не хватает ${fmtMoney(gap)} ₽/ч`;
 }

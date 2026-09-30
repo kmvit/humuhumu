@@ -111,6 +111,10 @@ def user_days(period: date_cls, user_id: int) -> list[dict]:
                 "hours": me["hours"],
                 "daily_rate": me["base"],
                 "bonus_share": str(money(Decimal(me["bonus"]) + Decimal(me["senior_bonus"]))),
+                # расшифровка надбавок: КПД и старшему отдельно
+                "kpi": me["kpi"],
+                "kpi_bonus": me["kpi_bonus"] or "0.00",
+                "senior_bonus": me["senior_bonus"],
                 "penalty_share": report["penalty_share"],
                 "manual_penalty_share": report["manual_penalty_share"],
                 "payout": me["payout"],

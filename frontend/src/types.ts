@@ -464,6 +464,13 @@ export interface ShiftMember {
   base: string;
   bonus: string;
   senior_bonus: string;
+  /** КПД: личная выручка, её значение в час, надбавка по сетке.
+   *  null — человек не участвует в КПД (или оплата поровну). */
+  kpi_revenue: string | null;
+  kpi: string | null;
+  kpi_bonus: string | null;
+  /** Следующая ступень сетки; null — выше некуда. */
+  kpi_next: KpiStep | null;
   penalty: string;
   /** К выплате этому человеку за смену. */
   payout: string;
@@ -473,6 +480,12 @@ export interface ShiftMember {
 }
 
 export type PayScheme = "even" | "result";
+
+/** Ступень сетки КПД: от скольких ₽/час (включительно) — надбавка за смену. */
+export interface KpiStep {
+  from: string;
+  bonus: string;
+}
 
 /** Тип смены: «Полная 08:00–20:00». Ставки видит только владелец. */
 export interface ShiftTypeInfo {
@@ -503,6 +516,7 @@ export interface PaySettings {
   schemes: Choice<PayScheme>[];
   senior_bonus: string;
   kpi_roles: Role[];
+  kpi_grid: KpiStep[];
   roles: Choice<Role>[];
   shift_types: ShiftTypeInfo[];
   daily_rate: string;
@@ -525,6 +539,9 @@ export interface Shift {
   date: string;
   scheme: PayScheme;
   senior_bonus: string;
+  kpi_grid: KpiStep[];
+  /** Выручка заказов, закрытых, когда на смене не было участников КПД. */
+  kpi_unassigned: string;
   daily_rate: string;
   bonus_percent: string;
   /** Стол списаний — заказы с него вычитаются из оплаты. */
@@ -563,7 +580,10 @@ export interface PayrollRow {
   days: number;
   hours: string;
   base: string;
+  /** Все надбавки вместе; ниже — из них за КПД и старшему. */
   bonus: string;
+  kpi_bonus: string;
+  senior_bonus: string;
   penalty: string;
   total: string;
   /** Сделанное за период: закрытые заказы с его отметкой. На выплату не влияет. */
@@ -662,8 +682,14 @@ export interface StatementDay {
   date: string;
   revenue: string;
   members_count: number;
+  shift_type_name: string;
+  hours: string | null;
   daily_rate: string;
+  /** Все надбавки вместе; ниже — из них за КПД и старшему. */
   bonus_share: string;
+  kpi: string | null;
+  kpi_bonus: string;
+  senior_bonus: string;
   penalty_share: string;
   manual_penalty_share: string;
   payout: string;

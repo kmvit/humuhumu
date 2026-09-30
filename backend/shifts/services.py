@@ -9,8 +9,12 @@
 Две схемы оплаты (Scheme):
   «поровну»        — ставка за день + доля процента от выручки − списания;
   «за результат»   — ставка по типу смены и роли + надбавка старшему
-                     − списания. Бонусы за КПД, фокус и допродажи
-                     добавляются следующими этапами.
+                     + бонус за КПД по сетке − списания. Фокус и
+                     допродажи добавляются следующими этапами.
+
+КПД — личная выручка в час. Каждый оплаченный заказ делится поровну
+между участниками КПД, которые были на смене в момент закрытия счёта;
+личная выручка делится на отработанные часы, по сетке — надбавка.
 """
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -99,6 +103,91 @@ def performer_stats(day, penalty_table: str = "") -> dict[int, dict]:
     return {r["performer"]: {"orders": r["n"], "orders_total": money(r["total"])} for r in rows}
 
 
+def member_interval(day, member):
+    """Когда человек был на смене — пара aware-datetime или None.
+
+    Конец раньше начала — ушёл после полуночи, уже следующим днём.
+    """
+    from datetime import datetime, timedelta
+
+    if member.starts_at is None or member.ends_at is None:
+        return None
+    start = timezone.make_aware(datetime.combine(day, member.starts_at))
+    end = timezone.make_aware(datetime.combine(day, member.ends_at))
+    if end <= start:
+        end += timedelta(days=1)
+    return start, end
+
+
+def kpi_revenue(day, members, penalty_table: str = "") -> tuple[dict[int, Decimal], Decimal]:
+    """Личная выручка участников КПД и сумма, которую некому засчитать.
+
+    Заказ относится к моменту закрытия счёта и делится поровну между
+    участниками, которые в этот момент на смене: один — всё, двое —
+    пополам, трое — по трети. Начало смены входит, конец — нет.
+
+    Возвращённый в тот же день заказ в КПД не идёт (решение владельца).
+    Вернули позже — смену не пересчитываем: прошлое не переписываем.
+    Заказ, закрытый, когда на смене не было ни одного участника (все
+    ушли, забыли поставить время), попадает в «некому засчитать» — его
+    видно менеджеру, а не делится втихую.
+    """
+    from datetime import datetime, time, timedelta
+
+    from django.db.models import Q
+
+    spans = {
+        m.user_id: span
+        for m in members
+        if m.in_kpi and (span := member_interval(day, m)) is not None
+    }
+    personal = {uid: Decimal("0") for uid in spans}
+    if not spans:
+        return personal, money(0)
+    # Весь день плюс хвост смены за полночь: заказы дня вне смен тоже
+    # нужны — они и есть «некому засчитать». Берём по времени, не по дате.
+    day_start = timezone.make_aware(datetime.combine(day, time.min))
+    lo = min([day_start, *(s for s, _ in spans.values())])
+    hi = max([day_start + timedelta(days=1), *(e for _, e in spans.values())])
+    orders = Order.objects.filter(closed_at__gte=lo, closed_at__lt=hi).filter(
+        Q(status=Order.Status.PAID)
+        | Q(status=Order.Status.REFUNDED, refunded_at__date__gt=day)
+    )
+    if penalty_table:
+        orders = orders.exclude(table=penalty_table)
+
+    unassigned = Decimal("0")
+    for closed_at, total in orders.values_list("closed_at", "total"):
+        on_shift = [uid for uid, (s, e) in spans.items() if s <= closed_at < e]
+        if not on_shift:
+            unassigned += total
+            continue
+        share = Decimal(total) / len(on_shift)
+        for uid in on_shift:
+            personal[uid] += share
+    return {uid: money(v) for uid, v in personal.items()}, money(unassigned)
+
+
+def kpi_step(grid, kpi: Decimal) -> tuple[Decimal, dict | None]:
+    """Надбавка по сетке и следующая ступень (для экрана «сколько не хватает»).
+
+    Ступень берётся по «от» включительно: КПД ровно 3 500 при ступенях
+    2 500 и 3 500 — это ступень 3 500.
+    """
+    steps = sorted(
+        ((Decimal(str(s["from"])), Decimal(str(s["bonus"]))) for s in grid or []),
+        key=lambda s: s[0],
+    )
+    bonus = Decimal("0")
+    upcoming = None
+    for start, amount in steps:
+        if kpi >= start:
+            bonus = amount
+        elif upcoming is None:
+            upcoming = {"from": str(money(start)), "bonus": str(money(amount))}
+    return money(bonus), upcoming
+
+
 def get_shift(day, create: bool = False):
     """Смена на дату. С create=True заводит её, зафиксировав текущие параметры оплаты."""
     shift = Shift.objects.filter(date=day).first()
@@ -114,6 +203,7 @@ def _shift_terms(cfg) -> dict:
     return {
         "scheme": cfg.scheme,
         "senior_bonus": cfg.senior_bonus,
+        "kpi_grid": cfg.kpi_grid or [],
         "daily_rate": cfg.daily_rate,
         "bonus_percent": cfg.bonus_percent,
         "penalty_table": cfg.penalty_table.name if cfg.penalty_table else "",
@@ -244,6 +334,7 @@ def shift_report(shift=None, day=None) -> dict:
     if shift is not None:
         day = shift.date
         scheme, senior_bonus = shift.scheme, shift.senior_bonus
+        kpi_grid = shift.kpi_grid
         rate, percent = shift.daily_rate, shift.bonus_percent
         penalty_table = shift.penalty_table
         manual_penalty = shift.manual_penalty
@@ -251,6 +342,7 @@ def shift_report(shift=None, day=None) -> dict:
     else:
         cfg = ShiftSettings.load()
         scheme, senior_bonus = cfg.scheme, cfg.senior_bonus
+        kpi_grid = cfg.kpi_grid
         rate, percent = cfg.daily_rate, cfg.bonus_percent
         penalty_table = cfg.penalty_table.name if cfg.penalty_table else ""
         manual_penalty = Decimal("0")
@@ -274,6 +366,11 @@ def shift_report(shift=None, day=None) -> dict:
     else:
         bonus_share = penalty_share = manual_share = money(0)
 
+    if even:
+        personal, unassigned = {}, money(0)
+    else:
+        personal, unassigned = kpi_revenue(day, members, penalty_table)
+
     rows = []
     for m in members:
         role = m.role or m.user.role
@@ -281,7 +378,13 @@ def shift_report(shift=None, day=None) -> dict:
         # роли; клетка не заполнена — общая ставка смены.
         base = money(rate if even or m.rate is None else m.rate)
         senior = money(senior_bonus if not even and m.is_senior else 0)
-        bonus = bonus_share
+        kpi = kpi_bonus = None
+        upcoming = None
+        if m.user_id in personal:
+            hours = m.hours or Decimal("0")
+            kpi = money(personal[m.user_id] / hours) if hours else money(0)
+            kpi_bonus, upcoming = kpi_step(kpi_grid, kpi)
+        bonus = bonus_share if even else (kpi_bonus or money(0))
         payout = max(
             money(base + bonus + senior - penalty_share - manual_share), money(0)
         )
@@ -304,6 +407,12 @@ def shift_report(shift=None, day=None) -> dict:
                 "base": str(base),
                 "bonus": str(bonus),
                 "senior_bonus": str(senior),
+                # КПД: личная выручка, в час, надбавка и следующая ступень.
+                # None — человек не участвует в КПД (или оплата поровну).
+                "kpi_revenue": str(personal[m.user_id]) if m.user_id in personal else None,
+                "kpi": str(kpi) if kpi is not None else None,
+                "kpi_bonus": str(kpi_bonus) if kpi_bonus is not None else None,
+                "kpi_next": upcoming,
                 "penalty": str(money(penalty_share + manual_share)),
                 "payout": str(payout),
                 # Сделанное за день. На выплату пока не влияет — это
@@ -327,6 +436,10 @@ def shift_report(shift=None, day=None) -> dict:
         "date": day.isoformat(),
         "scheme": scheme,
         "senior_bonus": str(money(senior_bonus)),
+        "kpi_grid": kpi_grid or [],
+        # Выручка заказов, закрытых, когда на смене не было ни одного
+        # участника КПД: её никому не засчитали.
+        "kpi_unassigned": str(unassigned),
         "daily_rate": str(money(rate)),
         "bonus_percent": str(percent),
         "penalty_table": penalty_table,
@@ -384,7 +497,12 @@ def payroll(shifts, user=None) -> list[dict]:
                     "days": 0,
                     "hours": Decimal("0"),
                     "base": Decimal("0"),
+                    # все надбавки вместе и отдельно — КПД и старшему:
+                    # по ведомости выдают деньги, «бонус 1 000» без
+                    # расшифровки не проверить
                     "bonus": Decimal("0"),
+                    "kpi_bonus": Decimal("0"),
+                    "senior_bonus": Decimal("0"),
                     "penalty": Decimal("0"),
                     "total": Decimal("0"),
                     # Сделанное за период: сколько заказов закрыто с его
@@ -401,6 +519,8 @@ def payroll(shifts, user=None) -> list[dict]:
             row["base"] += Decimal(m["base"])
             # надбавка старшему — тоже бонус сверх ставки
             row["bonus"] += Decimal(m["bonus"]) + Decimal(m["senior_bonus"])
+            row["kpi_bonus"] += Decimal(m["kpi_bonus"] or 0)
+            row["senior_bonus"] += Decimal(m["senior_bonus"])
             # в «списания» идут и подарки со штрафного стола, и ручной штраф
             row["penalty"] += Decimal(m["penalty"])
             row["total"] += Decimal(m["payout"])
@@ -409,7 +529,10 @@ def payroll(shifts, user=None) -> list[dict]:
             **r,
             **{
                 k: str(money(r[k]))
-                for k in ("hours", "base", "bonus", "penalty", "total", "orders_total")
+                for k in (
+                    "hours", "base", "bonus", "kpi_bonus", "senior_bonus",
+                    "penalty", "total", "orders_total",
+                )
             },
         }
         for r in sorted(rows.values(), key=lambda r: -r["total"])

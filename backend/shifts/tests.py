@@ -914,3 +914,238 @@ class ResultSchemeTests(APITestCase):
         self.assertEqual(
             self.update(user=self.bar.id, starts_at="10:00", ends_at="10:00").status_code, 400
         )
+
+
+class KpiTests(APITestCase):
+    """Бонус за КПД — этап 2. Цифры из ТЗ Монти.
+
+    Сетка Монти: до 2 500 ₽/ч — 0, от 2 500 — 500, от 3 500 — 700,
+    от 5 000 — 900, от 6 500 — 1 100, от 8 000 — 1 300, от 10 000 — 1 500.
+    """
+
+    GRID = [
+        {"from": "2500", "bonus": "500"},
+        {"from": "3500", "bonus": "700"},
+        {"from": "5000", "bonus": "900"},
+        {"from": "6500", "bonus": "1100"},
+        {"from": "8000", "bonus": "1300"},
+        {"from": "10000", "bonus": "1500"},
+    ]
+
+    def setUp(self):
+        from datetime import time
+
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.HALL
+        site.save()
+        self.owner = User.objects.create_user("owner-k", password="demo12345", role=User.Role.ADMIN)
+        self.vika = User.objects.create_user("vika-k", password="demo12345", role=User.Role.BAR)
+        self.dima = User.objects.create_user("dima-k", password="demo12345", role=User.Role.BAR)
+        self.gena = User.objects.create_user("gena-k", password="demo12345", role=User.Role.COOK)
+        self.olga = User.objects.create_user("olga-k", password="demo12345", role=User.Role.BAR)
+        cfg = ShiftSettings.load()
+        cfg.scheme = "result"
+        cfg.daily_rate = Decimal("2000")
+        cfg.kpi_grid = self.GRID
+        cfg.penalty_table = Table.objects.create(name="Штраф")
+        cfg.save()
+        self.shift_type = ShiftType.objects.create(name="Полная", starts_at=time(8), ends_at=time(20))
+        self.day = timezone.localdate() - timedelta(days=1)
+
+    def at(self, hh, mm=0):
+        from datetime import datetime, time
+
+        return timezone.make_aware(datetime.combine(self.day, time(hh, mm)))
+
+    def put(self, user, start, end):
+        from datetime import time
+
+        from .services import update_member
+
+        _, m = add_member(user, self.day, shift_type=self.shift_type)
+        return update_member(m, starts_at=time(*start), ends_at=time(*end))
+
+    def sale(self, total, hh, mm=0, **kw):
+        return Order.objects.create(
+            table=kw.pop("table", "1"),
+            status=kw.pop("status", Order.Status.PAID),
+            closed_at=self.at(hh, mm),
+            total=Decimal(total),
+            **kw,
+        )
+
+    def report(self):
+        return shift_report(shift=get_shift(self.day))
+
+    def row(self, user, report=None):
+        report = report or self.report()
+        return next(m for m in report["members"] if m["user"] == user.id)
+
+    def test_example_from_the_spec(self):
+        """ТЗ: 3 часа один — 15 000, потом 2 часа вдвоём — 10 000.
+
+        Личная выручка 15 000 + 5 000 = 20 000, за 5 часов КПД 4 000 → 700 ₽.
+        """
+        self.put(self.vika, (9, 0), (14, 0))
+        self.put(self.dima, (12, 0), (20, 0))
+        for hh in (9, 10, 11):
+            self.sale("5000", hh, 30)
+        self.sale("6000", 12, 30)
+        self.sale("4000", 13, 30)
+
+        vika = self.row(self.vika)
+        self.assertEqual(vika["kpi_revenue"], "20000.00")
+        self.assertEqual(vika["kpi"], "4000.00")
+        self.assertEqual(vika["kpi_bonus"], "700.00")
+        self.assertEqual(vika["payout"], "2700.00")
+
+    def test_three_on_shift_split_in_thirds(self):
+        for u in (self.vika, self.dima, self.olga):
+            self.put(u, (8, 0), (20, 0))
+        self.sale("3000", 12)
+        report = self.report()
+        self.assertEqual({self.row(u, report)["kpi_revenue"] for u in (self.vika, self.dima, self.olga)}, {"1000.00"})
+
+    def test_step_starts_inclusive(self):
+        """Ровно 3 500 ₽/ч — это уже ступень 700, а не 500."""
+        self.put(self.vika, (8, 0), (10, 0))
+        self.sale("7000", 9)
+        self.assertEqual(self.row(self.vika)["kpi_bonus"], "700.00")
+
+    def test_below_first_step_is_zero(self):
+        self.put(self.vika, (8, 0), (20, 0))
+        self.sale("1000", 9)
+        vika = self.row(self.vika)
+        self.assertEqual(vika["kpi_bonus"], "0.00")
+        self.assertEqual(vika["kpi_next"], {"from": "2500.00", "bonus": "500.00"})
+
+    def test_top_step_has_no_next(self):
+        self.put(self.vika, (8, 0), (9, 0))
+        self.sale("12000", 8, 30)
+        vika = self.row(self.vika)
+        self.assertEqual(vika["kpi_bonus"], "1500.00")
+        self.assertIsNone(vika["kpi_next"])
+
+    def test_cook_is_not_in_kpi_and_takes_no_share(self):
+        """Повар получает ставку, выручку барист не разбавляет."""
+        self.put(self.vika, (8, 0), (20, 0))
+        self.put(self.gena, (8, 0), (20, 0))
+        self.sale("6000", 12)
+        report = self.report()
+        self.assertEqual(self.row(self.vika, report)["kpi_revenue"], "6000.00")
+        self.assertIsNone(self.row(self.gena, report)["kpi"])
+        self.assertEqual(self.row(self.gena, report)["payout"], "2000.00")
+
+    def test_shift_end_is_exclusive(self):
+        """Заказ закрыт в 14:00 ровно — он того, кто пришёл, а не того, кто ушёл."""
+        self.put(self.vika, (8, 0), (14, 0))
+        self.put(self.dima, (14, 0), (20, 0))
+        self.sale("1000", 14)
+        report = self.report()
+        self.assertEqual(self.row(self.vika, report)["kpi_revenue"], "0.00")
+        self.assertEqual(self.row(self.dima, report)["kpi_revenue"], "1000.00")
+
+    def test_nobody_on_shift_is_unassigned(self):
+        self.put(self.vika, (8, 0), (14, 0))
+        self.sale("1000", 16)
+        report = self.report()
+        self.assertEqual(report["kpi_unassigned"], "1000.00")
+        self.assertEqual(self.row(self.vika, report)["kpi_revenue"], "0.00")
+
+    def test_night_shift_takes_orders_after_midnight(self):
+        from datetime import datetime, time
+
+        self.put(self.vika, (20, 0), (2, 0))
+        Order.objects.create(
+            table="1",
+            status=Order.Status.PAID,
+            closed_at=timezone.make_aware(datetime.combine(self.day + timedelta(days=1), time(1))),
+            total=Decimal("3000"),
+        )
+        vika = self.row(self.vika)
+        self.assertEqual(vika["kpi_revenue"], "3000.00")
+        self.assertEqual(vika["kpi"], "500.00")
+
+    def test_same_day_refund_is_out(self):
+        self.put(self.vika, (8, 0), (20, 0))
+        self.sale("5000", 12, status=Order.Status.REFUNDED, refunded_at=self.at(13))
+        self.assertEqual(self.row(self.vika)["kpi_revenue"], "0.00")
+
+    def test_later_refund_does_not_rewrite_the_shift(self):
+        self.put(self.vika, (8, 0), (20, 0))
+        self.sale(
+            "5000", 12, status=Order.Status.REFUNDED,
+            refunded_at=self.at(12) + timedelta(days=1),
+        )
+        self.assertEqual(self.row(self.vika)["kpi_revenue"], "5000.00")
+
+    def test_penalty_table_is_not_revenue(self):
+        self.put(self.vika, (8, 0), (20, 0))
+        self.sale("5000", 12, table="Штраф")
+        self.assertEqual(self.row(self.vika)["kpi_revenue"], "0.00")
+
+    def test_open_orders_do_not_count(self):
+        self.put(self.vika, (8, 0), (20, 0))
+        self.sale("5000", 12, status=Order.Status.OPEN)
+        self.assertEqual(self.row(self.vika)["kpi_revenue"], "0.00")
+
+    def test_early_leave_raises_kpi(self):
+        """Ушла раньше — часов меньше, выручка та же: КПД честно выше."""
+        self.put(self.vika, (8, 0), (12, 0))
+        self.sale("10000", 9)
+        self.assertEqual(self.row(self.vika)["kpi"], "2500.00")
+
+    def test_kpi_goes_into_payroll(self):
+        self.put(self.vika, (8, 0), (10, 0))
+        self.sale("7000", 9)
+        rows = payroll(Shift.objects.all())
+        self.assertEqual(rows[0]["bonus"], "700.00")
+        self.assertEqual(rows[0]["total"], "2700.00")
+
+    def test_even_scheme_has_no_kpi(self):
+        cfg = ShiftSettings.load()
+        cfg.scheme = "even"
+        cfg.save()
+        self.put(self.vika, (8, 0), (10, 0))
+        Shift.objects.update(scheme="even")
+        self.sale("7000", 9)
+        vika = self.row(self.vika)
+        self.assertIsNone(vika["kpi"])
+
+    def test_grid_is_snapshotted(self):
+        """Правка сетки не переписывает вчерашний бонус."""
+        self.put(self.vika, (8, 0), (10, 0))
+        self.sale("7000", 9)
+        self.client.force_authenticate(self.owner)
+        self.client.patch(
+            "/api/shifts/settings/", {"kpi_grid": [{"from": "1", "bonus": "9999"}]}, format="json"
+        )
+        self.assertEqual(self.row(self.vika)["kpi_bonus"], "700.00")
+
+    def test_grid_api_sorts_and_validates(self):
+        self.client.force_authenticate(self.owner)
+        res = self.client.patch(
+            "/api/shifts/settings/",
+            {"kpi_grid": [{"from": "5000", "bonus": "900"}, {"from": "2500", "bonus": "500"}]},
+            format="json",
+        )
+        self.assertEqual([s["from"] for s in res.data["kpi_grid"]], ["2500.00", "5000.00"])
+        for bad in (
+            [{"from": "2500", "bonus": "500"}, {"from": "2500", "bonus": "700"}],
+            [{"from": "-1", "bonus": "500"}],
+            [{"from": "NaN", "bonus": "500"}],
+            "сетка",
+        ):
+            res = self.client.patch("/api/shifts/settings/", {"kpi_grid": bad}, format="json")
+            self.assertEqual(res.status_code, 400, bad)
+
+    def test_payroll_itemizes_bonuses(self):
+        """По ведомости выдают деньги — КПД и старшему видны по отдельности."""
+        from .services import update_member
+
+        member = self.put(self.vika, (8, 0), (10, 0))
+        update_member(member, is_senior=True)
+        Shift.objects.update(senior_bonus=Decimal("300"))
+        self.sale("7000", 9)
+        row = payroll(Shift.objects.all())[0]
+        self.assertEqual((row["kpi_bonus"], row["senior_bonus"], row["bonus"]), ("700.00", "300.00", "1000.00"))

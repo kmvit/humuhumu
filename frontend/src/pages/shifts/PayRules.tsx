@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { del, patch, post, ApiError } from "../../api";
-import type { PaySettings, Role, ShiftTypeInfo } from "../../types";
+import type { KpiStep, PaySettings, Role, ShiftTypeInfo } from "../../types";
 import Icon from "../../components/Icon";
 import { useToast } from "../../components/ui/Toast";
 
@@ -22,6 +22,10 @@ export default function PayRules({
   onChanged: () => void;
 }) {
   const result = pay.scheme === "result";
+
+  function setStep(i: number, step: KpiStep) {
+    setPay({ ...pay, kpi_grid: pay.kpi_grid.map((s, j) => (j === i ? step : s)) });
+  }
 
   function toggleKpi(role: Role, on: boolean) {
     const next = on
@@ -128,9 +132,64 @@ export default function PayRules({
                 ))}
               </div>
               <span className="muted sm">
-                Остальные получают только ставку. Сам бонус за КПД появится
-                следующим обновлением.
+                Остальные получают только ставку. Каждый заказ делится поровну
+                между теми из них, кто на смене в момент закрытия счёта.
               </span>
+            </div>
+
+            <div className="field">
+              <span className="label">Сетка бонуса за КПД</span>
+              <span className="muted sm">
+                КПД — личная выручка за час. Ступень — «от скольких ₽ в час» (включительно)
+                и надбавка за смену.
+              </span>
+              {pay.kpi_grid.map((step, i) => (
+                <div className="wrap mt-2" key={i} style={{ alignItems: "center", flexWrap: "nowrap" }}>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    step="100"
+                    placeholder="от, ₽/час"
+                    aria-label="От, ₽ в час"
+                    style={{ flex: "1 1 0", minWidth: 0 }}
+                    value={step.from}
+                    onChange={(e) => setStep(i, { ...step, from: e.target.value })}
+                  />
+                  <span className="muted">→</span>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    step="50"
+                    placeholder="надбавка, ₽"
+                    aria-label="Надбавка за смену, ₽"
+                    style={{ flex: "1 1 0", minWidth: 0 }}
+                    value={step.bonus}
+                    onChange={(e) => setStep(i, { ...step, bonus: e.target.value })}
+                  />
+                  <button
+                    className="icon-btn"
+                    aria-label="Убрать ступень"
+                    onClick={() =>
+                      setPay({ ...pay, kpi_grid: pay.kpi_grid.filter((_, j) => j !== i) })
+                    }
+                  >
+                    <Icon name="minus" size={16} />
+                  </button>
+                </div>
+              ))}
+              <button
+                className="btn ghost sm mt-2"
+                onClick={() =>
+                  setPay({ ...pay, kpi_grid: [...pay.kpi_grid, { from: "", bonus: "" }] })
+                }
+              >
+                <Icon name="plus" size={15} /> Добавить ступень
+              </button>
+              {pay.kpi_grid.length > 0 && (
+                <p className="muted sm m-0 mt-2">{gridSummary(pay.kpi_grid)}</p>
+              )}
             </div>
           </>
         )}
@@ -174,6 +233,8 @@ export default function PayRules({
               bonus_percent: pay.bonus_percent,
               senior_bonus: pay.senior_bonus,
               kpi_roles: pay.kpi_roles,
+              // пустые строки — недописанные ступени, их не сохраняем
+              kpi_grid: pay.kpi_grid.filter((s) => s.from !== "" || s.bonus !== ""),
               penalty_table: pay.penalty_table,
             })
           }
@@ -361,4 +422,18 @@ function TypeEditor({
 // «12.00» → «12 ч», «9.50» → «9,5 ч»
 export function fmtHours(v: string | null | undefined): string {
   return `${Number(v ?? 0).toLocaleString("ru", { maximumFractionDigits: 2 })} ч`;
+}
+
+// «до 2 500 ₽/ч — 0 · от 2 500 — 500 · от 3 500 — 700»: сетка словами,
+// чтобы владелец сверил её с ТЗ, не считая в уме.
+function gridSummary(grid: KpiStep[]): string {
+  const steps = grid
+    .filter((s) => s.from !== "" && s.bonus !== "")
+    .map((s) => ({ from: Number(s.from), bonus: Number(s.bonus) }))
+    .sort((a, b) => a.from - b.from);
+  if (!steps.length) return "";
+  const n = (v: number) => v.toLocaleString("ru", { maximumFractionDigits: 2 });
+  const parts = steps.map((s) => `от ${n(s.from)} — ${n(s.bonus)} ₽`);
+  if (steps[0].from > 0) parts.unshift(`до ${n(steps[0].from)} ₽/ч — 0`);
+  return parts.join(" · ");
 }

@@ -368,6 +368,8 @@ class ShiftViewSet(viewsets.ViewSet):
                 if not isinstance(roles, list) or any(r not in STAFF_ROLES for r in roles):
                     raise ValueError("Роли в КПД: неизвестная роль")
                 cfg.kpi_roles = roles
+            if "kpi_grid" in request.data:
+                cfg.kpi_grid = self._grid(request.data["kpi_grid"])
             if "daily_rate" in request.data:
                 cfg.daily_rate = self._money(request.data["daily_rate"], "Оплата за смену")
             if "bonus_percent" in request.data:
@@ -385,11 +387,31 @@ class ShiftViewSet(viewsets.ViewSet):
         apply_rules_from(timezone.localdate())
         return Response(self._settings_payload(cfg))
 
+    @classmethod
+    def _grid(cls, raw):
+        """Сетка КПД: ступени «от ₽/час → надбавка», по возрастанию, без повторов."""
+        if not isinstance(raw, list):
+            raise ValueError("Сетка КПД: нужен список ступеней")
+        steps = {}
+        for row in raw:
+            if not isinstance(row, dict):
+                raise ValueError("Сетка КПД: неверная ступень")
+            start = cls._money(row.get("from"), "Сетка КПД, «от»")
+            bonus = cls._money(row.get("bonus"), "Сетка КПД, надбавка")
+            if start in steps:
+                raise ValueError(f"Сетка КПД: ступень «от {start:g}» повторяется")
+            steps[start] = bonus
+        return [
+            {"from": str(money(s)), "bonus": str(money(b))} for s, b in sorted(steps.items())
+        ]
+
     @staticmethod
     def _money(raw, label: str) -> Decimal:
         try:
             value = Decimal(str(raw))
         except (InvalidOperation, TypeError):
+            raise ValueError(f"{label}: нужно число")
+        if not value.is_finite():
             raise ValueError(f"{label}: нужно число")
         if value < 0:
             raise ValueError(f"{label}: не может быть отрицательной")
@@ -404,6 +426,7 @@ class ShiftViewSet(viewsets.ViewSet):
             "schemes": [{"value": v, "label": l} for v, l in Scheme.choices],
             "senior_bonus": str(money(cfg.senior_bonus)),
             "kpi_roles": cfg.kpi_roles or [],
+            "kpi_grid": cfg.kpi_grid or [],
             "roles": [{"value": r.value, "label": r.label} for r in STAFF_ROLES],
             "shift_types": [_type_payload(t) for t in ShiftType.objects.prefetch_related("rates")],
             "daily_rate": str(money(cfg.daily_rate)),

@@ -54,6 +54,13 @@ class ShiftSettings(TenantModel):
         "Роли в бонусе за КПД", default=default_kpi_roles, blank=True,
         help_text="Кто делит выручку и получает бонус за КПД. Остальные — только ставку.",
     )
+    kpi_grid = models.JSONField(
+        "Сетка бонуса за КПД", default=list, blank=True,
+        help_text=(
+            "Ступени [{\"from\": \"2500\", \"bonus\": \"500\"}, …]: от скольких "
+            "₽ личной выручки в час (включительно) — какая надбавка за смену."
+        ),
+    )
     daily_rate = models.DecimalField(
         "Оплата за смену", max_digits=10, decimal_places=2, default=Decimal("2000"),
         help_text="Сколько получает каждый работник за отработанный день.",
@@ -170,6 +177,7 @@ class Shift(TenantModel):
     senior_bonus = models.DecimalField(
         "Надбавка старшему", max_digits=10, decimal_places=2, default=Decimal("0")
     )
+    kpi_grid = models.JSONField("Сетка бонуса за КПД", default=list, blank=True)
     daily_rate = models.DecimalField(
         "Оплата за смену", max_digits=10, decimal_places=2, default=Decimal("0")
     )
