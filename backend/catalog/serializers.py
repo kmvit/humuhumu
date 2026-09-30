@@ -61,6 +61,15 @@ class ModifierSerializer(serializers.ModelSerializer):
     def get_top(self, obj) -> int | None:
         return getattr(obj, "top_rank", None)
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Меню читают все подряд, а действия опции — это кусок техкарты.
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if getattr(user, "role", None) != "admin":
+            data.pop("effects", None)
+        return data
+
     class Meta:
         model = Modifier
         fields = (

@@ -493,6 +493,25 @@ class ModifierGroupApiTests(CatalogAdminBase):
                 if p["id"] == self.latte.id][0]
         self.assertEqual(card["modifier_groups"][0]["name"], "Молоко")
 
+    def test_effects_are_shown_to_the_owner_only(self):
+        """Действия опций — техкарта заведения, гостю их не отдаём."""
+        self.auth(self.admin)
+        self._create(modifiers=[{"name": "Овсяное", "effects": [
+            {"kind": "swap", "item": self.milk.id, "replacement": self.oat.id}
+        ]}])
+
+        def option(path):
+            res = self.client.get(path)
+            self.assertEqual(res.status_code, 200)
+            return res.data["modifier_groups"][0]["modifiers"][0]
+
+        path = f"/api/products/{self.latte.id}/"
+        self.assertEqual(option(path)["effects"][0]["kind"], "swap")
+        self.client.credentials()
+        self.assertNotIn("effects", option(path))
+        self.auth(self.waiter)
+        self.assertNotIn("effects", option(path))
+
 
 
 def _png_bytes(color="blue"):
