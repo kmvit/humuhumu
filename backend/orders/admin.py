@@ -39,7 +39,7 @@ class OrderItemModifierInline(admin.TabularInline):
     model = OrderItemModifier
     extra = 0
     # снимок на момент продажи — задним числом не правим
-    readonly_fields = ("modifier", "name", "price_delta")
+    readonly_fields = ("modifier", "name", "price_delta", "upsell_bonus")
     can_delete = False
 
 

@@ -315,12 +315,20 @@ export default function Shifts() {
         ...(result && mine
           ? [
               {
-                icon: "gift" as IconName,
+                icon: "heart" as IconName,
                 label: `Фокус · бонус ${fmtMoney(mine.focus_bonus)}`,
                 value: `${mine.focus_count} шт`,
                 hint: mine.focus_items.length
                   ? mine.focus_items.map((f) => `${f.title} × ${f.count}`).join(", ")
                   : "Список — во вкладке «Фокус»",
+              },
+              {
+                icon: "coffee" as IconName,
+                label: `Допродажи · бонус ${fmtMoney(mine.upsell_bonus)}`,
+                value: `${mine.upsell_count} шт`,
+                hint: mine.upsell_items.length
+                  ? mine.upsell_items.map((f) => `${f.title} × ${f.count}`).join(", ")
+                  : "Сиропы, альтернативное молоко и другие добавки к заказу",
               },
             ]
           : []),
@@ -447,7 +455,8 @@ export default function Shifts() {
                     }
                     title={
                       c.info
-                        ? `${c.info.members_count} чел · выручка ${fmtMoney(c.info.revenue)}`
+                        ? `${c.info.members_count} чел` +
+                          (c.info.revenue != null ? ` · выручка ${fmtMoney(c.info.revenue)}` : "")
                         : "Смена не поставлена"
                     }
                     onClick={() => setDay(c.date)}
@@ -665,6 +674,13 @@ export default function Shifts() {
                       {fmtMoney(m.focus_bonus)}
                     </span>
                   )}
+                  {result && m.upsell_count > 0 && (
+                    <span className="muted">
+                      Допродажи:{" "}
+                      {m.upsell_items.map((f) => `${f.title} × ${f.count}`).join(", ")} → +
+                      {fmtMoney(m.upsell_bonus)}
+                    </span>
+                  )}
                   {m.in_kpi && result && !m.hours && (
                     <span className="muted">Нет времени смены — КПД не посчитать</span>
                   )}
@@ -674,7 +690,8 @@ export default function Shifts() {
                     </span>
                   )}
                 </div>
-                <strong className="num">{fmtMoney(m.payout)}</strong>
+                {/* у коллег сотруднику сумма не приходит — это их личное */}
+                {m.payout != null && <strong className="num">{fmtMoney(m.payout)}</strong>}
                 {canEdit && (
                   <button
                     className="icon-btn"
@@ -755,7 +772,7 @@ export default function Shifts() {
               <p className="muted subtitle m-0">
                 Закрытые заказы с отметкой исполнителя.{" "}
                 {result
-                  ? "По ней засчитываются фокусные позиции; КПД считается по времени смены."
+                  ? "По ней засчитываются фокусные позиции и допродажи; КПД считается по времени смены."
                   : "На выплату пока не влияет."}
               </p>
 
@@ -808,6 +825,7 @@ export default function Shifts() {
               <>
                 Ставка по типу смены и роли
                 {shift.kpi_grid.length ? " + бонус за КПД по сетке" : ""}
+                {" + фокусные позиции + допродажи"}
                 {Number(shift.senior_bonus) > 0
                   ? ` + ${fmtMoney(shift.senior_bonus)} старшему`
                   : ""}
@@ -882,19 +900,25 @@ export default function Shifts() {
                 {s.members.map((m) => (
                   <span className="badge open" key={m.id}>
                     {m.name} · {m.role_display}
-                    {s.scheme === "result" ? ` · ${fmtMoney(m.payout)}` : ""}
+                    {s.scheme === "result" && m.payout != null ? ` · ${fmtMoney(m.payout)}` : ""}
                   </span>
                 ))}
               </div>
               {s.scheme === "result" ? (
                 <div className="row mt-2">
                   <span className="muted">
+                    {s.payout_total == null ? "моя выплата · " : ""}
                     ставка, КПД, фокус и надбавки — у каждого свои
                     {Number(s.penalty) > 0
                       ? ` − списания ${fmtMoney(s.penalty_share)} с каждого`
                       : ""}
                   </span>
-                  <strong className="num">{fmtMoney(s.payout_total)}</strong>
+                  {/* менеджеру — итог смены, сотруднику — его собственная выплата */}
+                  <strong className="num">
+                    {fmtMoney(
+                      s.payout_total ?? s.members.find((m) => m.user === user?.id)?.payout
+                    )}
+                  </strong>
                 </div>
               ) : (
                 <div className="row mt-2">

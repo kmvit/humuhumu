@@ -110,9 +110,39 @@ class ShiftViewSet(viewsets.ViewSet):
             qs = qs.filter(members__user=request.query_params["user"]).distinct()
         return qs
 
+    #: Деньги человека в строке смены. При оплате за результат у каждого
+    #: своя сумма — это его личное дело, коллегам её видеть незачем.
+    _PERSONAL_MONEY = (
+        "base", "bonus", "senior_bonus", "penalty", "payout",
+        "kpi_revenue", "kpi", "kpi_bonus", "kpi_next",
+        "focus_count", "focus_bonus", "focus_items",
+        "upsell_count", "upsell_bonus", "upsell_items",
+    )
+
+    def _report(self, shift=None, day=None) -> dict:
+        """Отчёт смены с учётом того, кто смотрит.
+
+        Менеджер и админ считают зарплату — им видно всё. Сотрудник при
+        оплате за результат видит свои деньги целиком, а у коллег — только
+        имя, роль и время: так же, как в «К выплате» он видит одну свою
+        строку, а выручку заведения не видит вовсе. При оплате поровну
+        скрывать нечего — сумма у всех одна и показывается карточкой.
+        """
+        report = shift_report(shift, day=day)
+        if self.is_manager or report["scheme"] != Scheme.RESULT:
+            return report
+        me = self.request.user.id
+        for m in report["members"]:
+            if m["user"] != me:
+                for key in self._PERSONAL_MONEY:
+                    m[key] = None
+        for key in ("revenue", "payout_total", "kpi_unassigned"):
+            report[key] = None
+        return report
+
     def _day_response(self, request, day):
         shift = Shift.objects.filter(date=day).prefetch_related("members__user").first()
-        report = shift_report(shift, day=day)
+        report = self._report(shift, day=day)
         report["in_shift"] = any(
             m["user"] == request.user.id for m in report["members"]
         )
@@ -123,7 +153,7 @@ class ShiftViewSet(viewsets.ViewSet):
 
     def list(self, request):
         """История смен за период: состав, выручка, расчёт на человека."""
-        return Response([shift_report(s) for s in self._shifts(request)])
+        return Response([self._report(s) for s in self._shifts(request)])
 
     @action(detail=False, methods=["get"])
     def day(self, request):
@@ -158,7 +188,7 @@ class ShiftViewSet(viewsets.ViewSet):
         for shift in Shift.objects.filter(
             date__range=(first, last)
         ).prefetch_related("members__user"):
-            report = shift_report(shift)
+            report = self._report(shift)
             report["mine"] = any(
                 m["user"] == request.user.id for m in report["members"]
             )

@@ -475,9 +475,14 @@ export interface ShiftMember {
   focus_count: number;
   focus_bonus: string;
   focus_items: { title: string; count: number }[];
+  /** Допродажи за день: сколько опций, надбавка, каких. */
+  upsell_count: number;
+  upsell_bonus: string;
+  upsell_items: { title: string; count: number }[];
   penalty: string;
-  /** К выплате этому человеку за смену. */
-  payout: string;
+  /** К выплате этому человеку за смену. null — чужая строка у сотрудника
+   *  при оплате за результат: деньги коллег ему не отдаются. */
+  payout: string | null;
   /** Сколько заказов закрыто с его отметкой — на выплату пока не влияет. */
   orders: number;
   orders_total: string;
@@ -583,8 +588,8 @@ export interface Shift {
   manual_penalty_share: string;
   /** Одинаково на человека — только в оплате поровну, иначе 0. */
   payout: string;
-  /** Всем вместе за смену. */
-  payout_total: string;
+  /** Всем вместе за смену. null — сотруднику при оплате за результат. */
+  payout_total: string | null;
   members: ShiftMember[];
   /** Кто выполнял заказы, но в смену не поставлен — менеджер забыл отметить. */
   outsiders: {
@@ -593,6 +598,7 @@ export interface Shift {
     orders: number;
     orders_total: string;
     focus_count: number;
+    upsell_count: number;
   }[];
   /** Только в /shifts/day/: я в этой смене. */
   in_shift?: boolean;
@@ -616,6 +622,8 @@ export interface PayrollRow {
   kpi_bonus: string;
   focus_bonus: string;
   focus_count: number;
+  upsell_bonus: string;
+  upsell_count: number;
   senior_bonus: string;
   penalty: string;
   total: string;
@@ -723,6 +731,7 @@ export interface StatementDay {
   kpi: string | null;
   kpi_bonus: string;
   focus_bonus: string;
+  upsell_bonus: string;
   senior_bonus: string;
   penalty_share: string;
   manual_penalty_share: string;

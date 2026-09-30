@@ -1444,3 +1444,195 @@ class ShiftsAdminTests(APITestCase):
 
         with self.assertRaises(ValidationError):
             ShiftType(name="X", starts_at=time(10), ends_at=time(10)).clean()
+
+
+class UpsellTests(APITestCase):
+    """Допродажи — этап 4: надбавка исполнителю за платную опцию."""
+
+    def setUp(self):
+        from datetime import time
+
+        from catalog.models import Modifier, ModifierGroup
+
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.HALL
+        site.save()
+        self.owner = User.objects.create_user("owner-u", password="demo12345", role=User.Role.ADMIN)
+        self.vika = User.objects.create_user("vika-u", password="demo12345", role=User.Role.BAR, first_name="Вика")
+        self.dima = User.objects.create_user("dima-u", password="demo12345", role=User.Role.BAR)
+        cfg = ShiftSettings.load()
+        cfg.scheme = "result"
+        cfg.daily_rate = Decimal("2000")
+        cfg.penalty_table = Table.objects.create(name="Штраф")
+        cfg.save()
+        shift_type = ShiftType.objects.create(name="Полная", starts_at=time(0, 1), ends_at=time(23, 59))
+        cat = Category.objects.create(name="Кофе", station="bar")
+        self.latte_p = Product.objects.create(category=cat, name="Латте")
+        self.latte = ProductVariant.objects.create(product=self.latte_p, price=Decimal("240"))
+        extras = ModifierGroup.objects.create(name="Добавки", max_choices=3)
+        extras.products.add(self.latte_p)
+        self.syrup = Modifier.objects.create(group=extras, name="Сироп", price_delta=Decimal("50"), upsell_bonus=Decimal("20"))
+        self.oat = Modifier.objects.create(group=extras, name="Овсяное", price_delta=Decimal("60"), upsell_bonus=Decimal("30"))
+        self.nosugar = Modifier.objects.create(group=extras, name="Без сахара", price_delta=Decimal("0"))
+        self.today = timezone.localdate()
+        for u in (self.vika, self.dima):
+            add_member(u, self.today, shift_type=shift_type)
+        # заказ оформляет касса, исполнитель — бариста
+        self.cashier = User.objects.create_user("cashier-u", password="demo12345", role=User.Role.WAITER)
+        self.client.force_authenticate(self.cashier)
+
+    def order(self, mods, qty=1, performer=None, close=True):
+        res = self.client.post(
+            "/api/orders/",
+            {
+                "items": [{"variant": self.latte.id, "quantity": qty, "modifiers": [m.id for m in mods]}],
+                "performer": (performer or self.vika).id,
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, 201, res.data)
+        if close:
+            self.client.post(f"/api/orders/{res.data['id']}/close/", {"pay_method": "cash"}, format="json")
+        return res.data["id"]
+
+    def row(self, user):
+        report = shift_report(shift=get_shift(self.today))
+        return next(m for m in report["members"] if m["user"] == user.id)
+
+    def test_each_option_and_portion_pays(self):
+        self.order([self.syrup, self.oat], qty=2)
+        self.order([self.nosugar])
+        vika = self.row(self.vika)
+        self.assertEqual(vika["upsell_count"], 4)
+        self.assertEqual(vika["upsell_bonus"], "100.00")  # (20 + 30) × 2
+        self.assertEqual(
+            vika["upsell_items"], [{"title": "Овсяное", "count": 2}, {"title": "Сироп", "count": 2}]
+        )
+        self.assertEqual(vika["payout"], "2100.00")
+
+    def test_goes_to_the_performer(self):
+        self.order([self.syrup], performer=self.dima)
+        self.assertEqual(self.row(self.vika)["upsell_count"], 0)
+        self.assertEqual(self.row(self.dima)["upsell_bonus"], "20.00")
+
+    def test_bonus_as_it_was_when_chosen(self):
+        """Подняли надбавку — проданное раньше остаётся по старой."""
+        self.order([self.syrup])
+        self.syrup.upsell_bonus = Decimal("99")
+        self.syrup.save()
+        self.order([self.syrup])
+        self.assertEqual(self.row(self.vika)["upsell_bonus"], "119.00")
+
+    def test_open_orders_do_not_count(self):
+        self.order([self.syrup], close=False)
+        self.assertEqual(self.row(self.vika)["upsell_count"], 0)
+
+    def test_same_day_refund_is_out(self):
+        order_id = self.order([self.syrup])
+        Order.objects.filter(pk=order_id).update(
+            status=Order.Status.REFUNDED, refunded_at=timezone.now()
+        )
+        self.assertEqual(self.row(self.vika)["upsell_count"], 0)
+
+    def test_in_payroll_itemized(self):
+        self.order([self.oat])
+        row = next(r for r in payroll(Shift.objects.all()) if r["user"] == self.vika.id)
+        self.assertEqual((row["upsell_bonus"], row["upsell_count"], row["bonus"]), ("30.00", 1, "30.00"))
+
+    def test_even_scheme_ignores_upsell(self):
+        Shift.objects.update(scheme="even", bonus_percent=Decimal("0"))
+        self.order([self.syrup])
+        self.assertEqual(self.row(self.vika)["upsell_count"], 0)
+
+    # ——— меню ———
+
+    def test_guest_does_not_see_the_bonus(self):
+        self.client.force_authenticate(None)
+        product = self.client.get(f"/api/products/{self.latte_p.id}/").data
+        mod = product["modifier_groups"][0]["modifiers"][0]
+        self.assertNotIn("upsell_bonus", mod)
+
+    def test_staff_does_not_see_the_bonus_but_owner_does(self):
+        product = self.client.get(f"/api/products/{self.latte_p.id}/").data
+        self.assertNotIn("upsell_bonus", product["modifier_groups"][0]["modifiers"][0])
+        self.client.force_authenticate(self.owner)
+        product = self.client.get(f"/api/products/{self.latte_p.id}/").data
+        self.assertIn("upsell_bonus", product["modifier_groups"][0]["modifiers"][0])
+
+    def test_owner_sets_bonus_in_the_menu_editor(self):
+        from catalog.models import ModifierGroup
+
+        self.client.force_authenticate(self.owner)
+        group = ModifierGroup.objects.get()
+        mods = [
+            {"id": self.syrup.id, "name": "Сироп", "price_delta": "50", "upsell_bonus": "25"},
+            {"id": self.oat.id, "name": "Овсяное", "price_delta": "60"},  # без поля — не трогаем
+            {"id": self.nosugar.id, "name": "Без сахара", "price_delta": "0"},
+        ]
+        res = self.client.patch(f"/api/modifier-groups/{group.id}/", {"modifiers": mods}, format="json")
+        self.assertEqual(res.status_code, 200, res.data)
+        self.syrup.refresh_from_db()
+        self.oat.refresh_from_db()
+        self.assertEqual((self.syrup.upsell_bonus, self.oat.upsell_bonus), (Decimal("25"), Decimal("30")))
+
+    def test_negative_bonus_is_refused(self):
+        from catalog.models import ModifierGroup
+
+        self.client.force_authenticate(self.owner)
+        group = ModifierGroup.objects.get()
+        mods = [{"id": self.syrup.id, "name": "Сироп", "upsell_bonus": "-5"}]
+        res = self.client.patch(f"/api/modifier-groups/{group.id}/", {"modifiers": mods}, format="json")
+        self.assertEqual(res.status_code, 400)
+
+
+class PayPrivacyTests(APITestCase):
+    """При оплате за результат сотрудник не видит денег коллег."""
+
+    def setUp(self):
+        from datetime import time
+
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.HALL
+        site.save()
+        self.manager = User.objects.create_user("man-p", password="demo12345", role=User.Role.WAREHOUSE)
+        self.vika = User.objects.create_user("vika-p", password="demo12345", role=User.Role.BAR)
+        self.dima = User.objects.create_user("dima-p", password="demo12345", role=User.Role.BAR)
+        cfg = ShiftSettings.load()
+        cfg.scheme = "result"
+        cfg.save()
+        full = ShiftType.objects.create(name="Полная", starts_at=time(8), ends_at=time(20))
+        ShiftRate.objects.create(shift_type=full, role="bar", rate=Decimal("3000"))
+        for u in (self.vika, self.dima):
+            add_member(u, timezone.localdate(), shift_type=full)
+
+    def rows(self, data):
+        return {m["user"]: m for m in data["members"]}
+
+    def test_worker_sees_own_money_not_colleagues(self):
+        self.client.force_authenticate(self.vika)
+        for data in (
+            self.client.get("/api/shifts/day/").data,
+            self.client.get("/api/shifts/").data[0],
+            self.client.get("/api/shifts/month/").data["days"][0],
+        ):
+            rows = self.rows(data)
+            self.assertEqual(rows[self.vika.id]["payout"], "3000.00")
+            self.assertIsNone(rows[self.dima.id]["payout"])
+            self.assertIsNone(rows[self.dima.id]["kpi"])
+            self.assertIsNone(data["payout_total"])
+            self.assertIsNone(data["revenue"])
+            # имя, роль и время коллеги видны — с кем работаешь, знать нужно
+            self.assertEqual(rows[self.dima.id]["starts_at"], "08:00")
+
+    def test_manager_sees_everything(self):
+        self.client.force_authenticate(self.manager)
+        data = self.client.get("/api/shifts/day/").data
+        self.assertEqual(self.rows(data)[self.dima.id]["payout"], "3000.00")
+        self.assertEqual(data["payout_total"], "6000.00")
+
+    def test_even_scheme_unchanged(self):
+        """При оплате поровну сумма у всех одна — скрывать нечего."""
+        Shift.objects.update(scheme="even")
+        self.client.force_authenticate(self.vika)
+        data = self.client.get("/api/shifts/day/").data
+        self.assertIsNotNone(self.rows(data)[self.dima.id]["payout"])

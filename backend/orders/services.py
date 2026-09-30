@@ -98,6 +98,7 @@ def _add_items(order: Order, items: list[dict]) -> None:
                 modifier=modifier,
                 name=modifier.name,
                 price_delta=modifier.price_delta,
+                upsell_bonus=modifier.upsell_bonus,
             )
             for modifier in modifiers
         )

@@ -104,13 +104,30 @@ export default function App() {
         {user?.role === "cook" && (
           <Route
             path="/kitchen"
-            element={<Gated feature="stations" what="Экран кухни" need="Зал"><Kitchen /></Gated>}
+            element={
+              counter ? (
+                <Navigate to="/shifts" replace />
+              ) : (
+                <Gated feature="stations" what="Экран кухни" need="Зал"><Kitchen /></Gated>
+              )
+            }
           />
         )}
+        {/* На стойке у бара и кухни своих экранов нет (станции — тариф
+            «Зал»): заказ ведут с общего планшета, а лично бариста заходит
+            посмотреть смену и свой КПД — туда и ведём, а не на заглушку.
+            Перенаправляем здесь, а не в home: формат заведения грузится
+            позже входа, и home успел бы увести на /bar. */}
         {user?.role === "bar" && (
           <Route
             path="/bar"
-            element={<Gated feature="stations" what="Экран бара" need="Зал"><Bar /></Gated>}
+            element={
+              counter ? (
+                <Navigate to="/shifts" replace />
+              ) : (
+                <Gated feature="stations" what="Экран бара" need="Зал"><Bar /></Gated>
+              )
+            }
           />
         )}
         {/* склад ведёт кладовщик, но владельцу он нужен не меньше:

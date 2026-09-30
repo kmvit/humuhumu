@@ -24,6 +24,8 @@ type ModifierDraft = {
   id?: number;
   name: string;
   price_delta: string;
+  /** Надбавка исполнителю за допродажу; пусто или 0 — не допродажа. */
+  upsell_bonus: string;
   is_stopped: boolean;
   effects: EffectDraft[];
 };
@@ -49,6 +51,8 @@ type Group = {
     id: number;
     name: string;
     price_delta: string;
+    /** Приходит только владельцу. */
+    upsell_bonus?: string;
     is_stopped: boolean;
     effects: {
       id: number;
@@ -71,7 +75,7 @@ const emptyEffect = (): EffectDraft => ({
 });
 
 const emptyModifier = (): ModifierDraft => ({
-  name: "", price_delta: "", is_stopped: false, effects: [],
+  name: "", price_delta: "", upsell_bonus: "", is_stopped: false, effects: [],
 });
 
 const emptyGroup = (): GroupDraft => ({
@@ -88,6 +92,7 @@ const draftFrom = (g: Group): GroupDraft => ({
     id: m.id,
     name: m.name,
     price_delta: String(Number(m.price_delta)),
+    upsell_bonus: Number(m.upsell_bonus ?? 0) ? String(Number(m.upsell_bonus)) : "",
     is_stopped: m.is_stopped,
     effects: m.effects.map((e) => ({
       kind: e.kind,
@@ -151,6 +156,7 @@ export default function Modifiers() {
           ...(m.id ? { id: m.id } : {}),
           name: m.name.trim(),
           price_delta: m.price_delta || "0",
+          upsell_bonus: m.upsell_bonus || "0",
           is_stopped: m.is_stopped,
           effects: m.effects
             .filter((e) => e.item !== "")
@@ -264,6 +270,11 @@ export default function Modifiers() {
                   {m.is_stopped && <span className="badge mini ml-2">стоп</span>}
                   {m.effects.length === 0 && (
                     <span className="muted sm"> · склад не тронет</span>
+                  )}
+                  {Number(m.upsell_bonus ?? 0) > 0 && (
+                    <span className="muted sm">
+                      {" "}· допродажа +{Number(m.upsell_bonus).toLocaleString("ru")} ₽
+                    </span>
                   )}
                 </span>
                 <span className="num muted">
@@ -424,6 +435,24 @@ function GroupForm({
                     <Icon name="trash" size={16} />
                   </button>
                 </div>
+
+                {/* Допродажа: сироп, альтернативное молоко, пенка. Надбавка
+                    идёт тому, кто выполнил заказ, — при оплате смены за
+                    результат. Бесплатную замену допродажей не отмечают. */}
+                <label className="inline tight mt-2" style={{ gap: 8 }}>
+                  <span className="muted sm">За допродажу исполнителю, ₽</span>
+                  <input
+                    className="input"
+                    inputMode="decimal"
+                    style={{ width: 96 }}
+                    value={m.upsell_bonus}
+                    onChange={(e) =>
+                      setMod(mi, { upsell_bonus: decimalInput(e.target.value) })
+                    }
+                    placeholder="0"
+                  />
+                  <span className="muted sm">пусто — не допродажа</span>
+                </label>
 
                 {/* что опция делает со складом */}
                 <div className="stack tight mt-2">

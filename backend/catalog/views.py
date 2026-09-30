@@ -357,6 +357,9 @@ class ModifierGroupViewSet(ProtectedDeleteMixin, viewsets.ModelViewSet):
             max_digits=10, decimal_places=2, required=False, default=0
         )
         is_stopped = serializers.BooleanField(required=False, default=False)
+        upsell_bonus = serializers.DecimalField(
+            max_digits=10, decimal_places=2, required=False, min_value=0
+        )
 
     def _sync_modifiers(self, group, raw):
         """Привести опции набора к присланному списку — как варианты товара."""
@@ -370,6 +373,9 @@ class ModifierGroupViewSet(ProtectedDeleteMixin, viewsets.ModelViewSet):
             modifier.name = row["name"].strip()
             modifier.price_delta = row["price_delta"]
             modifier.is_stopped = row["is_stopped"]
+            # не прислали — не трогаем: старый экран не должен обнулять надбавку
+            if "upsell_bonus" in row:
+                modifier.upsell_bonus = row["upsell_bonus"]
             modifier.sort_order = order
             modifier.save()
             keep.add(modifier.id)

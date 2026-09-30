@@ -11,17 +11,20 @@ export function payParts(p: {
   bonus: string;
   kpi_bonus?: string | null;
   focus_bonus?: string | null;
+  upsell_bonus?: string | null;
   senior_bonus?: string | null;
   penalty?: string | number | null;
 }): string {
   const kpi = Number(p.kpi_bonus ?? 0);
   const focus = Number(p.focus_bonus ?? 0);
+  const upsell = Number(p.upsell_bonus ?? 0);
   const senior = Number(p.senior_bonus ?? 0);
   // остаток — доля процента от выручки в оплате поровну
-  const share = Number(p.bonus) - kpi - focus - senior;
+  const share = Number(p.bonus) - kpi - focus - upsell - senior;
   const parts = [`ставка ${fmt(p.base)}`];
   if (kpi > 0) parts.push(`КПД ${fmt(kpi)}`);
   if (focus > 0) parts.push(`фокус ${fmt(focus)}`);
+  if (upsell > 0) parts.push(`допродажи ${fmt(upsell)}`);
   if (senior > 0) parts.push(`старшему ${fmt(senior)}`);
   if (share > 0.004) parts.push(`бонус ${fmt(share)}`);
   let text = parts.join(" + ");

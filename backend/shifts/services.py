@@ -10,7 +10,7 @@
   «поровну»        — ставка за день + доля процента от выручки − списания;
   «за результат»   — ставка по типу смены и роли + надбавка старшему
                      + бонус за КПД по сетке + фокусные позиции
-                     − списания. Допродажи — следующим этапом.
+                     + допродажи − списания.
 
 КПД — личная выручка в час. Каждый оплаченный заказ делится поровну
 между участниками КПД, которые были на смене в момент закрытия счёта;
@@ -300,6 +300,38 @@ def focus_sales(day, penalty_table: str = "") -> dict[int, dict]:
     return out
 
 
+def upsell_sales(day, penalty_table: str = "") -> dict[int, dict]:
+    """Допродажи за день — по исполнителям заказов.
+
+    Допродажа — опция с надбавкой (сироп, альтернативное молоко, пенка).
+    Надбавка берётся из заказа: она запомнилась, когда гость выбрал опцию,
+    поэтому правка суммы в меню прошлые продажи не трогает. Две порции с
+    сиропом — две допродажи.
+    """
+    from orders.models import OrderItemModifier
+
+    rows = (
+        OrderItemModifier.objects.filter(
+            upsell_bonus__gt=0,
+            order_item__order__in=sold_orders(day, penalty_table).filter(
+                performer__isnull=False
+            ),
+        )
+        .values_list(
+            "order_item__order__performer", "name", "upsell_bonus", "order_item__quantity"
+        )
+    )
+    out: dict[int, dict] = {}
+    for performer, name, bonus, qty in rows:
+        row = out.setdefault(performer, {"count": 0, "bonus": Decimal("0"), "items": {}})
+        row["count"] += qty
+        row["bonus"] += bonus * qty
+        row["items"][name] = row["items"].get(name, 0) + qty
+    for row in out.values():
+        row["bonus"] = money(row["bonus"])
+    return out
+
+
 def get_shift(day, create: bool = False):
     """Смена на дату. С create=True заводит её, зафиксировав текущие параметры оплаты."""
     shift = Shift.objects.filter(date=day).first()
@@ -479,10 +511,11 @@ def shift_report(shift=None, day=None) -> dict:
         bonus_share = penalty_share = manual_share = money(0)
 
     if even:
-        personal, unassigned, focus = {}, money(0), {}
+        personal, unassigned, focus, upsell = {}, money(0), {}, {}
     else:
         personal, unassigned = kpi_revenue(day, members, penalty_table)
         focus = focus_sales(day, penalty_table)
+        upsell = upsell_sales(day, penalty_table)
 
     rows = []
     for m in members:
@@ -497,8 +530,14 @@ def shift_report(shift=None, day=None) -> dict:
             hours = m.hours or Decimal("0")
             kpi = money(personal[m.user_id] / hours) if hours else money(0)
             kpi_bonus, upcoming = kpi_step(kpi_grid, kpi)
-        mine = focus.get(m.user_id, {"count": 0, "bonus": money(0), "items": {}})
-        bonus = bonus_share if even else money((kpi_bonus or 0) + mine["bonus"])
+        empty = {"count": 0, "bonus": money(0), "items": {}}
+        mine = focus.get(m.user_id, empty)
+        ups = upsell.get(m.user_id, empty)
+        bonus = (
+            bonus_share
+            if even
+            else money((kpi_bonus or 0) + mine["bonus"] + ups["bonus"])
+        )
         payout = max(
             money(base + bonus + senior - penalty_share - manual_share), money(0)
         )
@@ -532,6 +571,12 @@ def shift_report(shift=None, day=None) -> dict:
                 "focus_bonus": str(mine["bonus"]),
                 "focus_items": [
                     {"title": t, "count": n} for t, n in sorted(mine["items"].items())
+                ],
+                # допродажи: сколько опций и каких
+                "upsell_count": ups["count"],
+                "upsell_bonus": str(ups["bonus"]),
+                "upsell_items": [
+                    {"title": t, "count": n} for t, n in sorted(ups["items"].items())
                 ],
                 "penalty": str(money(penalty_share + manual_share)),
                 "payout": str(payout),
@@ -577,11 +622,11 @@ def shift_report(shift=None, day=None) -> dict:
         "members": rows,
         # Те, кто выполнял заказы, но в смену не поставлен: менеджер забыл
         # отметить, а работа сделана. Без этой строки она пропала бы.
-        "outsiders": _outsiders(by_performer, members, focus),
+        "outsiders": _outsiders(by_performer, members, focus, upsell),
     }
 
 
-def _outsiders(by_performer: dict[int, dict], members, focus=None) -> list[dict]:
+def _outsiders(by_performer: dict[int, dict], members, focus=None, upsell=None) -> list[dict]:
     """Исполнители заказов, которых нет в составе смены.
 
     Их фокусные продажи тоже показываем: денег без смены не начислить,
@@ -590,6 +635,7 @@ def _outsiders(by_performer: dict[int, dict], members, focus=None) -> list[dict]
     from users.models import User
 
     focus = focus or {}
+    upsell = upsell or {}
     ids = set(by_performer) - {m.user_id for m in members}
     if not ids:
         return []
@@ -600,6 +646,7 @@ def _outsiders(by_performer: dict[int, dict], members, focus=None) -> list[dict]
             "orders": by_performer[u.id]["orders"],
             "orders_total": str(by_performer[u.id]["orders_total"]),
             "focus_count": focus.get(u.id, {}).get("count", 0),
+            "upsell_count": upsell.get(u.id, {}).get("count", 0),
         }
         for u in User.tenant.filter(pk__in=ids).order_by("first_name", "username")
     ]
@@ -630,6 +677,8 @@ def payroll(shifts, user=None) -> list[dict]:
                     "kpi_bonus": Decimal("0"),
                     "focus_bonus": Decimal("0"),
                     "focus_count": 0,
+                    "upsell_bonus": Decimal("0"),
+                    "upsell_count": 0,
                     "senior_bonus": Decimal("0"),
                     "penalty": Decimal("0"),
                     "total": Decimal("0"),
@@ -650,6 +699,8 @@ def payroll(shifts, user=None) -> list[dict]:
             row["kpi_bonus"] += Decimal(m["kpi_bonus"] or 0)
             row["focus_bonus"] += Decimal(m["focus_bonus"])
             row["focus_count"] += m["focus_count"]
+            row["upsell_bonus"] += Decimal(m["upsell_bonus"])
+            row["upsell_count"] += m["upsell_count"]
             row["senior_bonus"] += Decimal(m["senior_bonus"])
             # в «списания» идут и подарки со штрафного стола, и ручной штраф
             row["penalty"] += Decimal(m["penalty"])
@@ -660,7 +711,8 @@ def payroll(shifts, user=None) -> list[dict]:
             **{
                 k: str(money(r[k]))
                 for k in (
-                    "hours", "base", "bonus", "kpi_bonus", "focus_bonus", "senior_bonus",
+                    "hours", "base", "bonus", "kpi_bonus", "focus_bonus",
+                    "upsell_bonus", "senior_bonus",
                     "penalty", "total", "orders_total",
                 )
             },

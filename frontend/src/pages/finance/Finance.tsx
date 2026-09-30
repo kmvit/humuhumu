@@ -447,27 +447,32 @@ export default function Finance() {
             {openUser === r.user && (
               <ul className="stack tight list mt-3">
                 {days.map((d) => (
-                  <li key={d.date} className="between">
-                    <span className="muted">
-                      {fmtDay(d.date)}
-                      {d.shift_type_name ? ` · ${d.shift_type_name}` : ""}
-                      {d.hours ? `, ${fmtMoney(d.hours)} ч` : ""}
-                      {d.kpi != null ? ` · КПД ${fmtMoney(d.kpi)} ₽/ч` : ""} ·{" "}
-                      {d.members_count} чел. в смене
-                    </span>
-                    <span>
+                  <li key={d.date} className="between" style={{ alignItems: "flex-start" }}>
+                    {/* Дата сверху, расшифровка под ней, сумма справа: в строку
+                        с суммой длинная расшифровка не влезала и рвалась. */}
+                    <span className="stack tight">
+                      <span className="muted">
+                        {fmtDay(d.date)}
+                        {d.shift_type_name ? ` · ${d.shift_type_name}` : ""}
+                        {d.hours ? `, ${fmtMoney(d.hours)} ч` : ""}
+                        {d.kpi != null ? ` · КПД ${fmtMoney(d.kpi)} ₽/ч` : ""} ·{" "}
+                        {d.members_count} чел. в смене
+                      </span>
                       <span className="muted sm">
                         {payParts({
                           base: d.daily_rate,
                           bonus: d.bonus_share,
                           kpi_bonus: d.kpi_bonus,
                           focus_bonus: d.focus_bonus,
+                          upsell_bonus: d.upsell_bonus,
                           senior_bonus: d.senior_bonus,
                           penalty: Number(d.penalty_share) + Number(d.manual_penalty_share),
                         })}
-                      </span>{" "}
-                      <strong className="num">{fmtMoney(d.payout)} ₽</strong>
+                      </span>
                     </span>
+                    <strong className="num" style={{ whiteSpace: "nowrap" }}>
+                      {fmtMoney(d.payout)} ₽
+                    </strong>
                   </li>
                 ))}
                 {days.length === 0 && <li className="muted sm">Загружаем…</li>}

@@ -95,9 +95,11 @@ class ModifierEffectInline(admin.TabularInline):
 
 @admin.register(Modifier)
 class ModifierAdmin(admin.ModelAdmin):
-    list_display = ("name", "group", "price_delta", "is_stopped", "sort_order", "picks")
+    list_display = (
+        "name", "group", "price_delta", "upsell_bonus", "is_stopped", "sort_order", "picks",
+    )
     list_filter = ("group", "is_stopped")
-    list_editable = ("price_delta", "is_stopped", "sort_order")
+    list_editable = ("price_delta", "upsell_bonus", "is_stopped", "sort_order")
     search_fields = ("name", "group__name")
     # Счётчик выбора — только показываем: его считает ночная задача по
     # заказам, и правка руками врала бы владельцу же (catalog/tasks.py).
@@ -108,7 +110,7 @@ class ModifierAdmin(admin.ModelAdmin):
 class ModifierInline(admin.TabularInline):
     model = Modifier
     extra = 0
-    fields = ("name", "price_delta", "is_stopped", "sort_order")
+    fields = ("name", "price_delta", "upsell_bonus", "is_stopped", "sort_order")
     show_change_link = True  # к действиям со складом — в карточку опции
 
 

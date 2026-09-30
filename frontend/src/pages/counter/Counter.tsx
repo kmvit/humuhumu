@@ -366,16 +366,18 @@ export default function Counter() {
                     )}
                     {col.key === "unpaid" &&
                       (cashFor === o.id ? (
-                        <div className="grid cols-2 mt-2">
+                        // Друг под другом: колонка доски узкая, и две
+                        // кнопки в ряд вылезали за край карточки.
+                        <div className="stack tight mt-2">
                           <button
-                            className="btn sm"
+                            className="btn sm block"
                             disabled={busy === o.id}
                             onClick={() => takeCash(o, "cash")}
                           >
                             <Icon name="cash" size={16} /> Наличными
                           </button>
                           <button
-                            className="btn sm"
+                            className="btn sm block"
                             disabled={busy === o.id}
                             onClick={() => takeCash(o, "card")}
                           >
@@ -469,16 +471,16 @@ export default function Counter() {
                     )}
                     {col.key === "ready" && !o.paid_at &&
                       (payFor === o.id ? (
-                        <div className="grid cols-2 mt-2">
+                        <div className="stack tight mt-2">
                           <button
-                            className="btn sm"
+                            className="btn sm block"
                             disabled={busy === o.id}
                             onClick={() => handOut(o, "cash")}
                           >
                             <Icon name="cash" size={16} /> Наличными
                           </button>
                           <button
-                            className="btn sm"
+                            className="btn sm block"
                             disabled={busy === o.id}
                             onClick={() => handOut(o, "card")}
                           >

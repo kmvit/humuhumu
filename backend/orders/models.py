@@ -281,6 +281,12 @@ class OrderItemModifier(TenantModel):
     )
     name = models.CharField("Название", max_length=100)
     price_delta = models.DecimalField("Надбавка, ₽", max_digits=10, decimal_places=2)
+    # Надбавка за допродажу — тоже снимком: владелец меняет её хоть каждый
+    # день, а продажа оплачивается по сумме, действовавшей, когда гость
+    # выбрал опцию.
+    upsell_bonus = models.DecimalField(
+        "За допродажу, ₽", max_digits=10, decimal_places=2, default=0
+    )
 
     class Meta:
         verbose_name = "Опция позиции"

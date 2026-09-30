@@ -63,18 +63,20 @@ class ModifierSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        # Меню читают все подряд, а действия опции — это кусок техкарты.
+        # Меню читают все подряд, а действия опции — это кусок техкарты, и
+        # надбавка за допродажу — деньги персонала. Обе — только владельцу.
         request = self.context.get("request")
         user = getattr(request, "user", None)
         if getattr(user, "role", None) != "admin":
             data.pop("effects", None)
+            data.pop("upsell_bonus", None)
         return data
 
     class Meta:
         model = Modifier
         fields = (
             "id", "name", "price_delta", "is_stopped", "sort_order",
-            "top", "effects",
+            "top", "effects", "upsell_bonus",
         )
 
 
