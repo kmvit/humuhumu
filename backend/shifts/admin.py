@@ -23,7 +23,12 @@ class ShiftSettingsForm(forms.ModelForm):
 
     class Meta:
         model = ShiftSettings
-        fields = "__all__"
+        # Только то, что проверяем. "__all__" строил бы при импорте поля и
+        # для внешних ключей (заведение, штрафной стол) — это запрос через
+        # тенантный менеджер без выбранного заведения, и на общей базе
+        # backend падал при старте. Остальные поля админка добавит сама по
+        # fieldsets — уже во время запроса, когда заведение известно.
+        fields = ("kpi_grid", "kpi_roles")
 
     def clean_kpi_grid(self):
         try:
