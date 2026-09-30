@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Shift, ShiftMember, ShiftSettings
+from .models import Shift, ShiftMember, ShiftRate, ShiftSettings, ShiftType
 from .services import shift_report
 
 
@@ -9,7 +9,8 @@ class ShiftSettingsAdmin(admin.ModelAdmin):
     """Ставка за смену, процент бонуса и штрафной стол."""
 
     fieldsets = (
-        ("Оплата", {"fields": ("daily_rate", "bonus_percent")}),
+        ("Схема", {"fields": ("scheme", "senior_bonus", "kpi_roles")}),
+        ("Оплата поровну", {"fields": ("daily_rate", "bonus_percent")}),
         ("Списания", {"fields": ("penalty_table",)}),
     )
 
@@ -20,17 +21,33 @@ class ShiftSettingsAdmin(admin.ModelAdmin):
         return False
 
 
+class ShiftRateInline(admin.TabularInline):
+    model = ShiftRate
+    extra = 0
+
+
+@admin.register(ShiftType)
+class ShiftTypeAdmin(admin.ModelAdmin):
+    """Виды смен и ставки по ролям."""
+
+    list_display = ("name", "starts_at", "ends_at", "sort_order")
+    inlines = [ShiftRateInline]
+
+
 class ShiftMemberInline(admin.TabularInline):
     model = ShiftMember
     extra = 0
-    fields = ("user", "role", "added_by", "added_at")
+    fields = (
+        "user", "role", "shift_type_name", "starts_at", "ends_at",
+        "rate", "is_senior", "in_kpi", "added_by", "added_at",
+    )
     readonly_fields = ("added_at",)
     autocomplete_fields = ("user", "added_by")
 
 
 @admin.register(Shift)
 class ShiftAdmin(admin.ModelAdmin):
-    list_display = ("date", "members_count", "revenue", "penalty", "payout")
+    list_display = ("date", "members_count", "revenue", "penalty", "payout_total")
     inlines = [ShiftMemberInline]
     readonly_fields = ("created_at",)
     ordering = ["-date"]
@@ -57,9 +74,9 @@ class ShiftAdmin(admin.ModelAdmin):
     def penalty(self, obj):
         return self._report(obj)["penalty"]
 
-    @admin.display(description="На человека")
-    def payout(self, obj):
-        return self._report(obj)["payout"]
+    @admin.display(description="К выплате всего")
+    def payout_total(self, obj):
+        return self._report(obj)["payout_total"]
 
 
 @admin.register(ShiftMember)

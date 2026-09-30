@@ -14,8 +14,19 @@ from users.permissions import IsAdminRole, IsStaffRole, IsWarehouseOrAdmin
 
 from orders.models import Table
 
-from .models import Shift, ShiftSettings
-from .services import add_member, money, payroll, remove_member, shift_report, user_name
+from .models import STAFF_ROLES, Scheme, Shift, ShiftMember, ShiftRate, ShiftSettings, ShiftType
+from .services import (
+    _MISSING,
+    add_member,
+    apply_rules_from,
+    money,
+    retime_type,
+    payroll,
+    remove_member,
+    shift_report,
+    update_member,
+    user_name,
+)
 
 
 class ShiftViewSet(viewsets.ViewSet):
@@ -28,11 +39,15 @@ class ShiftViewSet(viewsets.ViewSet):
     permission_classes = [IsStaffRole, RequiresShifts]
 
     def get_permissions(self):
-        if self.action in ("add_member", "remove_member", "staff", "set_penalty"):
+        if self.action in (
+            "add_member", "remove_member", "update_member", "staff", "set_penalty",
+            "options",
+        ):
             return [IsWarehouseOrAdmin(), RequiresShifts()]
         # Ставка и процент бонуса — деньги персонала: их задаёт владелец,
-        # а не менеджер, который ставит состав смены.
-        if self.action == "pay_settings":
+        # а не менеджер, который ставит состав смены. Типы смен тоже: у
+        # каждого своя ставка.
+        if self.action in ("pay_settings", "shift_types", "shift_type"):
             return [IsAdminRole(), RequiresShifts()]
         return super().get_permissions()
 
@@ -158,6 +173,25 @@ class ShiftViewSet(viewsets.ViewSet):
         )
 
     @action(detail=False, methods=["get"])
+    def options(self, request):
+        """Из чего менеджер выбирает, ставя человека в смену: типы и роли.
+
+        Ставки сюда не идут: менеджер ставит состав, цена смены — дело
+        владельца (см. pay_settings).
+        """
+        cfg = ShiftSettings.load()
+        return Response(
+            {
+                "scheme": cfg.scheme,
+                "roles": [{"value": r.value, "label": r.label} for r in STAFF_ROLES],
+                "shift_types": [
+                    {k: v for k, v in _type_payload(t).items() if k != "rates"}
+                    for t in ShiftType.objects.prefetch_related("rates")
+                ],
+            }
+        )
+
+    @action(detail=False, methods=["get"])
     def performers(self, request):
         """Кого бариста выбирает в поле «выполнил» — сегодняшняя смена.
 
@@ -212,10 +246,43 @@ class ShiftViewSet(viewsets.ViewSet):
                 {"detail": "Работник не найден"}, status=status.HTTP_404_NOT_FOUND
             )
         if add:
-            add_member(worker, day, by=request.user)
+            try:
+                extra = self._member_fields(request.data)
+            except ValueError as e:
+                return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            add_member(
+                worker,
+                day,
+                by=request.user,
+                shift_type=extra.get("shift_type"),
+                role=extra.get("role"),
+                is_senior=bool(extra.get("is_senior")),
+            )
         else:
             remove_member(worker, day)
         return self._day_response(request, day)
+
+    @staticmethod
+    def _member_fields(data) -> dict:
+        """Тип смены, роль, старший и время из тела запроса — то, что прислали."""
+        out = {}
+        if "shift_type" in data:
+            raw = data["shift_type"]
+            out["shift_type"] = None
+            if raw not in (None, ""):
+                out["shift_type"] = ShiftType.objects.filter(pk=raw).first()
+                if out["shift_type"] is None:
+                    raise ValueError("Тип смены не найден")
+        if data.get("role"):
+            if data["role"] not in STAFF_ROLES:
+                raise ValueError("Такой роли в смене не бывает")
+            out["role"] = data["role"]
+        if "is_senior" in data:
+            out["is_senior"] = bool(data["is_senior"])
+        for key in ("starts_at", "ends_at"):
+            if key in data:
+                out[key] = _parse_time(data[key])
+        return out
 
     @action(detail=False, methods=["post"], url_path="add_member")
     def add_member(self, request):
@@ -226,6 +293,50 @@ class ShiftViewSet(viewsets.ViewSet):
     def remove_member(self, request):
         """Убрать работника из смены."""
         return self._member_action(request, add=False)
+
+    @action(detail=False, methods=["post"], url_path="update_member")
+    def update_member(self, request):
+        """Поправить человека в смене: тип, роль, старший, пришёл/ушёл."""
+        day = self._day(request.data)
+        if day is None:
+            return Response(
+                {"detail": "Дата в формате ГГГГ-ММ-ДД"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        member = (
+            ShiftMember.objects.filter(shift__date=day, user_id=request.data.get("user"))
+            .select_related("shift", "user")
+            .first()
+        )
+        if member is None:
+            return Response(
+                {"detail": "Этого человека нет в смене"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            fields = self._member_fields(request.data)
+            # Каким станет время после правки: присланное, иначе из нового
+            # типа, иначе прежнее. Равные отметки считались бы сутками
+            # работы — это опечатка.
+            new_type = fields.get("shift_type", member.shift_type)
+            retyped = "shift_type" in fields and new_type is not None
+            start = fields.get(
+                "starts_at", new_type.starts_at if retyped else member.starts_at
+            )
+            end = fields.get("ends_at", new_type.ends_at if retyped else member.ends_at)
+            if start and start == end:
+                raise ValueError("Пришёл и ушёл в одно время — проверьте часы")
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        update_member(
+            member,
+            shift_type=fields.get("shift_type", _MISSING),
+            role=fields.get("role"),
+            is_senior=fields.get("is_senior"),
+            starts_at=fields.get("starts_at", _MISSING),
+            ends_at=fields.get("ends_at", _MISSING),
+        )
+        return self._day_response(request, day)
 
     @action(detail=False, methods=["get", "patch"], url_path="settings")
     def pay_settings(self, request):
@@ -244,6 +355,19 @@ class ShiftViewSet(viewsets.ViewSet):
             return Response(self._settings_payload(cfg))
 
         try:
+            if "scheme" in request.data:
+                if request.data["scheme"] not in Scheme.values:
+                    raise ValueError("Нет такой схемы оплаты")
+                cfg.scheme = request.data["scheme"]
+            if "senior_bonus" in request.data:
+                cfg.senior_bonus = self._money(
+                    request.data["senior_bonus"], "Надбавка старшему"
+                )
+            if "kpi_roles" in request.data:
+                roles = request.data["kpi_roles"] or []
+                if not isinstance(roles, list) or any(r not in STAFF_ROLES for r in roles):
+                    raise ValueError("Роли в КПД: неизвестная роль")
+                cfg.kpi_roles = roles
             if "daily_rate" in request.data:
                 cfg.daily_rate = self._money(request.data["daily_rate"], "Оплата за смену")
             if "bonus_percent" in request.data:
@@ -258,7 +382,7 @@ class ShiftViewSet(viewsets.ViewSet):
             cfg.penalty_table = Table.objects.filter(pk=raw).first() if raw else None
 
         cfg.save()
-        self._apply_to_open_shifts(cfg)
+        apply_rules_from(timezone.localdate())
         return Response(self._settings_payload(cfg))
 
     @staticmethod
@@ -272,19 +396,16 @@ class ShiftViewSet(viewsets.ViewSet):
         return value
 
     @staticmethod
-    def _apply_to_open_shifts(cfg) -> None:
-        """Подтянуть новые правила к сегодняшней и будущим сменам."""
-        Shift.objects.filter(date__gte=timezone.localdate()).update(
-            daily_rate=cfg.daily_rate,
-            bonus_percent=cfg.bonus_percent,
-            penalty_table=cfg.penalty_table.name if cfg.penalty_table else "",
-        )
-
-    @staticmethod
     def _settings_payload(cfg) -> dict:
         return {
             # С копейками — как во всех суммах раздела, чтобы поле не
             # прыгало между «2000» и «2000.00» после сохранения.
+            "scheme": cfg.scheme,
+            "schemes": [{"value": v, "label": l} for v, l in Scheme.choices],
+            "senior_bonus": str(money(cfg.senior_bonus)),
+            "kpi_roles": cfg.kpi_roles or [],
+            "roles": [{"value": r.value, "label": r.label} for r in STAFF_ROLES],
+            "shift_types": [_type_payload(t) for t in ShiftType.objects.prefetch_related("rates")],
             "daily_rate": str(money(cfg.daily_rate)),
             "bonus_percent": str(money(cfg.bonus_percent)),
             "penalty_table": cfg.penalty_table_id,
@@ -295,6 +416,97 @@ class ShiftViewSet(viewsets.ViewSet):
                 for t in Table.objects.filter(is_active=True).order_by("sort_order", "name")
             ],
         }
+
+    # ——— типы смен и ставки (владелец) ———
+
+    @action(detail=False, methods=["post"], url_path="types")
+    def shift_types(self, request):
+        """Завести тип смены: название, начало, конец, ставки по ролям."""
+        shift_type = ShiftType()
+        try:
+            self._fill_type(shift_type, request.data, creating=True)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            self._settings_payload(ShiftSettings.load()), status=status.HTTP_201_CREATED
+        )
+
+    @action(
+        detail=False, methods=["patch", "delete"], url_path=r"types/(?P<type_id>\d+)"
+    )
+    def shift_type(self, request, type_id=None):
+        """Поправить или удалить тип смены.
+
+        Удаление не трогает прошлые смены: название, время и ставку люди
+        в сменах хранят у себя снимком.
+        """
+        shift_type = ShiftType.objects.filter(pk=type_id).first()
+        if shift_type is None:
+            return Response(
+                {"detail": "Тип смены не найден"}, status=status.HTTP_404_NOT_FOUND
+            )
+        today = timezone.localdate()
+        if request.method == "DELETE":
+            # Иначе у людей в сегодняшней смене ставка молча упала бы до
+            # ставки по умолчанию. Прошлые смены удалению не мешают — там
+            # всё хранится снимком.
+            busy = (
+                ShiftMember.objects.filter(shift_type=shift_type, shift__date__gte=today)
+                .order_by("shift__date")
+                .values_list("shift__date", flat=True)
+                .first()
+            )
+            if busy:
+                return Response(
+                    {
+                        "detail": f"Этот тип стоит в смене {busy:%d.%m} — сначала "
+                        "переставьте людей на другой тип"
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            shift_type.delete()
+        else:
+            old_start, old_end = shift_type.starts_at, shift_type.ends_at
+            try:
+                self._fill_type(shift_type, request.data, creating=False)
+            except ValueError as e:
+                return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            retime_type(shift_type, old_start, old_end, today)
+        apply_rules_from(timezone.localdate())
+        return Response(self._settings_payload(ShiftSettings.load()))
+
+    def _fill_type(self, shift_type, data, creating: bool) -> None:
+        if creating or "name" in data:
+            name = (data.get("name") or "").strip()
+            if not name:
+                raise ValueError("Назовите тип смены")
+            shift_type.name = name[:40]
+        for key, label in (("starts_at", "Начало"), ("ends_at", "Конец")):
+            if creating or key in data:
+                value = _parse_time(data.get(key))
+                if value is None:
+                    raise ValueError(f"{label}: время в формате ЧЧ:ММ")
+                setattr(shift_type, key, value)
+        if shift_type.starts_at == shift_type.ends_at:
+            raise ValueError("Начало и конец смены совпадают")
+        if "sort_order" in data:
+            try:
+                shift_type.sort_order = max(int(data["sort_order"] or 0), 0)
+            except (TypeError, ValueError):
+                raise ValueError("Порядок: нужно целое число")
+        rates = {}
+        for role, raw in (data.get("rates") or {}).items():
+            if role not in STAFF_ROLES:
+                raise ValueError("Ставка: неизвестная роль")
+            rates[role] = None if raw in (None, "") else self._money(raw, "Ставка")
+        shift_type.save()
+        for role, rate in rates.items():
+            if rate is None:
+                ShiftRate.objects.filter(shift_type=shift_type, role=role).delete()
+            else:
+                ShiftRate.objects.update_or_create(
+                    shift_type=shift_type, role=role, defaults={"rate": rate}
+                )
 
     @action(detail=False, methods=["post"], url_path="set_penalty")
     def set_penalty(self, request):
@@ -325,3 +537,26 @@ class ShiftViewSet(viewsets.ViewSet):
         shift.manual_penalty = penalty
         shift.save(update_fields=["manual_penalty"])
         return self._day_response(request, day)
+
+
+def _parse_time(raw):
+    """«08:00» → time; пусто → None; мусор → ValueError."""
+    from datetime import time
+
+    if raw in (None, ""):
+        return None
+    try:
+        return time.fromisoformat(str(raw))
+    except ValueError:
+        raise ValueError("Время в формате ЧЧ:ММ")
+
+
+def _type_payload(t) -> dict:
+    return {
+        "id": t.id,
+        "name": t.name,
+        "starts_at": t.starts_at.strftime("%H:%M"),
+        "ends_at": t.ends_at.strftime("%H:%M"),
+        "hours": str(t.hours),
+        "rates": {r.role: str(money(r.rate)) for r in t.rates.all()},
+    }

@@ -450,6 +450,21 @@ export interface ShiftMember {
   role: Role;
   role_display: string;
   added_at: string;
+  /** Тип смены — снимком: у прошлых смен он может быть уже удалён. */
+  shift_type: number | null;
+  shift_type_name: string;
+  /** «08:00» — фактическое время, менеджер может поправить поверх типа. */
+  starts_at: string | null;
+  ends_at: string | null;
+  hours: string | null;
+  is_senior: boolean;
+  /** Делит выручку и получает бонус за КПД (оплата за результат). */
+  in_kpi: boolean;
+  /** Из чего сложилась выплата: ставка, бонус, надбавка старшему, списания. */
+  base: string;
+  bonus: string;
+  senior_bonus: string;
+  penalty: string;
   /** К выплате этому человеку за смену. */
   payout: string;
   /** Сколько заказов закрыто с его отметкой — на выплату пока не влияет. */
@@ -457,8 +472,39 @@ export interface ShiftMember {
   orders_total: string;
 }
 
+export type PayScheme = "even" | "result";
+
+/** Тип смены: «Полная 08:00–20:00». Ставки видит только владелец. */
+export interface ShiftTypeInfo {
+  id: number;
+  name: string;
+  starts_at: string;
+  ends_at: string;
+  hours: string;
+  /** Ставка по роли; нет ключа — клетка пустая, берётся общая ставка. */
+  rates?: Partial<Record<Role, string>>;
+}
+
+export interface Choice<T extends string = string> {
+  value: T;
+  label: string;
+}
+
+/** Из чего менеджер выбирает, ставя человека в смену. */
+export interface ShiftOptions {
+  scheme: PayScheme;
+  roles: Choice<Role>[];
+  shift_types: ShiftTypeInfo[];
+}
+
 /** Правила оплаты смены — раньше жили только в Django-админке. */
 export interface PaySettings {
+  scheme: PayScheme;
+  schemes: Choice<PayScheme>[];
+  senior_bonus: string;
+  kpi_roles: Role[];
+  roles: Choice<Role>[];
+  shift_types: ShiftTypeInfo[];
   daily_rate: string;
   bonus_percent: string;
   penalty_table: number | null;
@@ -477,6 +523,8 @@ export interface StaffUser {
 export interface Shift {
   id: number | null;
   date: string;
+  scheme: PayScheme;
+  senior_bonus: string;
   daily_rate: string;
   bonus_percent: string;
   /** Стол списаний — заказы с него вычитаются из оплаты. */
@@ -491,7 +539,10 @@ export interface Shift {
   bonus_share: string;
   penalty_share: string;
   manual_penalty_share: string;
+  /** Одинаково на человека — только в оплате поровну, иначе 0. */
   payout: string;
+  /** Всем вместе за смену. */
+  payout_total: string;
   members: ShiftMember[];
   /** Кто выполнял заказы, но в смену не поставлен — менеджер забыл отметить. */
   outsiders: { user: number; name: string; orders: number; orders_total: string }[];
@@ -510,6 +561,7 @@ export interface PayrollRow {
   role: Role;
   role_display: string;
   days: number;
+  hours: string;
   base: string;
   bonus: string;
   penalty: string;

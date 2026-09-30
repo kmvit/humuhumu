@@ -99,16 +99,21 @@ def user_days(period: date_cls, user_id: int) -> list[dict]:
         .distinct()
     ):
         report = shift_report(shift)
+        # Ставка и бонус теперь у каждого свои (тип смены, роль, старший) —
+        # берём строку этого человека, а не цифры смены «на человека».
+        me = next(m for m in report["members"] if m["user"] == user_id)
         out.append(
             {
                 "date": report["date"],
                 "revenue": report["revenue"],
                 "members_count": report["members_count"],
-                "daily_rate": report["daily_rate"],
-                "bonus_share": report["bonus_share"],
+                "shift_type_name": me["shift_type_name"],
+                "hours": me["hours"],
+                "daily_rate": me["base"],
+                "bonus_share": str(money(Decimal(me["bonus"]) + Decimal(me["senior_bonus"]))),
                 "penalty_share": report["penalty_share"],
                 "manual_penalty_share": report["manual_penalty_share"],
-                "payout": report["payout"],
+                "payout": me["payout"],
             }
         )
     return out

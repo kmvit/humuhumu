@@ -1,9 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { get, patch, post, ApiError } from "../../api";
-import type { PaySettings, Payroll, Shift, StaffUser } from "../../types";
+import type {
+  PaySettings,
+  Payroll,
+  Role,
+  Shift,
+  ShiftMember,
+  ShiftOptions,
+  StaffUser,
+} from "../../types";
 import Icon, { type IconName } from "../../components/Icon";
 import { useAuth } from "../../auth";
 import { useToast } from "../../components/ui/Toast";
+import Modal from "../../components/ui/Modal";
+import PayRules, { fmtHours } from "./PayRules";
 
 // «2000.00» → «2 000», «1234.50» → «1 234,5»
 function fmtMoney(v: string | number | null | undefined): string {
@@ -67,6 +77,10 @@ export default function Shifts() {
   const [penVal, setPenVal] = useState("");
   // правила оплаты (ставка, процент, штрафной стол) — вкладка владельца
   const [pay, setPay] = useState<PaySettings | null>(null);
+  // типы смен и роли — из них менеджер выбирает, ставя человека в смену
+  const [options, setOptions] = useState<ShiftOptions | null>(null);
+  const [addType, setAddType] = useState<number | "">("");
+  const [editing, setEditing] = useState<ShiftMember | null>(null);
   const notify = useToast();
 
   // период для истории и сводки — по умолчанию последние 30 дней
@@ -137,6 +151,24 @@ export default function Shifts() {
     get<StaffUser[]>("/shifts/staff/").then(setStaff).catch(() => {});
   }, [canEdit, staff.length]);
 
+  const loadOptions = useCallback(() => {
+    get<ShiftOptions>("/shifts/options/")
+      .then((o) => {
+        setOptions(o);
+        // по умолчанию — первый тип, как и на сервере
+        setAddType((cur) =>
+          cur !== "" && o.shift_types.some((t) => t.id === cur)
+            ? cur
+            : (o.shift_types[0]?.id ?? "")
+        );
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (canEdit && !options) loadOptions();
+  }, [canEdit, options, loadOptions]);
+
   const free = useMemo(
     () => staff.filter((s) => !shift?.members.some((m) => m.user === s.id)),
     [staff, shift]
@@ -149,6 +181,7 @@ export default function Shifts() {
         await post<Shift>(`/shifts/${add ? "add_member" : "remove_member"}/`, {
           user: userId,
           date: day,
+          ...(add && addType !== "" ? { shift_type: addType } : {}),
         })
       );
       setAdding(false);
@@ -176,6 +209,20 @@ export default function Shifts() {
       notify("Правила оплаты сохранены", "ok");
       // Ставка применяется и к сегодняшней смене — перечитываем цифры.
       loadDay(day).catch(() => {});
+      loadPeriod().catch(() => {});
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Не получилось", "bad");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveMember(userId: number, body: Record<string, unknown>) {
+    setBusy(true);
+    try {
+      setShift(await post<Shift>("/shifts/update_member/", { user: userId, date: day, ...body }));
+      setEditing(null);
+      notify("Сохранено", "ok");
       loadPeriod().catch(() => {});
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "Не получилось", "bad");
@@ -227,18 +274,30 @@ export default function Shifts() {
 
   // Выручку дня видит только менеджер/админ — линейному персоналу оставляем
   // бонус и его выплату, но не общую выручку заведения.
+  // В оплате за результат у каждого своя сумма: менеджер видит итог
+  // смены, работник — свою выплату. «На человека» там смысла не имеет.
+  const result = shift?.scheme === "result";
+  const mine = shift?.members.find((m) => m.user === user?.id);
   const stats: { icon: IconName; label: string; value: string }[] | null = shift
     ? [
         ...(isManager
           ? [{ icon: "chart" as IconName, label: "Выручка за день", value: fmtMoney(shift.revenue) }]
           : []),
-        {
-          icon: "spark",
-          label: `Бонус ${fmtMoney(shift.bonus_percent)}% на всех`,
-          value: fmtMoney(shift.bonus_pool),
-        },
+        ...(result
+          ? []
+          : [
+              {
+                icon: "spark" as IconName,
+                label: `Бонус ${fmtMoney(shift.bonus_percent)}% на всех`,
+                value: fmtMoney(shift.bonus_pool),
+              },
+            ]),
         { icon: "gift", label: "Списания (подарки)", value: fmtMoney(shift.penalty) },
-        { icon: "wallet", label: "К выплате на человека", value: fmtMoney(shift.payout) },
+        !result
+          ? { icon: "wallet", label: "К выплате на человека", value: fmtMoney(shift.payout) }
+          : isManager
+            ? { icon: "wallet", label: "К выплате за смену", value: fmtMoney(shift.payout_total) }
+            : { icon: "wallet", label: "Моя выплата", value: fmtMoney(mine?.payout ?? 0) },
       ]
     : null;
 
@@ -278,91 +337,22 @@ export default function Shifts() {
       </div>
 
       {/* ——— правила оплаты (владелец) ——— */}
-      {tab === "pay" && (
-        pay === null ? (
+      {tab === "pay" &&
+        (pay === null ? (
           <p className="muted mt-3">Загрузка…</p>
         ) : (
-          <div className="card mt-3">
-            <strong className="title">Правила оплаты</strong>
-            <p className="muted subtitle m-0">
-              По ним считается выплата за смену. Правка действует на сегодняшнюю и
-              будущие смены; прошлые остаются со своими ставками — это история выплат.
-            </p>
-
-            <label className="field mt-3">
-              <span className="label">Оплата за смену, ₽</span>
-              <input
-                className="input"
-                type="number"
-                min={0}
-                step="50"
-                value={pay.daily_rate}
-                onChange={(e) => setPay({ ...pay, daily_rate: e.target.value })}
-              />
-              <span className="muted sm">Сколько получает каждый за отработанный день.</span>
-            </label>
-
-            <label className="field mt-3">
-              <span className="label">Бонус, % от выручки</span>
-              <input
-                className="input"
-                type="number"
-                min={0}
-                max={100}
-                step="0.5"
-                value={pay.bonus_percent}
-                onChange={(e) => setPay({ ...pay, bonus_percent: e.target.value })}
-              />
-              <span className="muted sm">
-                Процент от выручки дня. Делится поровну на всех в смене.
-              </span>
-            </label>
-
-            {/* На стойке столов нет вовсе — и штрафному столу там неоткуда взяться. */}
-            {pay.tables.length > 0 && (
-              <label className="field mt-3">
-                <span className="label">
-                  Штрафной стол <span className="muted">— необязательно</span>
-                </span>
-                <select
-                  className="input"
-                  value={pay.penalty_table ?? ""}
-                  onChange={(e) =>
-                    setPay({
-                      ...pay,
-                      penalty_table: e.target.value === "" ? null : Number(e.target.value),
-                    })
-                  }
-                >
-                  <option value="">Не использовать</option>
-                  {pay.tables.map((t) => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
-                <span className="muted sm">
-                  Стол, на который официант оформляет подарки гостям за косяки персонала.
-                  Сумма его заказов делится на всех в смене и вычитается из оплаты,
-                  в выручку дня не идёт.
-                </span>
-              </label>
-            )}
-
-            <button
-              className="btn sm mt-3"
-              disabled={busy}
-              onClick={() =>
-                savePaySettings({
-                  daily_rate: pay.daily_rate,
-                  bonus_percent: pay.bonus_percent,
-                  penalty_table: pay.penalty_table,
-                })
-              }
-            >
-              <Icon name="check" size={16} /> Сохранить
-            </button>
-          </div>
-        )
-      )}
+          <PayRules
+            pay={pay}
+            setPay={setPay}
+            busy={busy}
+            onSave={savePaySettings}
+            onChanged={() => {
+              loadOptions();
+              loadDay(day).catch(() => {});
+              loadPeriod().catch(() => {});
+            }}
+          />
+        ))}
 
       {/* ——— смена на день ——— */}
       {tab === "day" && shift && (
@@ -540,6 +530,39 @@ export default function Shifts() {
 
           {canEdit && adding && (
             <div className="card mt-3">
+              <div className="field">
+                {!!options?.shift_types.length && (
+                  <label>
+                    <span className="label">Тип смены</span>
+                    <select
+                      className="input"
+                      value={addType}
+                      onChange={(e) =>
+                        setAddType(e.target.value === "" ? "" : Number(e.target.value))
+                      }
+                    >
+                      {options.shift_types.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name} · {t.starts_at}–{t.ends_at}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {/* Здесь тип выбирают, а заводят и правят — во вкладке «Оплата»:
+                    у типа есть ставки, а это решение владельца, не менеджера. */}
+                {user?.role === "admin" ? (
+                  <button className="btn ghost sm mt-2" onClick={() => setTab("pay")}>
+                    <Icon name="edit" size={15} />{" "}
+                    {options?.shift_types.length ? "Изменить типы смен" : "Завести типы смен"}
+                  </button>
+                ) : (
+                  <span className="muted sm">
+                    Типы смен и их время задаёт админ во вкладке «Оплата». Время
+                    конкретного человека можно поправить карандашом в его строке.
+                  </span>
+                )}
+              </div>
               <div className="wrap">
                 {free.map((s) => (
                   <button
@@ -577,12 +600,28 @@ export default function Shifts() {
                   </strong>
                   <span className="muted">
                     {m.role_display}
+                    {m.starts_at && m.ends_at
+                      ? ` · ${m.shift_type_name ? m.shift_type_name + " " : ""}${m.starts_at}–${m.ends_at} (${fmtHours(m.hours)})`
+                      : ""}
                     {m.orders > 0
                       ? ` · ${m.orders} зак. на ${fmtMoney(m.orders_total)}`
                       : ""}
                   </span>
+                  {m.is_senior && (
+                    <span className="badge open mini mt-1">Старший</span>
+                  )}
                 </div>
                 <strong className="num">{fmtMoney(m.payout)}</strong>
+                {canEdit && (
+                  <button
+                    className="icon-btn"
+                    disabled={busy}
+                    aria-label="Изменить"
+                    onClick={() => setEditing(m)}
+                  >
+                    <Icon name="edit" size={15} />
+                  </button>
+                )}
                 {canEdit && (
                   <button
                     className="icon-btn"
@@ -689,13 +728,38 @@ export default function Shifts() {
           )}
 
           <p className="muted mt-3">
-            Оплата за день {fmtMoney(shift.daily_rate)} + бонус{" "}
-            {fmtMoney(shift.bonus_percent)}% от выручки на всех
-            {shift.penalty_table
-              ? ` − списания со стола «${shift.penalty_table}»`
-              : ""}
-            . Ставку, процент и штрафной стол задаёт админ.
+            {result ? (
+              <>
+                Ставка по типу смены и роли
+                {Number(shift.senior_bonus) > 0
+                  ? ` + ${fmtMoney(shift.senior_bonus)} старшему`
+                  : ""}
+                {shift.penalty_table
+                  ? ` − списания со стола «${shift.penalty_table}»`
+                  : ""}
+                . Ставки и типы смен задаёт админ.
+              </>
+            ) : (
+              <>
+                Оплата за день {fmtMoney(shift.daily_rate)} + бонус{" "}
+                {fmtMoney(shift.bonus_percent)}% от выручки на всех
+                {shift.penalty_table
+                  ? ` − списания со стола «${shift.penalty_table}»`
+                  : ""}
+                . Ставку, процент и штрафной стол задаёт админ.
+              </>
+            )}
           </p>
+
+          {editing && options && (
+            <MemberEditor
+              member={editing}
+              options={options}
+              busy={busy}
+              onClose={() => setEditing(null)}
+              onSave={(body) => saveMember(editing.user, body)}
+            />
+          )}
         </>
       )}
 
@@ -741,18 +805,31 @@ export default function Shifts() {
                 {s.members.map((m) => (
                   <span className="badge open" key={m.id}>
                     {m.name} · {m.role_display}
+                    {s.scheme === "result" ? ` · ${fmtMoney(m.payout)}` : ""}
                   </span>
                 ))}
               </div>
-              <div className="row mt-2">
-                <span className="muted">
-                  ставка {fmtMoney(s.daily_rate)} + бонус {fmtMoney(s.bonus_share)}
-                  {Number(s.penalty) > 0
-                    ? ` − списания ${fmtMoney(s.penalty_share)}`
-                    : ""}
-                </span>
-                <strong className="num">{fmtMoney(s.payout)}</strong>
-              </div>
+              {s.scheme === "result" ? (
+                <div className="row mt-2">
+                  <span className="muted">
+                    ставки по типу смены и роли
+                    {Number(s.penalty) > 0
+                      ? ` − списания ${fmtMoney(s.penalty_share)} с каждого`
+                      : ""}
+                  </span>
+                  <strong className="num">{fmtMoney(s.payout_total)}</strong>
+                </div>
+              ) : (
+                <div className="row mt-2">
+                  <span className="muted">
+                    ставка {fmtMoney(s.daily_rate)} + бонус {fmtMoney(s.bonus_share)}
+                    {Number(s.penalty) > 0
+                      ? ` − списания ${fmtMoney(s.penalty_share)}`
+                      : ""}
+                  </span>
+                  <strong className="num">{fmtMoney(s.payout)}</strong>
+                </div>
+              )}
             </div>
           ))}
           {history.length === 0 && (
@@ -772,7 +849,9 @@ export default function Shifts() {
               <div className="row-body">
                 <strong>{r.name}</strong>
                 <span className="muted">
-                  {r.role_display} · {fmtDays(r.days)} · ставка {fmtMoney(r.base)} +
+                  {r.role_display} · {fmtDays(r.days)}
+                  {Number(r.hours) > 0 ? ` (${fmtHours(r.hours)})` : ""} · ставка{" "}
+                  {fmtMoney(r.base)} +
                   бонус {fmtMoney(r.bonus)}
                   {Number(r.penalty) > 0
                     ? ` − списания ${fmtMoney(r.penalty)}`
@@ -798,5 +877,95 @@ export default function Shifts() {
       )}
 
     </>
+  );
+}
+
+// Менеджер правит человека в смене: тип, роль, время, старший.
+function MemberEditor({
+  member,
+  options,
+  busy,
+  onClose,
+  onSave,
+}: {
+  member: ShiftMember;
+  options: ShiftOptions;
+  busy: boolean;
+  onClose: () => void;
+  onSave: (body: Record<string, unknown>) => void;
+}) {
+  const [typeId, setTypeId] = useState<number | "">(member.shift_type ?? "");
+  const [role, setRole] = useState<Role>(member.role);
+  const [start, setStart] = useState(member.starts_at ?? "");
+  const [end, setEnd] = useState(member.ends_at ?? "");
+  const [senior, setSenior] = useState(member.is_senior);
+
+  // Сменили тип — время подставляется из него; поправить можно после.
+  function pickType(raw: string) {
+    const id = raw === "" ? "" : Number(raw);
+    setTypeId(id);
+    const t = options.shift_types.find((x) => x.id === id);
+    if (t) {
+      setStart(t.starts_at);
+      setEnd(t.ends_at);
+    }
+  }
+
+  function save() {
+    const body: Record<string, unknown> = { role, is_senior: senior };
+    if (typeId !== (member.shift_type ?? "")) body.shift_type = typeId === "" ? null : typeId;
+    // время шлём всегда после типа: сервер сначала ставит время типа, потом наше
+    body.starts_at = start || null;
+    body.ends_at = end || null;
+    onSave(body);
+  }
+
+  return (
+    <Modal onClose={onClose} head={<strong className="title">{member.name}</strong>}>
+      {options.shift_types.length > 0 && (
+        <label className="field">
+          <span className="label">Тип смены</span>
+          <select className="input" value={typeId} onChange={(e) => pickType(e.target.value)}>
+            <option value="">Без типа</option>
+            {options.shift_types.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name} · {t.starts_at}–{t.ends_at}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <label className="field">
+        <span className="label">Роль в этой смене</span>
+        <select className="input" value={role} onChange={(e) => setRole(e.target.value as Role)}>
+          {options.roles.map((r) => (
+            <option key={r.value} value={r.value}>{r.label}</option>
+          ))}
+        </select>
+        <span className="muted sm">Например, официант сегодня за стойкой — ставка бариста.</span>
+      </label>
+      <div className="wrap">
+        <label className="field" style={{ flex: "1 1 120px" }}>
+          <span className="label">Пришёл</span>
+          <input className="input" type="time" value={start} onChange={(e) => setStart(e.target.value)} />
+        </label>
+        <label className="field" style={{ flex: "1 1 120px" }}>
+          <span className="label">Ушёл</span>
+          <input className="input" type="time" value={end} onChange={(e) => setEnd(e.target.value)} />
+        </label>
+      </div>
+      <label className="inline tight">
+        <input type="checkbox" checked={senior} onChange={(e) => setSenior(e.target.checked)} />
+        <span className="sm">Старший смены</span>
+      </label>
+      <div className="wrap mt-3">
+        <button className="btn sm" disabled={busy} onClick={save}>
+          <Icon name="check" size={15} /> Сохранить
+        </button>
+        <button className="btn ghost sm" onClick={onClose}>
+          Отмена
+        </button>
+      </div>
+    </Modal>
   );
 }
