@@ -1445,6 +1445,25 @@ class ShiftsAdminTests(APITestCase):
         with self.assertRaises(ValidationError):
             ShiftType(name="X", starts_at=time(10), ends_at=time(10)).clean()
 
+    def test_settings_form_builds_without_selected_organization(self):
+        """На проде заведений несколько, а admin.py грузится до запроса.
+
+        Форма с fields="__all__" строила при импорте поля для внешних
+        ключей — запрос через тенантный менеджер без выбранного заведения,
+        и backend падал при старте (30.09.2026). Локально заведение одно,
+        и старые тесты этого не видели.
+        """
+        from core.tenancy import _current
+
+        from .admin import ShiftSettingsForm
+
+        Organization.objects.create(name="Второе", slug="vtoroe-adm", domain="vtoroe.example.com")
+        token = _current.set(None)
+        try:
+            type("Again", (ShiftSettingsForm,), {"Meta": ShiftSettingsForm.Meta})
+        finally:
+            _current.reset(token)
+
 
 class UpsellTests(APITestCase):
     """Допродажи — этап 4: надбавка исполнителю за платную опцию."""
