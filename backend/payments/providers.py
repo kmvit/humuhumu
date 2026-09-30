@@ -38,6 +38,10 @@ class KassaError(Exception):
     """Касса отказала или не ответила. Текст видит сотрудник, не гость."""
 
 
+class KassaNotFound(KassaError):
+    """Касса не знает такого заказа — его удалили на ней самой."""
+
+
 @dataclass(frozen=True)
 class KassaResult:
     """Что касса сказала о заказе."""
@@ -260,7 +264,12 @@ class AqsiProvider(BaseProvider):
         return positions
 
     def status(self, payment) -> KassaResult | None:
-        data = self._request("GET", f"/v2/Orders/simple/{payment.external_id}")
+        try:
+            data = self._request("GET", f"/v2/Orders/simple/{payment.external_id}")
+        except KassaNotFound:
+            # Кассир удалил заказ у себя. Держать платёж «ждущим» нельзя:
+            # заказ висел бы «на кассе» вечно и не отменился бы сам.
+            return KassaResult(success=False)
         if not isinstance(data, dict):
             return None
         state = str(data.get("status") or "").strip().lower()
@@ -297,7 +306,10 @@ class AqsiProvider(BaseProvider):
     def cancel(self, payment) -> None:
         if not payment.external_id:
             return
-        self._request("DELETE", f"/v2/Orders/simple/{payment.external_id}")
+        try:
+            self._request("DELETE", f"/v2/Orders/simple/{payment.external_id}")
+        except KassaNotFound:
+            pass  # на кассе его уже нет — того и добивались
 
     def _request(self, method: str, path: str, *, json: dict | None = None):
         try:
@@ -309,7 +321,12 @@ class AqsiProvider(BaseProvider):
         if response.status_code in (401, 403):
             raise KassaError("aQsi не приняла API-ключ — проверьте его в кабинете aQsi")
         if response.status_code >= 400:
-            raise KassaError(f"aQsi: {self._reason(response)}")
+            reason = self._reason(response)
+            # Несуществующий заказ aQsi отдаёт 412 «Заказ не найден»
+            # (проверено на боевом кабинете), а не 404.
+            if response.status_code in (404, 412) and "не найден" in reason.lower():
+                raise KassaNotFound(f"aQsi: {reason}")
+            raise KassaError(f"aQsi: {reason}")
         if response.status_code == 204 or not response.content:
             return {}
         try:
@@ -319,7 +336,8 @@ class AqsiProvider(BaseProvider):
 
     @staticmethod
     def _reason(response: httpx.Response) -> str:
-        """Причину отказа aQsi пишет в тело: {"code": ..., "errors": [...]}."""
+        """Причину отказа aQsi пишет в тело, и по-разному: {"errors": [...]},
+        {"message": ..., "errors": [...]} или {"message": ..., "reason": ...}."""
         try:
             data = response.json()
         except ValueError:
@@ -329,6 +347,8 @@ class AqsiProvider(BaseProvider):
             parts = [e if isinstance(e, str) else (e.get("message") or e.get("text") or str(e))
                      for e in errors]
             return "; ".join(str(p) for p in parts)[:300]
+        if isinstance(data, dict) and data.get("message"):
+            return str(data["message"])[:300]
         return str((data or {}).get("code") or f"ответ {response.status_code}")
 
 

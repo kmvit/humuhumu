@@ -60,7 +60,11 @@ class FakeAqsi:
         order_id = path.rsplit("/", 1)[1]
         if method == "GET":
             if order_id not in self.orders:
-                return httpx.Response(400, json={"errors": ["Заказ не найден"]}, request=request)
+                # Так отвечает боевой кабинет aQsi (проверено 30.09.2026).
+                return httpx.Response(412, json={
+                    "message": "Запрос содержит некорректные параметры",
+                    "errors": ["Заказ не найден"],
+                }, request=request)
             return httpx.Response(200, json=self.orders[order_id], request=request)
         if method == "DELETE":
             self.orders.pop(order_id, None)
@@ -303,6 +307,17 @@ class KassaSettleTests(KassaBase):
         order.refresh_from_db()
         payment.refresh_from_db()
         self.assertEqual(payment.status, Payment.Status.CANCELLED)
+        self.assertEqual(order.status, Order.Status.UNPAID)
+
+    def test_order_deleted_on_kassa_stops_waiting(self):
+        """Кассир удалил заказ у себя — у нас он перестаёт быть «на кассе»."""
+        order = self.place()
+        self.to_kassa(order)
+        self.aqsi.orders.clear()
+        self.age(order)
+        settle_order(order)
+        order.refresh_from_db()
+        self.assertEqual(Payment.objects.get(order=order).status, Payment.Status.CANCELLED)
         self.assertEqual(order.status, Order.Status.UNPAID)
 
     def test_refund_of_kassa_payment_does_not_call_bank(self):
