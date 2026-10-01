@@ -532,7 +532,10 @@ export default function Warehouse() {
             ref={fileRef}
             type="file"
             accept="image/*"
-            capture="environment"
+            // Без capture: телефон сам предложит «Снять фото» или выбрать
+            // из галереи. С capture открывалась только камера — чек,
+            // сфотографированный заранее или присланный поставщиком, было
+            // не загрузить.
             onChange={onPickPhoto}
             style={{ display: "none" }}
           />
