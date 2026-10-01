@@ -273,6 +273,8 @@ export interface Order {
   payable: string;
   /** Заказ лежит на кассе и ждёт оплаты — номер на кассе = id заказа. */
   kassa_waiting: boolean;
+  /** Как заплатили: касса / онлайн / отметка сотрудника; пусто — не оплачен. */
+  pay_channel: "" | "manual" | "online" | "kassa";
   items: OrderItem[];
   created_at: string;
   food_started_at: string | null;

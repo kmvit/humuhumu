@@ -97,12 +97,18 @@ export default function Admin() {
     () => orders.filter((o) => o.status === "refunded").reduce((s, o) => s + Number(o.total), 0),
     [orders]
   );
-  // разбивка оплаченного по способу оплаты (нал/карта)
-  const { cash, card } = useMemo(() => {
+  // Разбивка оплаченного: наличные, карта на месте и онлайн. Карту онлайн
+  // и карту на кассе держим отдельно — это разные деньги на разных счетах,
+  // и сверяют их с разными выписками.
+  const { cash, card, online } = useMemo(() => {
     const paid = orders.filter((o) => o.status === "paid");
-    const sum = (m: string) =>
-      paid.filter((o) => o.pay_method === m).reduce((s, o) => s + Number(o.total), 0);
-    return { cash: sum("cash"), card: sum("card") };
+    const sum = (pick: (o: Order) => boolean) =>
+      paid.filter(pick).reduce((s, o) => s + Number(o.total), 0);
+    return {
+      cash: sum((o) => o.pay_method === "cash" && o.pay_channel !== "online"),
+      card: sum((o) => o.pay_method === "card" && o.pay_channel !== "online"),
+      online: sum((o) => o.pay_channel === "online"),
+    };
   }, [orders]);
   const active = orders.filter((o) => o.status === "open").length;
 
@@ -114,7 +120,8 @@ export default function Admin() {
     { icon: "receipt", label: "Всего заказов", value: orders.length },
     { icon: "chart", label: "Оборот (без отмен и возвратов)", value: money(revenue) },
     { icon: "cash", label: "Наличными", value: money(cash) },
-    { icon: "card", label: "Картой", value: money(card) },
+    { icon: "card", label: "Картой на месте", value: money(card) },
+    { icon: "laptop", label: "Онлайн", value: money(online) },
     ...(refunded ? [{ icon: "minus", label: "Возвраты", value: money(refunded) } as const] : []),
     { icon: "store", label: "В работе", value: active },
   ] as const;
@@ -241,21 +248,6 @@ export default function Admin() {
 
       <Staff />
 
-      <h2 className="section-title">Последние заказы</h2>
-      <div className="card">
-        {orders.slice(0, 20).map((o) => (
-          <div className="row" key={o.id}>
-            <span className="tx-icon"><Icon name="receipt" size={17} /></span>
-            <div className="row-body">
-              <strong>Заказ №{o.id}</strong>
-              <span className="muted">{o.items.length} поз.{o.table ? ` · стол ${o.table}` : ""}</span>
-            </div>
-            <span className={"badge " + o.status}>{o.status_display}</span>
-            <strong className="num">{o.total}</strong>
-          </div>
-        ))}
-        {orders.length === 0 && <p className="muted">Заказов пока нет.</p>}
-      </div>
     </>
   );
 }

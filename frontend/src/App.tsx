@@ -15,6 +15,7 @@ import Catalog from "./pages/admin/Catalog";
 import Warehouse from "./pages/warehouse/Warehouse";
 import Shifts from "./pages/shifts/Shifts";
 import Finance from "./pages/finance/Finance";
+import OrdersJournal from "./pages/orders/OrdersJournal";
 import Offer from "./pages/legal/Offer";
 import Privacy from "./pages/legal/Privacy";
 import Payment from "./pages/legal/Payment";
@@ -140,6 +141,8 @@ export default function App() {
         )}
         {user?.role === "admin" && <Route path="/admin" element={<Admin />} />}
         {user?.role === "admin" && <Route path="/catalog" element={<Catalog />} />}
+        {/* заказы и платежи за день — выручка, видна только владельцу */}
+        {user?.role === "admin" && <Route path="/orders" element={<OrdersJournal />} />}
         {/* смены — всем сотрудникам, клиентам не нужно */}
         {user && user.role !== "client" && (
           <Route

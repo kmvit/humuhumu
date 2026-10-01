@@ -2,14 +2,19 @@ from django.contrib import admin
 
 from .acquiring import acquirer_class
 from .models import AcquiringCredentials, Payment
+from .providers import provider_class
 
 
 @admin.register(Payment)
 class PaymentAdmin(admin.ModelAdmin):
-    list_display = ("id", "purpose", "status", "amount", "provider", "created_at")
-    list_filter = ("purpose", "status", "provider")
-    search_fields = ("external_id",)
+    list_display = (
+        "id", "purpose", "status", "amount", "method", "provider", "order",
+        "fiscal_receipt", "created_at",
+    )
+    list_filter = ("purpose", "status", "provider", "method")
+    search_fields = ("external_id", "order__id", "fiscal_receipt")
     readonly_fields = ("external_id",)
+    raw_id_fields = ("order",)
 
 
 @admin.register(AcquiringCredentials)
@@ -30,7 +35,11 @@ class AcquiringCredentialsAdmin(admin.ModelAdmin):
     @admin.display(description="Заданные поля")
     def filled(self, obj) -> str:
         stored = obj.values()
-        names = [f.label for f in acquirer_class(obj.provider).fields if stored.get(f.key)]
+        # В этой таблице лежат и ключи банков, и ключи касс: поля кассы
+        # описывает её драйвер. Без этого ключ aQsi показывался «пустым»,
+        # хотя касса работала, — и поддержка искала поломку не там.
+        cls = provider_class(obj.provider) or acquirer_class(obj.provider)
+        names = [f.label for f in cls.fields if stored.get(f.key)]
         return ", ".join(names) or "— (пусто или не расшифровываются)"
 
     def has_add_permission(self, request):

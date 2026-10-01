@@ -277,3 +277,26 @@ class KassaSettingsView(APIView):
                 for cls in kassas()
             ],
         }
+
+
+class PaymentJournalView(APIView):
+    """GET /api/payments/journal/?date=ГГГГ-ММ-ДД — платежи за день.
+
+    Только владелец: это выручка заведения. Без даты — сегодня.
+    """
+
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        from datetime import date
+
+        from django.utils import timezone
+
+        from .journal import day_journal
+
+        raw = request.query_params.get("date")
+        try:
+            day = date.fromisoformat(raw) if raw else timezone.localdate()
+        except ValueError:
+            return Response({"detail": "Дата в формате ГГГГ-ММ-ДД"}, status=400)
+        return Response(day_journal(day))

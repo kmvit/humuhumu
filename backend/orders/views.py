@@ -94,7 +94,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         return [IsAuthenticated()]
 
     def get_queryset(self):
-        from django.db.models import Exists, OuterRef
+        from django.db.models import Exists, OuterRef, Subquery
 
         from payments.providers import _PROVIDERS
 
@@ -108,7 +108,16 @@ class OrderViewSet(viewsets.ModelViewSet):
                     status=Payment.Status.PENDING,
                     provider__in=list(_PROVIDERS),
                 )
-            )
+            ),
+            pay_provider_ann=Subquery(
+                Payment.objects.filter(
+                    order=OuterRef("pk"),
+                    purpose=Payment.Purpose.ORDER,
+                    status__in=(Payment.Status.SUCCEEDED, Payment.Status.REFUNDED),
+                )
+                .order_by("-created_at")
+                .values("provider")[:1]
+            ),
         )
         params = self.request.query_params
         # активные заказы: открытые + оплаченные сегодня (оплата вперёд — кухня

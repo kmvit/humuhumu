@@ -55,6 +55,28 @@ class OrderSerializer(serializers.ModelSerializer):
     # Заказ лежит на кассе и ждёт оплаты: гостю — «назовите номер на
     # кассе», баристе — не принимать деньги мимо кассы второй раз.
     kassa_waiting = serializers.SerializerMethodField()
+    # Каким путём заплатили: касса / онлайн / отметка сотрудника. Сводке
+    # владельца мало «картой»: карта онлайн и карта на кассе — разные
+    # деньги, их сверяют с разными выписками.
+    pay_channel = serializers.SerializerMethodField()
+
+    def get_pay_channel(self, obj) -> str:
+        from payments.journal import channel_of
+
+        provider = getattr(obj, "pay_provider_ann", None)
+        if provider is None and obj.paid_at:
+            from payments.models import Payment
+
+            provider = (
+                Payment.objects.filter(
+                    order=obj, purpose=Payment.Purpose.ORDER,
+                    status__in=(Payment.Status.SUCCEEDED, Payment.Status.REFUNDED),
+                )
+                .order_by("-created_at")
+                .values_list("provider", flat=True)
+                .first()
+            )
+        return channel_of(provider) if provider else ""
 
     def get_kassa_waiting(self, obj) -> bool:
         # Списки приходят с аннотацией (OrderViewSet.get_queryset) — без
@@ -100,6 +122,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "bonus_spent",
             "payable",
             "kassa_waiting",
+            "pay_channel",
             "items",
             "created_at",
             "food_started_at",
