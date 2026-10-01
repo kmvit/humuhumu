@@ -118,14 +118,20 @@ class RedeemTests(LoyaltyBase):
         self.assertEqual(order.bonus_spent, Decimal("200"))
         self.assertEqual(order.payable, Decimal("1000"))
 
-    def test_full_redeem_leaves_nothing_to_pay(self):
+    def test_at_least_one_ruble_is_paid_in_money(self):
+        """Счёт целиком бонусами — чек на 0 ₽, его касса не пробьёт:
+        заказ застрял бы неоплаченным. Рубль гость платит деньгами."""
         member = self.guest()
         member.balance = Decimal("1200")
         member.save()
-        order = self.make_order(qty=5)
-        redeem(member.pk, Decimal("1200"), order)
+        order = self.make_order(qty=5)  # 1200 ₽
+        with self.assertRaises(LoyaltyError):
+            redeem(member.pk, Decimal("1200"), order)
+        redeem(member.pk, Decimal("1199"), order)
         order.refresh_from_db()
-        self.assertEqual(order.payable, Decimal("0"))
+        self.assertEqual(order.payable, Decimal("1"))
+        with self.assertRaises(LoyaltyError):
+            redeem(member.pk, Decimal("1"), order)  # последний рубль — деньгами
 
     def test_cannot_redeem_more_than_balance(self):
         member = self.guest()  # 200 бонусов
@@ -149,7 +155,7 @@ class RedeemTests(LoyaltyBase):
         order = self.make_order(qty=1)  # 240 ₽
         redeem(member.pk, Decimal("200"), order)
         with self.assertRaises(LoyaltyError):
-            redeem(member.pk, Decimal("100"), order)  # осталось всего 40
+            redeem(member.pk, Decimal("100"), order)  # осталось всего 39 (рубль — деньгами)
 
 
 class EarnTests(LoyaltyBase):

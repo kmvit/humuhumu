@@ -7,6 +7,7 @@ import Icon, { categoryIcon } from "../../components/Icon";
 import Lightbox from "../../components/Lightbox";
 import { useToast } from "../../components/ui/Toast";
 import Stepper from "../../components/ui/Stepper";
+import GuestCheckout, { type GuestChoice } from "./GuestCheckout";
 
 // Сбор заказа. В зале — для стола: позиции можно писать на гостя
 // (Общий / Гость 1, 2, …) для раздельного счёта либо оставить всё общим.
@@ -17,6 +18,7 @@ export default function Compose({
   orderId,
   initialGuests = 0,
   submitLabel,
+  checkout,
   onCreated,
   onCancel,
 }: {
@@ -26,6 +28,9 @@ export default function Compose({
   /** Подпись кнопки отправки. Стойка с кассой — «На оплату»: заказ сперва
    *  оплачивают, потом готовят. */
   submitLabel?: string;
+  /** Стойка с бонусами: перед отправкой — окно оплаты с гостем и списанием.
+   *  Бонусы учитываются в момент создания, до кассы. */
+  checkout?: { label: string; canRedeem: boolean };
   /** Созданный заказ — экрану, который решает, что дальше (оплата). */
   onCreated: (order?: Order) => void;
   onCancel: () => void;
@@ -52,6 +57,7 @@ export default function Compose({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [zoom, setZoom] = useState<string | null>(null);
+  const [checkingOut, setCheckingOut] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -157,7 +163,7 @@ export default function Compose({
     else add(v.id);
   }
 
-  async function submit() {
+  async function submit(guest: GuestChoice = null) {
     setBusy(true);
     try {
       const items = Object.entries(cart).map(([k, quantity]) => {
@@ -178,6 +184,7 @@ export default function Compose({
           table,
           comment: comment.trim(),
           ...(performer === "" ? {} : { performer }),
+          ...(guest ? { phone: guest.phone, bonus: guest.bonus } : {}),
         });
       }
       onCreated(created);
@@ -410,11 +417,26 @@ export default function Compose({
             </span>
             <span className="total num">{total.toLocaleString("ru")} ₽</span>
           </div>
-          <button className="btn" onClick={submit} disabled={busy}>
+          <button
+            className="btn"
+            onClick={() => (checkout && !adding ? setCheckingOut(true) : submit())}
+            disabled={busy}
+          >
             <Icon name={busy ? "spark" : "check"} size={18} />
             {adding ? "Добавить" : submitLabel ?? "Отправить"}
           </button>
         </div>
+      )}
+
+      {checkingOut && checkout && (
+        <GuestCheckout
+          total={total}
+          label={checkout.label}
+          busy={busy}
+          canRedeem={checkout.canRedeem}
+          onConfirm={submit}
+          onClose={() => setCheckingOut(false)}
+        />
       )}
 
       {picking && (

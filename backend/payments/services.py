@@ -297,6 +297,33 @@ def drop_kassa_orders(order: Order, *, keep: Payment | None = None) -> None:
         payment.save(update_fields=["status", "updated_at"])
 
 
+def withdraw_from_kassa(order: Order) -> None:
+    """Снять заказ с кассы, чтобы поменять сумму (бонусы вспомнили у окна).
+
+    В отличие от drop_kassa_orders, здесь сбой — это отказ: если заказ
+    остался на кассе, гость оплатит его по старой цене, а мы уже спишем
+    бонусы. Поэтому сперва спрашиваем кассу — вдруг уже оплатили, — и
+    гасим платёж у себя только когда касса подтвердила удаление.
+    Оплаченный заказ aQsi удалить не даёт — это тоже отказ.
+    """
+    for payment in list(pending_kassa_payments(order)):
+        settle_kassa_payment(payment)
+        payment.refresh_from_db()
+        if payment.status != Payment.Status.PENDING:
+            order.refresh_from_db()
+            if order.paid_at:
+                raise PaymentError("Заказ уже оплачен на кассе — бонусы к нему не применить")
+            continue
+        try:
+            get_provider(payment.provider).cancel(payment)
+        except KassaError as e:
+            raise PaymentError(
+                f"Не удалось снять заказ с кассы ({e}) — сумму не меняем, попробуйте ещё раз"
+            ) from e
+        payment.status = Payment.Status.CANCELLED
+        payment.save(update_fields=["status", "updated_at"])
+
+
 def settle_kassa_payment(payment: Payment) -> bool:
     """Спросить кассу, оплачен ли лежащий на ней заказ, и применить ответ.
 

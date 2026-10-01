@@ -26,6 +26,7 @@ def cancel_stale_unpaid_orders_task():
 
     from core.models import Organization
     from core.tenancy import organization_context
+    from loyalty.services import return_for_order
     from payments.services import drop_kassa_orders, pending_kassa_payments, settle_order
 
     from .models import Order
@@ -45,6 +46,9 @@ def cancel_stale_unpaid_orders_task():
                 # деньги только через неё. Ушедшего гостя отменяет бариста.
                 if pending_kassa_payments(order).exists():
                     continue
+                # Бонусы бариста списывает при создании заказа — отменённый
+                # заказ должен вернуть их гостю, иначе они просто пропадут.
+                return_for_order(order)
                 order.status = Order.Status.CANCELLED
                 order.closed_at = timezone.now()
                 order.save(update_fields=["status", "closed_at"])

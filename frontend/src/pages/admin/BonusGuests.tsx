@@ -109,7 +109,7 @@ export default function BonusGuests({ welcome }: { welcome: number }) {
       </div>
 
       {adding && (
-        <form className="rule-top mt-3 pt-3" onSubmit={submit}>
+        <form className="rule-top mt-3" onSubmit={submit}>
           <div className="wrap">
             <input
               className="input grow"

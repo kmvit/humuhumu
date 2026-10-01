@@ -1,4 +1,5 @@
 import re
+from decimal import Decimal
 
 from rest_framework import serializers
 
@@ -77,7 +78,7 @@ class AdminMemberSerializer(EnrollSerializer):
     без приветственных, остаток отдельной проводкой."""
 
     transfer_balance = serializers.DecimalField(
-        max_digits=12, decimal_places=2, required=False, allow_null=True, min_value=0,
+        max_digits=12, decimal_places=2, required=False, allow_null=True, min_value=Decimal("0"),
         label="Остаток из прежней системы",
     )
 

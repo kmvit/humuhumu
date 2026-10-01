@@ -61,13 +61,16 @@ export default function GuestBonus({
 
   const payable = Number(order.payable);
   const spent = Number(order.bonus_spent);
-  // сдачи с бонусов не бывает — списываем не больше остатка счёта
-  const maxRedeem = Math.min(Number(member.balance), payable);
+  // сдачи с бонусов не бывает, и хотя бы 1 ₽ гость платит деньгами:
+  // чек на 0 ₽ касса не пробьёт
+  const maxRedeem = Math.max(0, Math.floor(Math.min(Number(member.balance), payable - 1)));
   // Бонусы уменьшают сумму к оплате, поэтому списываются только до неё:
   // у предоплаченного заказа деньги уже взяты на полную сумму.
+  // Заказ на кассе гость не пересчитывает — это делает бариста у окна.
   const canRedeem =
     !order.paid_at &&
-    (order.status === "open" || order.status === "requested" || order.status === "unpaid");
+    !order.kassa_waiting &&
+    (order.status === "open" || order.status === "unpaid");
 
   async function redeem(amount: number) {
     if (amount <= 0) return;
@@ -107,7 +110,7 @@ export default function GuestBonus({
         <p className="muted sm mt-2 m-0">
           {Number(member.balance) <= 0
             ? "Копятся с каждой покупки — 1 бонус = 1 ₽."
-            : "Весь заказ уже оплачен бонусами."}
+            : "Бонусами уже оплачено всё, что можно."}
         </p>
       ) : (
         <>
@@ -117,7 +120,6 @@ export default function GuestBonus({
           </p>
           <button className="btn block mt-3" disabled={busy} onClick={() => redeem(maxRedeem)}>
             <Icon name="gift" size={17} /> Списать {maxRedeem.toLocaleString("ru")}
-            {maxRedeem >= payable ? " — заказ закрыт" : ""}
           </button>
           {maxRedeem > 100 && (
             <button

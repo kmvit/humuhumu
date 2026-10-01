@@ -196,19 +196,26 @@ class OrderViewSet(viewsets.ModelViewSet):
         return OrderSerializer
 
     def create(self, request, *args, **kwargs):
+        from loyalty.services import LoyaltyError
+
         serializer = OrderCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
         try:
-            order = create_order(
-                waiter=request.user,
-                items=serializer.validated_data["items"],
-                table=serializer.validated_data.get("table", ""),
-                comment=serializer.validated_data.get("comment", ""),
-                performer=resolve_performer(
-                    serializer.validated_data.get("performer"), fallback=request.user
-                ),
-            )
-        except OrderError as e:
+            # Заказ, гость и списание — одним целым: не нашёлся гость или
+            # бонусов не хватило — заказа нет, бариста поправит и отправит
+            # заново, а не получит на доске заказ с полной суммой.
+            with transaction.atomic():
+                order = create_order(
+                    waiter=request.user,
+                    items=data["items"],
+                    table=data.get("table", ""),
+                    comment=data.get("comment", ""),
+                    performer=resolve_performer(data.get("performer"), fallback=request.user),
+                )
+                if data.get("phone"):
+                    self._guest_on_create(order, data["phone"], data.get("bonus") or 0)
+        except (OrderError, LoyaltyError) as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         if order.status == Order.Status.UNPAID:
             # Стойка с кассой: заказ сразу уходит на кассу. Не дошёл (касса
@@ -220,6 +227,32 @@ class OrderViewSet(viewsets.ModelViewSet):
                 pass
             order = self.get_queryset().get(pk=order.pk)
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
+
+    @staticmethod
+    def _guest_on_create(order, phone, bonus):
+        """Закрепить заказ за гостем и списать бонусы — до отправки на кассу.
+
+        На стойке с кассой заказ уходит на кассу сразу после записи, и
+        сумма там — та, что была в этот момент. Поэтому бонусы учитываются
+        здесь, а не на карточке после: иначе касса просила бы полную цену.
+        """
+        from core.models import SiteSettings
+        from core.plans import features
+        from loyalty.models import LoyaltyMember
+        from loyalty.services import LoyaltyError, attach_guest, redeem
+
+        site = SiteSettings.load()
+        if not site.bonus_enabled or "loyalty" not in features():
+            raise LoyaltyError("Бонусная программа выключена")
+        member = LoyaltyMember.objects.filter(user__phone=phone).first()
+        if member is None:
+            raise LoyaltyError("Гость не найден — запишите его в программу")
+        attach_guest(order, member)
+        if bonus:
+            if not site.bonus_redeem_waiter:
+                raise LoyaltyError("Списание бонусов персоналом выключено")
+            order.refresh_from_db()
+            redeem(member.pk, Decimal(bonus), order)
 
     # --- клиентские заявки без авторизации ---
 
@@ -308,6 +341,9 @@ class OrderViewSet(viewsets.ModelViewSet):
                 {"detail": "Заказ уже в работе — отмена только через сотрудника"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        from loyalty.services import return_for_order
+
+        return_for_order(order)  # гость отменил — списанные бонусы назад
         order.status = Order.Status.CANCELLED
         order.closed_at = timezone.now()
         order.save(update_fields=["status", "closed_at"])
@@ -488,7 +524,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         from core.plans import features
         from loyalty.models import LoyaltyMember
         from loyalty.serializers import MemberSerializer, normalize_phone
-        from loyalty.services import LoyaltyError, redeem
+        from loyalty.services import LoyaltyError, attach_guest, redeem
 
         order = self.get_object()
         site = SiteSettings.load()
@@ -505,16 +541,18 @@ class OrderViewSet(viewsets.ModelViewSet):
                 {"detail": "Бонусы списываются до оплаты заказа"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # Заказ уже на кассе с прежней суммой: списание разошлось бы с ней,
-        # и кассир взял бы больше, чем гость должен.
-        from payments.services import pending_kassa_payments
+        # Заказ уже на кассе с прежней суммой. Сотрудник может пересчитать:
+        # снимаем с кассы, списываем и отправляем заново (ниже). Гостю в
+        # приложении — нет: он не видит, что происходит у окна.
+        from payments.services import pending_kassa_payments, withdraw_from_kassa
 
-        if pending_kassa_payments(order).exists():
+        staff = request.user.is_authenticated and request.user.is_staff_role
+        on_kassa = pending_kassa_payments(order).exists()
+        if on_kassa and not staff:
             return Response(
                 {"detail": "Заказ уже на кассе — бонусы списываются до отправки на кассу"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        staff = request.user.is_authenticated and request.user.is_staff_role
         if staff:
             if not site.bonus_redeem_waiter:
                 return Response(
@@ -561,20 +599,59 @@ class OrderViewSet(viewsets.ModelViewSet):
             amount = Decimal(str(request.data.get("amount", "0")))
         except (InvalidOperation, TypeError, ValueError):
             return Response({"detail": "Неверная сумма"}, status=status.HTTP_400_BAD_REQUEST)
-        # заказ закрепляем за гостем: по нему пойдёт начисление при оплате
-        if order.client_id != member.user_id:
-            order.client = member.user
-            order.save(update_fields=["client"])
+        if not amount.is_finite():
+            return Response({"detail": "Неверная сумма"}, status=status.HTTP_400_BAD_REQUEST)
+        # Заказ закрепляем за гостем (по нему пойдёт начисление) — через ту же
+        # проверку, что и привязка: гостя, по которому уже были бонусы, на
+        # другого не меняем. До снятия с кассы — отказ здесь её не трогает.
         try:
-            redeem(member.pk, amount, order)
+            attach_guest(order, member)
         except LoyaltyError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         order.refresh_from_db()
+        if on_kassa:
+            # Проверяем до снятия с кассы: отказ после снятия оставил бы
+            # заказ без кассы ни за что.
+            from loyalty.services import max_redeem
+
+            whole = amount.quantize(Decimal("1"), rounding="ROUND_DOWN")
+            room = min(member.balance, max_redeem(order))
+            if whole <= 0 or whole > room:
+                return Response(
+                    {"detail": f"К списанию доступно не больше {int(room)} бонусов"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                withdraw_from_kassa(order)
+            except PaymentError as e:
+                return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            order.refresh_from_db()
+        error = None
+        resent = None
+        try:
+            redeem(member.pk, amount, order)
+        except LoyaltyError as e:
+            error = str(e)
+        finally:
+            if on_kassa:
+                # Обратно на кассу — с новой суммой, а если списание не прошло
+                # (даже с непредвиденной ошибкой), то с прежней: снятый заказ
+                # не должен пропасть с кассы.
+                order.refresh_from_db()
+                try:
+                    start_terminal_payment(order)
+                    resent = True
+                except PaymentError:
+                    resent = False  # остаётся в «Ждут оплаты», кнопка «На кассу»
+        if error:
+            return Response({"detail": error}, status=status.HTTP_400_BAD_REQUEST)
+        order = self.get_queryset().get(pk=order.pk)
         member.refresh_from_db()
         return Response(
             {
                 "order": OrderSerializer(order).data,
                 "member": MemberSerializer(member).data,
+                "resent_to_kassa": resent,
             }
         )
 

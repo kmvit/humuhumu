@@ -225,6 +225,13 @@ export default function Counter() {
         // Стойка с кассой: сперва оплата, потом готовим — поэтому и кнопка
         // говорит, что будет дальше.
         submitLabel={kassa ? "На оплату" : undefined}
+        // Гость с бонусами — до создания заказа: на кассу заказ уходит
+        // сразу, и списание после касса бы уже не увидела.
+        checkout={
+          bonusOn
+            ? { label: kassa ? "На кассу" : "Отправить", canRedeem: !!site?.bonus_redeem_waiter }
+            : undefined
+        }
         onCreated={(created) => {
           setComposing(false);
           if (created?.status === "unpaid") {
@@ -246,6 +253,15 @@ export default function Counter() {
       {payingId != null && (
         <PayAtKassa
           order={payingOrder}
+          bonus={
+            bonusOn && payingOrder ? (
+              <BonusPanel
+                order={payingOrder}
+                onDone={reload}
+                canRedeem={!!site?.bonus_redeem_waiter}
+              />
+            ) : null
+          }
           busy={busy === payingId}
           onClose={closePaying}
           onResend={sendToKassa}
@@ -415,12 +431,21 @@ export default function Counter() {
                         ))}
                       </select>
                     )}
-                    {bonusOn && (
+                    {/* Бонусы меняют сумму к оплате — панель нужна, пока деньги
+                        не взяты. У оплаченного заказа сумму уже не изменить:
+                        просто показываем, за кем он, чтобы не спрашивать снова. */}
+                    {bonusOn && !o.paid_at && (
                       <BonusPanel
                         order={o}
                         onDone={reload}
                         canRedeem={!!site?.bonus_redeem_waiter}
                       />
+                    )}
+                    {bonusOn && o.paid_at && o.bonus_guest && (
+                      <p className="muted sm m-0 mt-2">
+                        <Icon name="gift" size={13} /> {o.bonus_guest.name} ·{" "}
+                        {Number(o.bonus_guest.balance).toLocaleString("ru")} б.
+                      </p>
                     )}
                     {col.key === "ready" && o.performer_name && (
                       <p className="muted sm m-0">Выполнил: {o.performer_name}</p>

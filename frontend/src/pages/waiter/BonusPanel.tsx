@@ -2,8 +2,8 @@ import { useState } from "react";
 import { post, ApiError } from "../../api";
 import Icon from "../../components/Icon";
 import { useToast } from "../../components/ui/Toast";
-import { useSite } from "../../site";
 import type { LoyaltyMember, Order } from "../../types";
+import GuestEnroll from "./GuestEnroll";
 
 type Found = Pick<LoyaltyMember, "name" | "phone" | "balance">;
 
@@ -25,7 +25,6 @@ export default function BonusPanel({
   onDone: () => Promise<void> | void;
   canRedeem: boolean;
 }) {
-  const site = useSite();
   const notify = useToast();
   const [open, setOpen] = useState(false);
   const [phone, setPhone] = useState("");
@@ -33,30 +32,24 @@ export default function BonusPanel({
   const [member, setMember] = useState<Found | null>(null);
   const [busy, setBusy] = useState(false);
   const [signUp, setSignUp] = useState(false);
-  const [name, setName] = useState("");
-  const [birth, setBirth] = useState("");
-  const [consent, setConsent] = useState(false);
 
   const payable = Number(order.payable);
   // Бонусы уменьшают сумму к оплате, поэтому списывать можно только
-  // до того, как деньги получены или заказ ушёл на кассу.
+  // до того, как деньги получены. Заказ, уже лежащий на кассе, сервер
+  // снимет с неё и отправит заново с новой суммой.
   const redeemable =
-    canRedeem &&
-    (order.status === "open" || order.status === "unpaid") &&
-    !order.paid_at &&
-    !order.kassa_waiting;
+    canRedeem && (order.status === "open" || order.status === "unpaid") && !order.paid_at;
   // списать можно не больше остатка счёта: сдачи с бонусов не бывает
   const canSwitch = Number(order.bonus_spent) <= 0 && !(order.paid_at && order.bonus_guest);
-  const maxRedeem = member && redeemable ? Math.min(Number(member.balance), payable) : 0;
+  // хотя бы 1 ₽ — деньгами: чек на 0 ₽ касса не пробьёт
+  const maxRedeem =
+    member && redeemable ? Math.max(0, Math.floor(Math.min(Number(member.balance), payable - 1))) : 0;
 
   function reset() {
     setOpen(false);
     setPhone("");
     setMember(null);
     setSignUp(false);
-    setName("");
-    setBirth("");
-    setConsent(false);
   }
 
   function openPanel() {
@@ -97,32 +90,9 @@ export default function BonusPanel({
     }
   }
 
-  async function enroll() {
-    if (!name.trim()) {
-      notify("Укажите имя гостя", "bad");
-      return;
-    }
-    if (!consent) {
-      notify("Отметьте согласие гостя на обработку данных", "bad");
-      return;
-    }
-    setBusy(true);
-    let m: LoyaltyMember;
-    try {
-      m = await post<LoyaltyMember>("/loyalty/enroll/", {
-        name: name.trim(),
-        phone,
-        consent: true,
-        ...(birth ? { birth_date: birth } : {}),
-      });
-    } catch (e) {
-      notify(e instanceof ApiError ? e.message : "Не удалось зарегистрировать", "bad");
-      setBusy(false);
-      return;
-    }
-    // Записать и привязать — два шага. Запись уже прошла, поэтому форму
-    // убираем в любом случае: повторное нажатие ничего бы не дало, а
-    // «Гостя нет в программе» на экране было бы неправдой.
+  /** Гость записан — закрепляем за ним заказ. Запись уже прошла, поэтому
+      форму убираем в любом случае: «Гостя нет в программе» было бы неправдой. */
+  async function enrolled(m: LoyaltyMember) {
     setSignUp(false);
     try {
       await attach();
@@ -134,8 +104,6 @@ export default function BonusPanel({
           (e instanceof ApiError ? e.message : "ошибка связи"),
         "bad"
       );
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -143,8 +111,14 @@ export default function BonusPanel({
     if (amount <= 0) return;
     setBusy(true);
     try {
-      await post(`/orders/${order.id}/bonus/`, { phone, amount });
+      const res = await post<{ resent_to_kassa: boolean | null }>(
+        `/orders/${order.id}/bonus/`,
+        { phone, amount }
+      );
       notify(`Списано ${amount.toLocaleString("ru")} бонусов`, "ok");
+      if (res.resent_to_kassa === false) {
+        notify("Касса не ответила — отправьте заказ на кассу ещё раз", "bad");
+      }
       reset();
       await onDone();
     } catch (e) {
@@ -196,42 +170,7 @@ export default function BonusPanel({
         </div>
       )}
 
-      {signUp && (
-        <div className="mt-2">
-          <div className="muted sm">
-            Гостя нет в программе. Записать — сразу{" "}
-            {(site?.bonus_welcome ?? 200).toLocaleString("ru")} приветственных бонусов.
-          </div>
-          <div className="wrap mt-2">
-            <input
-              className="input grow"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Имя гостя"
-              maxLength={150}
-            />
-            <input
-              className="input"
-              style={{ width: 150 }}
-              type="date"
-              value={birth}
-              onChange={(e) => setBirth(e.target.value)}
-              aria-label="Дата рождения"
-            />
-          </div>
-          <label className="inline tight mt-2">
-            <input
-              type="checkbox"
-              checked={consent}
-              onChange={(e) => setConsent(e.target.checked)}
-            />
-            <span className="sm">Гость согласен на обработку персональных данных</span>
-          </label>
-          <button className="btn sm block mt-2" disabled={busy || !consent} onClick={enroll}>
-            <Icon name="gift" size={15} /> Записать в программу
-          </button>
-        </div>
-      )}
+      {signUp && <GuestEnroll phone={phone} onEnrolled={enrolled} />}
 
       {member && (
         <div className="mt-2">
@@ -245,7 +184,8 @@ export default function BonusPanel({
           </div>
           {redeemable && maxRedeem > 0 && (
             <div className="muted sm mt-2">
-              Гость копит или тратит? Доступно {maxRedeem.toLocaleString("ru")} · 1 бонус = 1 ₽
+              Гость копит или тратит? Доступно {maxRedeem.toLocaleString("ru")} · 1 бонус = 1 ₽ · хотя бы 1 ₽ деньгами
+              {order.kassa_waiting && " · заказ снимем с кассы и отправим с новой суммой"}
             </div>
           )}
           {/* Копить — выбор по умолчанию: гость уже закреплён за заказом,
@@ -273,7 +213,6 @@ export default function BonusPanel({
                 onClick={() => redeem(maxRedeem)}
               >
                 <Icon name="check" size={16} /> Списать {maxRedeem.toLocaleString("ru")}
-                {maxRedeem >= payable ? " — счёт закрыт бонусами" : ""}
               </button>
               {maxRedeem > 100 && (
                 <button

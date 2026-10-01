@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from .models import Order, OrderItem, OrderItemModifier, Table
@@ -186,6 +188,25 @@ class OrderCreateSerializer(serializers.Serializer):
     # и заказ без исполнителя должен приниматься как прежде.
     performer = serializers.IntegerField(required=False, allow_null=True)
     items = OrderItemCreateSerializer(many=True)
+    # Гость бонусной программы и сколько бонусов списать. Задаются при
+    # создании, а не потом: на стойке с кассой заказ уходит на кассу сразу,
+    # и списание, сделанное после, касса уже не увидит.
+    phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    bonus = serializers.DecimalField(
+        max_digits=12, decimal_places=2, required=False, min_value=Decimal("0"), default=Decimal("0")
+    )
+
+    def validate_phone(self, value):
+        if not (value or "").strip():
+            return ""
+        from loyalty.serializers import normalize_phone
+
+        return normalize_phone(value)
+
+    def validate(self, attrs):
+        if attrs.get("bonus") and not attrs.get("phone"):
+            raise serializers.ValidationError({"bonus": "Списать бонусы можно только с гостем"})
+        return attrs
 
 
 class ClientOrderSerializer(serializers.Serializer):

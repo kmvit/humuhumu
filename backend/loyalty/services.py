@@ -183,6 +183,18 @@ def attach_guest(order, member: LoyaltyMember) -> BonusTransaction | None:
     return None
 
 
+#: Сколько рублей гость всегда платит деньгами. Счёт целиком бонусами
+#: дал бы чек на 0 ₽, а его касса не пробьёт: заказ застрял бы
+#: неоплаченным, а ручная отметка оплаты при кассе запрещена.
+MIN_CASH = 1
+
+
+def max_redeem(order) -> Decimal:
+    """Сколько бонусов ещё можно списать в этот заказ."""
+    room = Decimal(order.total) - Decimal(order.bonus_spent) - MIN_CASH
+    return max(room, Decimal(0))
+
+
 @transaction.atomic
 def redeem(member_id: int, amount: Decimal, order) -> BonusTransaction:
     """Списать бонусы в счёт заказа.
@@ -197,12 +209,22 @@ def redeem(member_id: int, amount: Decimal, order) -> BonusTransaction:
     amount = _whole(amount)
     if amount <= 0:
         raise LoyaltyError("Сумма списания должна быть положительной")
+    from orders.models import Order
+
     member = LoyaltyMember.objects.select_for_update().get(pk=member_id)
     if member.balance < amount:
         raise LoyaltyError(f"На счету только {_whole(member.balance)} бонусов")
-    room = Decimal(order.total) - Decimal(order.bonus_spent)
+    # Заказ под замком и свежий из базы: два списания разом (два планшета,
+    # повтор после таймаута) иначе прочли бы одно и то же bonus_spent, и
+    # гость заплатил бы бонусами дважды, а скидка учлась бы один раз.
+    caller = order
+    order = Order.objects.select_for_update().get(pk=caller.pk)
+    room = max_redeem(order)
     if amount > room:
-        raise LoyaltyError(f"К списанию доступно не больше {_whole(room)} бонусов")
+        raise LoyaltyError(
+            f"К списанию доступно не больше {_whole(room)} бонусов — "
+            f"хотя бы {MIN_CASH} ₽ гость платит деньгами"
+        )
     txn = _apply(
         member,
         type_=BonusTransaction.Type.REDEEM,
@@ -212,6 +234,7 @@ def redeem(member_id: int, amount: Decimal, order) -> BonusTransaction:
     )
     order.bonus_spent = Decimal(order.bonus_spent) + amount
     order.save(update_fields=["bonus_spent"])
+    caller.bonus_spent = order.bonus_spent  # вызывающий держит свою копию
     return txn
 
 

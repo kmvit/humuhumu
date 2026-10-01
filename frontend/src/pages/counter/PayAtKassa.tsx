@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Icon from "../../components/Icon";
 import Modal from "../../components/ui/Modal";
 import type { Order } from "../../types";
@@ -21,9 +21,12 @@ export default function PayAtKassa({
   onClose,
   onResend,
   onCancelOrder,
+  bonus,
 }: {
   /** null — заказа на доске больше нет (отменили, истёк). */
   order: Order | null;
+  /** Панель бонусов: гость вспомнил про них у окна — сумму пересчитают. */
+  bonus?: ReactNode;
   busy: boolean;
   onClose: () => void;
   onResend: (order: Order) => void;
@@ -86,6 +89,8 @@ export default function PayAtKassa({
               </li>
             ))}
           </ul>
+
+          {bonus}
 
           {order.kassa_waiting ? (
             <p className="muted m-0">
