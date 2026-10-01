@@ -398,6 +398,21 @@ def get_provider(name: str | None = None) -> BaseProvider:
     return cls(stored_credentials(cls.name))
 
 
+def kassa_only() -> bool:
+    """Стойка с подключённой кассой: деньги принимаются только через кассу.
+
+    Решение владельца Монти: мимо кассы ничего не принимаем, касса легла —
+    ждём, пока заработает. Ручных отметок «наличными / картой» здесь нет
+    ни у гостевого заказа, ни у заказа, который завёл бариста. Зал не
+    трогаем: там счёт закрывает официант, и касса к нему пока не подключена.
+    """
+    from core.models import SiteSettings
+
+    if SiteSettings.load().service_mode != SiteSettings.ServiceMode.COUNTER:
+        return False
+    return kassa_available()
+
+
 def kassa_available() -> bool:
     """Подключена ли у заведения настоящая касса с доступами."""
     from core.models import SiteSettings

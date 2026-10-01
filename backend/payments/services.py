@@ -16,7 +16,7 @@ from orders.services import start_order
 
 from .acquiring import AcquiringError, get_acquirer
 from .models import Payment
-from .providers import KassaError, get_provider, is_kassa
+from .providers import KassaError, get_provider, is_kassa, kassa_only
 
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,10 @@ def record_manual_payment(order: Order, method: str, user=None) -> Order:
     # Предоплаченный заказ закрывается без второго платежа: деньги уже
     # в реестре. Иначе выручка дня удвоилась бы на каждом таком заказе.
     if order.paid_at is None:
+        if kassa_only():
+            # «Выдал, взял картой» без кассы — это деньги без чека. На
+            # стойке с кассой неоплаченный заказ отправляют на кассу.
+            raise PaymentError("Оплата принимается только через кассу — отправьте заказ на кассу")
         drop_kassa_orders(order)
         Payment.objects.create(
             purpose=Payment.Purpose.ORDER,
@@ -180,9 +184,7 @@ def record_prepayment(order: Order, method: str, user=None) -> Order:
     # Заведение с подключённой кассой принимает деньги только через неё:
     # касса не работает — ждут, пока заработает. Ручная отметка здесь
     # означала бы деньги без чека и заказ, который касса не видела.
-    from .providers import kassa_available
-
-    if kassa_available():
+    if kassa_only():
         raise PaymentError("Оплата принимается только через кассу — отправьте заказ на кассу")
 
     pm = method if method in Payment.Method.values else Payment.Method.CASH
@@ -437,7 +439,7 @@ SETTLE_EVERY = timedelta(seconds=15)
 # Кассу спрашиваем чаще банка: гость стоит у окна, бариста ждёт, когда
 # заказ появится в «Новых», и полминуты там — это очередь. Запрос к кассе
 # дешёвый, а ждущих заказов на ней — единицы.
-KASSA_EVERY = timedelta(seconds=5)
+KASSA_EVERY = timedelta(seconds=3)
 
 # Насколько старые платежи ещё имеет смысл доводить. Гость, не заплативший
 # за сутки, не заплатит уже никогда, а вот повторно закрыть по ошибке заказ,

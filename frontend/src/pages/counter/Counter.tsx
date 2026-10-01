@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { get, patch, post, ApiError } from "../../api";
 import type { Order, PayMethod, Performer } from "../../types";
 import Icon from "../../components/Icon";
 import { useLiveOrders } from "../../useLiveOrders";
 import Compose from "../waiter/Compose";
+import PayAtKassa from "./PayAtKassa";
 import { useToast } from "../../components/ui/Toast";
 import { fmtDuration, minutesBetween } from "../../time";
 import { useFeature, useSite } from "../../site";
@@ -45,8 +46,11 @@ export default function Counter() {
   const bonusOn = useFeature("loyalty") && !!site?.bonus_enabled;
   const prepay =
     site?.prepay_required === true && (site?.online_payment === true || kassa);
+  // С кассой «Ждут оплаты» нужна всегда: туда же встаёт и заказ, который
+  // бариста принял на словах, — он тоже оплачивается на кассе.
+  const waiting = prepay || kassa;
   const { orders, setOrders, highlight, reload } = useLiveOrders(
-    prepay ? "/orders/?status=open&with_unpaid=1" : "/orders/?status=open",
+    waiting ? "/orders/?status=open&with_unpaid=1" : "/orders/?status=open",
     // Сигнал — на оплаченный заказ, а не на оформленный: у окна один
     // человек, и звать его к кофемашине надо, когда пришли деньги.
     { alertWhen: useCallback((o: Order) => o.status !== "unpaid", []) }
@@ -57,6 +61,24 @@ export default function Counter() {
   // Заказ на кассе сам не отменяется — ушедшего гостя отменяет бариста.
   // Подтверждение в карточке: нативный confirm в киоск-браузере глушится.
   const [dropFor, setDropFor] = useState<number | null>(null);
+  // Экран оплаты: какой заказ сейчас пробивают на кассе. Сам заказ берём
+  // с доски — она и приносит весть об оплате.
+  const [payingId, setPayingId] = useState<number | null>(null);
+  // Последняя известная версия: опрос, начатый до создания заказа, может
+  // вернуться позже и прийти без него — экран не должен из-за этого мигнуть
+  // и закрыться. Пропал насовсем (отменили) — закрываем мы сами.
+  const lastPaying = useRef<Order | null>(null);
+  const found = payingId == null ? null : orders.find((o) => o.id === payingId) ?? null;
+  if (found) lastPaying.current = found;
+  const payingOrder = payingId == null ? null : found ?? lastPaying.current;
+  // Пока бариста ждёт оплату у окна, доску перечитываем чаще: гость с
+  // картой не должен стоять лишние десять секунд.
+  useEffect(() => {
+    if (payingId == null) return;
+    const t = window.setInterval(reload, 2000);
+    return () => window.clearInterval(t);
+  }, [payingId, reload]);
+  const closePaying = useCallback(() => setPayingId(null), []);
   // Кто сегодня в смене: заказ по QR приходит без исполнителя, а сделает
   // его кто-то из стоящих за стойкой — отметить это можно на карточке.
   const [performers, setPerformers] = useState<Performer[]>([]);
@@ -200,8 +222,18 @@ export default function Counter() {
   if (composing) {
     return (
       <Compose
-        onCreated={() => {
+        // Стойка с кассой: сперва оплата, потом готовим — поэтому и кнопка
+        // говорит, что будет дальше.
+        submitLabel={kassa ? "На оплату" : undefined}
+        onCreated={(created) => {
           setComposing(false);
+          if (created?.status === "unpaid") {
+            // Кладём заказ на доску сразу, не дожидаясь опроса: иначе экран
+            // оплаты открылся бы на пустом месте и тут же закрылся.
+            setOrders((os) => [...os.filter((o) => o.id !== created.id), created]);
+            lastPaying.current = created;
+            setPayingId(created.id);
+          }
           reload();
         }}
         onCancel={() => setComposing(false)}
@@ -211,6 +243,18 @@ export default function Counter() {
 
   return (
     <>
+      {payingId != null && (
+        <PayAtKassa
+          order={payingOrder}
+          busy={busy === payingId}
+          onClose={closePaying}
+          onResend={sendToKassa}
+          onCancelOrder={async (o) => {
+            await cancelOrder(o);
+            setPayingId(null);
+          }}
+        />
+      )}
       <div className="between">
         <h1 className="h1">Стойка</h1>
         <div className="inline tight">
@@ -302,7 +346,7 @@ export default function Counter() {
         <p className="muted center mt-5">Заказов нет — всё выдано.</p>
       ) : (
         <div className="kanban">
-          {COLUMNS.filter((c) => c.key !== "unpaid" || prepay).map((col) => (
+          {COLUMNS.filter((c) => c.key !== "unpaid" || waiting).map((col) => (
             <div className="kanban-col" key={col.key}>
               <div className="kanban-head">
                 <span>{col.label}</span>
@@ -315,7 +359,7 @@ export default function Counter() {
                       {/* Номер даётся при оплате, поэтому у ждущих его нет —
                           показываем имя гостя, по нему и найдём заказ. */}
                       <strong className="counter-no">
-                        {o.daily_number != null ? `№${o.daily_number}` : (o.customer_name || "Без номера")}
+                        {o.daily_number != null ? `№${o.daily_number}` : (o.customer_name || `Заказ ${o.id}`)}
                       </strong>
                       {/* Сумма к оплате, а не стоимость: часть могли закрыть
                           бонусами, и бариста взял бы с гостя лишнее. */}
@@ -412,6 +456,9 @@ export default function Counter() {
                           <p className="muted sm m-0 mt-1">
                             Пробейте заказ №{o.id} на кассе — он сам уйдёт в работу.
                           </p>
+                          <button className="btn sm block mt-2" onClick={() => setPayingId(o.id)}>
+                            <Icon name="cash" size={16} /> Экран оплаты
+                          </button>
                           {dropFor === o.id ? (
                             <div className="wrap mt-2">
                               <span className="muted sm" style={{ alignSelf: "center" }}>
@@ -486,7 +533,24 @@ export default function Counter() {
                         <Icon name="share" size={16} /> Выдать
                       </button>
                     )}
-                    {col.key === "ready" && !o.paid_at &&
+                    {/* Касса: неоплаченный готовый заказ (заведён до подключения
+                        кассы) оплачивается на ней же — ручных «наличными /
+                        картой» при кассе нет. */}
+                    {col.key === "ready" && !o.paid_at && kassa &&
+                      (o.kassa_waiting ? (
+                        <span className="badge pending mt-2">
+                          <Icon name="cash" size={13} /> На кассе · №{o.id}
+                        </span>
+                      ) : (
+                        <button
+                          className="btn sm block mt-2"
+                          disabled={busy === o.id}
+                          onClick={() => sendToKassa(o)}
+                        >
+                          <Icon name="cash" size={16} /> На кассу
+                        </button>
+                      ))}
+                    {col.key === "ready" && !o.paid_at && !kassa &&
                       (payFor === o.id ? (
                         <div className="stack tight mt-2">
                           <button

@@ -131,16 +131,22 @@ def create_order(
     """
     from core.models import SiteSettings
 
+    from payments.providers import kassa_only
+
     if not items:
         raise OrderError("Пустой заказ")
     counter = SiteSettings.load().service_mode == SiteSettings.ServiceMode.COUNTER
+    # Стойка с кассой: заказ, принятый на словах, оплачивается так же, как
+    # с сайта, — на кассе. До оплаты он ждёт и номера выдачи не получает
+    # (см. start_order), а на кассу его отправляет вьюха после записи.
+    waits_kassa = counter and kassa_only()
     order = Order.objects.create(
         waiter=waiter,
         performer=performer,
         table="" if counter else table,
         comment=comment,
-        status=Order.Status.OPEN,
-        daily_number=next_daily_number() if counter else None,
+        status=Order.Status.UNPAID if waits_kassa else Order.Status.OPEN,
+        daily_number=next_daily_number() if counter and not waits_kassa else None,
     )
     _add_items(order, items)
     order.recalc_total()

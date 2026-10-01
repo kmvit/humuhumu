@@ -404,3 +404,66 @@ class AqsiReceiptParsingTests(APITestCase):
         p = Payment(pk=42)
         self.assertEqual(AqsiProvider().order_id(p), AqsiProvider().order_id(p))
         uuid.UUID(AqsiProvider().order_id(p))
+
+
+class BaristaOrderKassaTests(KassaBase):
+    """Заказ, принятый баристой на словах, при кассе тоже оплачивается на ней."""
+
+    def setUp(self):
+        super().setUp()
+        self.barista = User.objects.create_user("barista-o", password="Sh4-staff", role=User.Role.WAITER)
+        self.client.force_authenticate(self.barista)
+
+    def create(self):
+        return self.client.post(
+            "/api/orders/", {"items": [{"product": self.latte.id, "quantity": 1}]}, format="json"
+        )
+
+    def test_barista_order_goes_to_kassa(self):
+        response = self.create()
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["status"], Order.Status.UNPAID)
+        self.assertTrue(response.data["kassa_waiting"])
+        # Номер выдачи — только после оплаты, как у заказа с сайта.
+        self.assertIsNone(response.data["daily_number"])
+        self.assertEqual(len(self.aqsi.orders), 1)
+
+    def test_paid_at_kassa_goes_to_work(self):
+        order = Order.objects.get(pk=self.create().data["id"])
+        self.aqsi.paid(Payment.objects.get(order=order).external_id, pay_type=0)
+        self.age(order)
+        settle_order(order)
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.OPEN)
+        self.assertIsNotNone(order.daily_number)
+        self.assertEqual(order.pay_method, Order.PayMethod.CASH)
+
+    def test_kassa_down_keeps_order_waiting(self):
+        self.aqsi.key_ok = False
+        response = self.create()
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["status"], Order.Status.UNPAID)
+        self.assertFalse(response.data["kassa_waiting"])
+        self.aqsi.key_ok = True
+        again = self.client.post(f"/api/orders/{response.data['id']}/pay_terminal/", {})
+        self.assertEqual(again.status_code, 200, again.data)
+        self.assertTrue(again.data["kassa_waiting"])
+
+    def test_hand_out_without_kassa_payment_is_refused(self):
+        """«Выдал, взял картой» без кассы при кассе запрещено."""
+        order = Order.objects.create(status=Order.Status.OPEN, total=Decimal("240"))
+        order.items.create(variant=self.variant, quantity=1, unit_price=self.variant.price)
+        response = self.client.post(f"/api/orders/{order.pk}/close/", {"pay_method": "card"})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("через кассу", response.data["detail"])
+        self.assertFalse(Payment.objects.filter(order=order).exists())
+
+    def test_hand_out_of_paid_order_works(self):
+        order = Order.objects.get(pk=self.create().data["id"])
+        self.aqsi.paid(Payment.objects.get(order=order).external_id)
+        self.age(order)
+        settle_order(order)
+        response = self.client.post(f"/api/orders/{order.pk}/close/", {"pay_method": "card"})
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["status"], Order.Status.PAID)
+        self.assertEqual(Payment.objects.filter(order=order, status="succeeded").count(), 1)

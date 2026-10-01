@@ -16,13 +16,18 @@ export default function Compose({
   table = "",
   orderId,
   initialGuests = 0,
+  submitLabel,
   onCreated,
   onCancel,
 }: {
   table?: string; // пусто — формат «стойка»: столов нет, заказ зовут по номеру
   orderId?: number; // если задан — дописываем позиции в этот заказ, а не создаём новый
   initialGuests?: number; // сколько именованных гостей уже есть в заказе
-  onCreated: () => void;
+  /** Подпись кнопки отправки. Стойка с кассой — «На оплату»: заказ сперва
+   *  оплачивают, потом готовят. */
+  submitLabel?: string;
+  /** Созданный заказ — экрану, который решает, что дальше (оплата). */
+  onCreated: (order?: Order) => void;
   onCancel: () => void;
 }) {
   const adding = orderId != null;
@@ -164,17 +169,18 @@ export default function Compose({
           ...(l.modifiers.length ? { modifiers: l.modifiers } : {}),
         };
       });
+      let created: Order | undefined;
       if (adding) {
         await post<Order>(`/orders/${orderId}/add_items/`, { items });
       } else {
-        await post<Order>("/orders/", {
+        created = await post<Order>("/orders/", {
           items,
           table,
           comment: comment.trim(),
           ...(performer === "" ? {} : { performer }),
         });
       }
-      onCreated();
+      onCreated(created);
     } catch (err) {
       notify(err instanceof ApiError ? err.message : "Ошибка", "bad");
       setBusy(false);
@@ -406,7 +412,7 @@ export default function Compose({
           </div>
           <button className="btn" onClick={submit} disabled={busy}>
             <Icon name={busy ? "spark" : "check"} size={18} />
-            {adding ? "Добавить" : "Отправить"}
+            {adding ? "Добавить" : submitLabel ?? "Отправить"}
           </button>
         </div>
       )}

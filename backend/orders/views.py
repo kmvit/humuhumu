@@ -210,6 +210,15 @@ class OrderViewSet(viewsets.ModelViewSet):
             )
         except OrderError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        if order.status == Order.Status.UNPAID:
+            # Стойка с кассой: заказ сразу уходит на кассу. Не дошёл (касса
+            # недоступна) — заказ всё равно записан и ждёт в «Ждут оплаты»,
+            # бариста отправит его кнопкой «На кассу», когда касса оживёт.
+            try:
+                start_terminal_payment(order)
+            except PaymentError:
+                pass
+            order = self.get_queryset().get(pk=order.pk)
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
     # --- клиентские заявки без авторизации ---
@@ -810,6 +819,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         order.closed_at = timezone.now()
         order.save(update_fields=["status", "closed_by", "closed_at"])
         drop_kassa_orders(order)
+        order = self.get_queryset().get(pk=order.pk)
         return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["post"], url_path="add_items")
@@ -971,7 +981,10 @@ class OrderViewSet(viewsets.ModelViewSet):
                 {"detail": "Закрыть можно только открытый заказ"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        record_manual_payment(order, self._pay_method(request), request.user)
+        try:
+            record_manual_payment(order, self._pay_method(request), request.user)
+        except PaymentError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         order.refresh_from_db()
         return Response(OrderSerializer(order).data)
 
@@ -988,7 +1001,9 @@ class OrderViewSet(viewsets.ModelViewSet):
             start_terminal_payment(order, method=method)
         except PaymentError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        order.refresh_from_db()
+        # Перечитываем запросом, а не refresh_from_db: тот не обновляет
+        # аннотацию «на кассе», и бариста видел бы прежнюю кнопку.
+        order = self.get_queryset().get(pk=order.pk)
         return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["post"], url_path="pay_result")
