@@ -66,6 +66,13 @@ class Payment(TenantModel):
         "ID у провайдера", max_length=128, null=True, blank=True
     )
     fiscal_receipt = models.CharField("Фискальный чек", max_length=64, blank=True, default="")
+    # Что касса сказала об оплате — для возврата через неё же. Без номера
+    # слипа касса не поймёт, какой платёж вернуть на карту, а взять его
+    # потом негде: в чеке он есть только пока заказ лежит у нас «живым».
+    kassa_receipt_id = models.CharField("Чек на кассе (id)", max_length=64, blank=True, default="")
+    kassa_slip_id = models.CharField("Слип оплаты картой (id)", max_length=64, blank=True, default="")
+    # RRN — номер операции у банка: по нему возврат сверяют с выпиской.
+    kassa_rrn = models.CharField("RRN операции", max_length=32, blank=True, default="")
     # Касса не подтвердила оплату сама, и сотрудник отметил «Оплачено»
     # руками. Такие платежи владелец сверяет с отчётом кассы: если чек
     # не пробит, заказ так и лежит на кассе в отложенных.

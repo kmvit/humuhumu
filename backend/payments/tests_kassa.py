@@ -39,11 +39,16 @@ class FakeAqsi:
         self.key_ok = True
 
     def paid(self, order_id, pay_type=1):
+        payment = {"type": pay_type, "amount": 1}
+        if pay_type == 1:
+            # Так выглядит карточная оплата в чеке aQsi: слип в acquiringData.
+            payment["acquiringData"] = {"id": "slip-7f3a", "rrn": "427311223344", "type": "purchase"}
         self.orders[order_id]["status"] = "Оплачен"
         self.orders[order_id]["receipts"] = [{
+            "id": "rcpt-0c91",
             "documentNumber": 117,
             "fp": "3522713744",
-            "content": {"type": 1, "checkClose": {"payments": [{"type": pay_type, "amount": 1}]}},
+            "content": {"type": 1, "checkClose": {"payments": [payment]}},
         }]
 
     def __call__(self, method, url, json=None, headers=None, timeout=None):
@@ -219,6 +224,9 @@ class KassaSettleTests(KassaBase):
         self.assertEqual(payment.method, Payment.Method.CASH)
         self.assertEqual(payment.status, Payment.Status.SUCCEEDED)
         self.assertEqual(order.fiscal_receipt, "ФД 117, ФП 3522713744")
+        # Наличные: чек есть, слипа нет — возвращать на карту нечего.
+        self.assertEqual(payment.kassa_receipt_id, "rcpt-0c91")
+        self.assertEqual(payment.kassa_slip_id, "")
 
         # Повторный опрос ничего не переписывает.
         paid_at = order.paid_at
@@ -227,6 +235,21 @@ class KassaSettleTests(KassaBase):
         order.refresh_from_db()
         self.assertEqual(order.paid_at, paid_at)
         self.assertEqual(Payment.objects.filter(order=order).count(), 1)
+
+    def test_card_payment_keeps_slip_for_refund(self):
+        """Слип и RRN сохраняются: по ним касса потом вернёт деньги на карту."""
+        order = self.place()
+        self.to_kassa(order)
+        payment = Payment.objects.get(order=order)
+        self.aqsi.paid(payment.external_id, pay_type=1)
+        self.age(order)
+        settle_order(order)
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, Payment.Status.SUCCEEDED)
+        self.assertEqual(payment.method, Payment.Method.CARD)
+        self.assertEqual(payment.kassa_receipt_id, "rcpt-0c91")
+        self.assertEqual(payment.kassa_slip_id, "slip-7f3a")
+        self.assertEqual(payment.kassa_rrn, "427311223344")
 
     def test_barista_board_polls_kassa(self):
         """Доска баристы сама узнаёт об оплате на кассе."""
@@ -395,10 +418,33 @@ class KassaSettingsApiTests(KassaBase):
 
 class AqsiReceiptParsingTests(APITestCase):
     def test_mixed_payment_counts_as_card(self):
-        method, _ = AqsiProvider._from_receipts([
+        info = AqsiProvider._from_receipts([
             {"content": {"type": 1, "checkClose": {"payments": [{"type": 0}, {"type": 1}]}}}
         ])
-        self.assertEqual(method, "card")
+        self.assertEqual(info["method"], "card")
+
+    def test_slip_of_card_payment_is_kept(self):
+        info = AqsiProvider._from_receipts([{
+            "id": "rcpt-1",
+            "content": {"type": 1, "checkClose": {"payments": [
+                {"type": 0, "amount": 100},
+                {"type": 1, "amount": 200, "acquiringData": {"id": "slip-1", "rrn": "123456789012"}},
+            ]}},
+        }])
+        self.assertEqual(info["receipt_id"], "rcpt-1")
+        self.assertEqual(info["slip_id"], "slip-1")
+        self.assertEqual(info["rrn"], "123456789012")
+
+    def test_refund_receipt_is_ignored(self):
+        """Чек возврата (type 2) — не оплата: его слип не тот, что возвращать."""
+        info = AqsiProvider._from_receipts([{
+            "id": "rcpt-back",
+            "content": {"type": 2, "checkClose": {"payments": [
+                {"type": 1, "acquiringData": {"id": "slip-back"}},
+            ]}},
+        }])
+        self.assertEqual(info["slip_id"], "")
+        self.assertEqual(info["receipt_id"], "")
 
     def test_order_id_is_stable(self):
         p = Payment(pk=42)

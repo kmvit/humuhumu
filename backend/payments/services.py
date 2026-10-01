@@ -341,10 +341,19 @@ def settle_kassa_payment(payment: Payment) -> bool:
         payment.save(update_fields=["updated_at"])
         return False
 
-    if result.success and result.method in Payment.Method.values:
+    if result.success:
         # Чем заплатили, знает только касса: гость мог передумать у окна
-        # и отдать наличные вместо карты.
-        Payment.objects.filter(pk=payment.pk).update(method=result.method)
+        # и отдать наличные вместо карты. Чек и слип — для возврата через
+        # кассу: потом их взять неоткуда. Пишем только пока платёж ждёт,
+        # чтобы не перетереть то, что уже записал соседний опрос.
+        fields = {
+            "kassa_receipt_id": result.receipt_id,
+            "kassa_slip_id": result.slip_id,
+            "kassa_rrn": result.rrn,
+        }
+        if result.method in Payment.Method.values:
+            fields["method"] = result.method
+        Payment.objects.filter(pk=payment.pk, status=Payment.Status.PENDING).update(**fields)
     if not apply_bank_result(payment, result):
         return False
     logger.info(

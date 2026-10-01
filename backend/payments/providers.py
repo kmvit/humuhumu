@@ -53,6 +53,10 @@ class KassaResult:
     #: Чем заплатили: cash / card (Payment.Method). Пусто — касса не сказала.
     method: str = ""
     fiscal_receipt: str = ""
+    #: Для возврата через кассу: чек, слип карточной оплаты, RRN у банка.
+    receipt_id: str = ""
+    slip_id: str = ""
+    rrn: str = ""
 
 
 class BaseProvider:
@@ -274,34 +278,49 @@ class AqsiProvider(BaseProvider):
             return None
         state = str(data.get("status") or "").strip().lower()
         if state == "оплачен":
-            method, fiscal = self._from_receipts(data.get("receipts") or [])
-            return KassaResult(success=True, method=method, fiscal_receipt=fiscal)
+            info = self._from_receipts(data.get("receipts") or [])
+            return KassaResult(success=True, **info)
         if state in ("отменен", "отменён"):
             return KassaResult(success=False)
         # «Отложен», «Черновик», «Част. оплачен» — ещё не всё.
         return KassaResult(success=False, pending=True)
 
     @staticmethod
-    def _from_receipts(receipts: list) -> tuple[str, str]:
-        """Чем заплатили и номер чека — из чека, который пробила касса."""
-        method, fiscal = "", ""
+    def _from_receipts(receipts: list) -> dict:
+        """Что взять из чека, который пробила касса.
+
+        Чем заплатили и номер чека — для нас и владельца. Id чека и слипа
+        с RRN — для возврата через кассу: касса возвращает деньги на карту
+        по id исходного слипа, а он лежит только здесь, в acquiringData
+        платежа по карте. У наличных слипа нет.
+        """
+        method, fiscal, receipt_id, slip_id, rrn = "", "", "", "", ""
         for receipt in receipts:
             if not isinstance(receipt, dict):
                 continue
             content = receipt.get("content") or {}
             if content.get("type") not in (None, 1):
                 continue  # возврат — не наш случай
-            types = {
-                p.get("type")
-                for p in ((content.get("checkClose") or {}).get("payments") or [])
+            pays = [
+                p for p in ((content.get("checkClose") or {}).get("payments") or [])
                 if isinstance(p, dict)
-            }
+            ]
+            types = {p.get("type") for p in pays}
             if types:
                 method = "cash" if types == {AQSI_CASH} else "card"
+            for p in pays:
+                slip = p.get("acquiringData") if p.get("type") == AQSI_CARD else None
+                if isinstance(slip, dict) and slip.get("id"):
+                    slip_id = str(slip["id"])[:64]
+                    rrn = str(slip.get("rrn") or "")[:32]
+            receipt_id = str(receipt.get("id") or "")[:64]
             number, fp = receipt.get("documentNumber"), receipt.get("fp")
             if number or fp:
                 fiscal = f"ФД {number or '—'}, ФП {fp or '—'}"[:64]
-        return method, fiscal
+        return {
+            "method": method, "fiscal_receipt": fiscal,
+            "receipt_id": receipt_id, "slip_id": slip_id, "rrn": rrn,
+        }
 
     def cancel(self, payment) -> None:
         if not payment.external_id:
