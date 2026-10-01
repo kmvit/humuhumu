@@ -64,6 +64,43 @@ class OrderSerializer(serializers.ModelSerializer):
     # владельца мало «картой»: карта онлайн и карта на кассе — разные
     # деньги, их сверяют с разными выписками.
     pay_channel = serializers.SerializerMethodField()
+    # Возврат через кассу идёт по шагам: «pending» — касса возвращает,
+    # «failed» — не вышло (refund_error — почему), пусто — возврата нет
+    # или он завершён (тогда status уже «refunded»).
+    refund_state = serializers.SerializerMethodField()
+    refund_error = serializers.SerializerMethodField()
+
+    def _kassa_refund(self, obj):
+        # Только у оплаченного и ещё не возвращённого — у остальных
+        # возврата через кассу быть не может, и запрос на доске не нужен.
+        if obj.status != Order.Status.PAID or obj.paid_at is None:
+            return None
+        cache = getattr(obj, "_kassa_refund_cache", ...)
+        if cache is ...:
+            from payments.services import kassa_refunds
+
+            cache = kassa_refunds(obj).order_by("-created_at").first()
+            obj._kassa_refund_cache = cache
+        return cache
+
+    def get_refund_state(self, obj) -> str:
+        from payments.models import Payment
+
+        refund = self._kassa_refund(obj)
+        if refund is None:
+            return ""
+        return {
+            Payment.Status.PENDING: "pending",
+            Payment.Status.FAILED: "failed",
+        }.get(refund.status, "")
+
+    def get_refund_error(self, obj) -> str:
+        from payments.models import Payment
+
+        refund = self._kassa_refund(obj)
+        if refund is None or refund.status != Payment.Status.FAILED:
+            return ""
+        return str((refund.kassa_meta or {}).get("error") or "")
 
     def get_pay_channel(self, obj) -> str:
         from payments.journal import channel_of
@@ -129,6 +166,8 @@ class OrderSerializer(serializers.ModelSerializer):
             "payable",
             "kassa_waiting",
             "pay_channel",
+            "refund_state",
+            "refund_error",
             "items",
             "created_at",
             "food_started_at",

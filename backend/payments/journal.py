@@ -65,7 +65,10 @@ def day_journal(day) -> dict:
         channel = channel_of(p.provider)
         refund = p.purpose == Payment.Purpose.REFUND
         if refund:
-            totals["refunds"] += p.amount
+            # Возврат через кассу, который ещё идёт или не прошёл, деньги
+            # не вернул — вычитать его из дня рано.
+            if p.status == Payment.Status.SUCCEEDED:
+                totals["refunds"] += p.amount
         elif p.status in MONEY_IN:
             if channel == ONLINE:
                 totals["online"] += p.amount

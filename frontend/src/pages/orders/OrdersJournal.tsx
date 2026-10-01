@@ -244,8 +244,16 @@ export default function OrdersJournal() {
                   {p.fiscal_receipt ? ` · чек: ${p.fiscal_receipt}` : ""}
                 </span>
                 <span className="mt-1">
-                  <span className={"badge " + (p.refund ? "cancelled" : p.status === "succeeded" ? "paid" : p.status === "pending" ? "pending" : "cancelled")}>
-                    {p.refund ? "Деньги возвращены" : p.status === "pending" && p.channel === "kassa" ? "Ждёт на кассе" : p.status_display}
+                  <span className={"badge " + (p.status === "pending" ? "pending" : p.refund ? "cancelled" : p.status === "succeeded" ? "paid" : "cancelled")}>
+                    {p.refund
+                      ? p.status === "succeeded"
+                        ? "Деньги возвращены"
+                        : p.status === "pending"
+                          ? "Возврат идёт на кассе"
+                          : "Возврат не прошёл"
+                      : p.status === "pending" && p.channel === "kassa"
+                        ? "Ждёт на кассе"
+                        : p.status_display}
                   </span>
                   {/* Сверить с отчётом кассы: если чек не пробит, заказ
                       так и лежит там в отложенных. */}

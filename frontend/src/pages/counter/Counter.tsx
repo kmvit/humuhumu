@@ -103,6 +103,15 @@ export default function Counter() {
     if (showClosed) loadClosed();
   }, [showClosed, loadClosed]);
 
+  // Возврат через кассу идёт не мгновенно: касса может попросить карту.
+  // Пока он идёт, список перечитываем — опрос заодно доводит возврат.
+  const refundRunning = closed.some((o) => o.refund_state === "pending");
+  useEffect(() => {
+    if (!showClosed || !refundRunning) return;
+    const t = window.setInterval(loadClosed, 3000);
+    return () => window.clearInterval(t);
+  }, [showClosed, refundRunning, loadClosed]);
+
   /** Вернуть гостю деньги. Карту возвращает банк, наличные — из ящика. */
   async function refundOrder(order: Order) {
     setBusy(order.id);
@@ -113,7 +122,11 @@ export default function Counter() {
       setClosed((os) => os.map((o) => (o.id === updated.id ? updated : o)));
       setRefundFor(null);
       setRefundStock(false);
-      toast(`Возврат ${money(order.total)} ₽ проведён`);
+      toast(
+        updated.refund_state === "pending"
+          ? `Касса возвращает ${money(order.payable)} ₽ — если попросит, гость прикладывает карту`
+          : `Возврат ${money(order.total)} ₽ проведён`
+      );
     } catch (e) {
       toast(e instanceof ApiError ? e.message : "Не удалось вернуть деньги");
     } finally {
@@ -322,7 +335,26 @@ export default function Counter() {
                   {o.items.map((it) => `${it.product_name} × ${it.quantity}`).join(", ")}
                 </div>
 
-                {!o.refunded_at &&
+                {/* Возврат через кассу: деньги возвращает касса по шагам, и
+                    «Возврат» заказ получит, когда она пробьёт чек. */}
+                {!o.refunded_at && o.refund_state === "pending" && (
+                  <div className="mt-2">
+                    <span className="badge pending">
+                      <Icon name="cash" size={13} /> Возврат на кассе…
+                    </span>
+                    <p className="muted sm m-0 mt-1">
+                      Касса возвращает деньги и печатает чек возврата. Попросит карту — гость
+                      прикладывает её к кассе.
+                    </p>
+                  </div>
+                )}
+                {!o.refunded_at && o.refund_state === "failed" && refundFor !== o.id && (
+                  <p className="sm m-0 mt-2" style={{ color: "var(--danger, #a83232)" }}>
+                    Возврат не прошёл: {o.refund_error || "касса отказала"}
+                  </p>
+                )}
+
+                {!o.refunded_at && o.refund_state !== "pending" &&
                   (refundFor === o.id ? (
                     <div className="rule-top mt-3 pt-3">
                       <label className="inline tight">
@@ -355,7 +387,8 @@ export default function Counter() {
                     </div>
                   ) : (
                     <button className="btn sm ghost block mt-2" onClick={() => setRefundFor(o.id)}>
-                      <Icon name="cash" size={15} /> Вернуть деньги
+                      <Icon name="cash" size={15} />{" "}
+                      {o.refund_state === "failed" ? "Повторить возврат" : "Вернуть деньги"}
                     </button>
                   ))}
               </div>

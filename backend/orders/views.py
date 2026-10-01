@@ -186,7 +186,9 @@ class OrderViewSet(viewsets.ModelViewSet):
         # платит на кассе. Пока доска открыта, касса опрашивается отсюда,
         # и заказ уходит в работу через секунды после оплаты, а не ждёт
         # фоновой задачи. Частоту держит settle_waiting_kassa.
-        if request.query_params.get("status") == Order.Status.OPEN:
+        # «Выданные» (status=paid) — там бариста ждёт, пока касса вернёт
+        # деньги: возврат через кассу доводится тем же опросом.
+        if request.query_params.get("status") in (Order.Status.OPEN, Order.Status.PAID):
             settle_waiting_kassa()
         return super().list(request, *args, **kwargs)
 
@@ -867,7 +869,10 @@ class OrderViewSet(viewsets.ModelViewSet):
             refund_order(order, user=request.user, return_to_stock=to_stock)
         except PaymentError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        order.refresh_from_db()
+        # Оплату с кассы возвращает касса — заказ вернётся со статусом
+        # «возврат идёт» (refund_state), а «Возврат» получит, когда касса
+        # пробьёт чек возврата.
+        order = self.get_queryset().get(pk=order.pk)
         return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["patch"])

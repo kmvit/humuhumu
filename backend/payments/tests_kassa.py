@@ -343,18 +343,6 @@ class KassaSettleTests(KassaBase):
         self.assertEqual(Payment.objects.get(order=order).status, Payment.Status.CANCELLED)
         self.assertEqual(order.status, Order.Status.UNPAID)
 
-    def test_refund_of_kassa_payment_does_not_call_bank(self):
-        order = self.place()
-        self.to_kassa(order)
-        self.aqsi.paid(Payment.objects.get(order=order).external_id)
-        self.age(order)
-        settle_order(order)
-        barista = User.objects.create_user("barista-r", password="Sh4-staff", role=User.Role.WAITER)
-        self.client.force_authenticate(barista)
-        response = self.client.post(f"/api/orders/{order.pk}/refund/", {}, format="json")
-        self.assertEqual(response.status_code, 200, response.data)
-        order.refresh_from_db()
-        self.assertEqual(order.status, Order.Status.REFUNDED)
 
 
 class KassaSettingsApiTests(KassaBase):

@@ -253,6 +253,10 @@ export interface Order {
   paid_at: string | null;
   /** Когда вернули деньги. Заполнено — заказ уже возвращён. */
   refunded_at: string | null;
+  /** Возврат через кассу: идёт / не прошёл; пусто — нет или завершён. */
+  refund_state?: "" | "pending" | "failed";
+  /** Почему возврат через кассу не прошёл. */
+  refund_error?: string;
   /** Кто выполнил заказ — выбирается вручную, может быть пустым. */
   performer: number | null;
   performer_name: string;

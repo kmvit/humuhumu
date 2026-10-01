@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -59,8 +60,25 @@ class KassaResult:
     rrn: str = ""
 
 
+@dataclass(frozen=True)
+class KassaOperation:
+    """Состояние операции, которую касса выполняет по нашей команде."""
+
+    #: Касса ещё работает: в очереди, ждёт карту гостя, печатает.
+    running: bool
+    #: Выполнена. Иначе (и не running) — отказ, отмена или таймаут.
+    done: bool = False
+    #: Что вернула касса: слип возврата или пробитый чек.
+    result: dict | None = None
+    #: Почему не вышло — для сотрудника.
+    message: str = ""
+
+
 class BaseProvider:
     """Контракт кассы."""
+
+    #: Умеет ли касса вернуть деньги по нашей команде (иначе — руками на ней).
+    can_refund = False
 
     name = "base"
     title = "—"
@@ -321,6 +339,121 @@ class AqsiProvider(BaseProvider):
             "method": method, "fiscal_receipt": fiscal,
             "receipt_id": receipt_id, "slip_id": slip_id, "rrn": rrn,
         }
+
+    # ── Возврат через кассу ────────────────────────────────────────────
+    # Две операции устройства подряд: вернуть деньги на карту по слипу
+    # оплаты и пробить чек возврата. Обе асинхронные — касса может попросить
+    # гостя приложить карту, — поэтому здесь только запуск и опрос, а
+    # доводит возврат payments.services.
+
+    can_refund = True
+
+    #: Статусы операции устройства, когда касса ещё не закончила.
+    RUNNING = ("Pending", "Processing", "Finishing")
+
+    def receipt(self, receipt_id: str) -> dict:
+        """Исходный чек продажи: позиции, оплаты, касса, налогообложение."""
+        data = self._request("GET", f"/v4/Receipts/{receipt_id}")
+        if not isinstance(data, dict) or not data.get("positions"):
+            raise KassaError("aQsi не вернула исходный чек — вернуть через кассу не выйдет")
+        return data
+
+    @staticmethod
+    def receipt_device(receipt: dict) -> int:
+        device = (receipt.get("device") or {}).get("id")
+        if not device:
+            raise KassaError("В исходном чеке нет кассы, на которой он пробит")
+        return int(device)
+
+    def start_slip_refund(self, receipt: dict, slip_id: str) -> str:
+        """Вернуть деньги на карту — полностью, по слипу исходной оплаты."""
+        data = self._request("POST", "/v4/Slips/process/refund", json={
+            "deviceId": self.receipt_device(receipt),
+            "originalId": slip_id,
+        })
+        return self._operation_id(data)
+
+    def start_return_receipt(self, receipt: dict, refund_slip: dict | None) -> str:
+        """Пробить чек возврата прихода — зеркало исходного чека.
+
+        Позиции, налогообложение и касса — из чека продажи: возврат должен
+        совпасть с ним до копейки. Карточная часть идёт со слипом возврата,
+        наличная — без: деньги бариста отдаёт из ящика.
+        """
+        info = receipt.get("info") or {}
+        positions = []
+        for pos in receipt.get("positions") or []:
+            pinfo = {k: v for k, v in (pos.get("info") or {}).items() if k in self.POSITION_KEYS}
+            item = {"info": pinfo}
+            if pos.get("id"):
+                item["id"] = pos["id"]
+            positions.append(item)
+        payments = []
+        for pay in receipt.get("payments") or []:
+            entry = {"type": pay.get("type"), "amount": pay.get("amount")}
+            if pay.get("type") == AQSI_CARD:
+                if not refund_slip:
+                    raise KassaError("Нет слипа возврата для карточной части чека")
+                entry["slip"] = refund_slip
+            payments.append(entry)
+        body = {
+            "deviceId": self.receipt_device(receipt),
+            "typeId": 2,  # возврат прихода
+            "info": {"taxSystemCode": info.get("taxSystemCode")},
+            "positions": positions,
+            "payments": payments,
+            "ignoreItemCodeCheck": True,
+            "skipPrinting": False,
+        }
+        # Скидка чека (бонусы гостя): если позиции в сумме дороже оплаты,
+        # разница — скидка, и чек возврата должен её повторить.
+        total = sum(
+            int(p["info"].get("finalPrice") or 0) * float(p["info"].get("baseQuantity") or 1)
+            for p in positions
+        )
+        paid = sum(int(p.get("amount") or 0) for p in payments)
+        if round(total) > paid:
+            body["discountInfo"] = {"type": "Absolute", "value": int(round(total)) - paid}
+        data = self._request("POST", "/v4/Receipts/process", json=body)
+        return self._operation_id(data)
+
+    #: Поля позиции, которые принимает чек по API (ReceiptPositionInfoReqV3).
+    POSITION_KEYS = (
+        "calculationTypeId", "calculationSubjectId", "name", "taxRateId", "quantityUnitText",
+        "quantityUnitId", "baseQuantity", "quantityPerBatch", "finalPrice", "agentInfo",
+        "supplierInfo", "nomenclatureCode", "excise", "countryCode", "declarationNumber",
+        "additionalAttribute", "industryAttributes",
+    )
+
+    def operation(self, operation_id: str) -> KassaOperation:
+        data = self._request("GET", f"/v4/Operations/{operation_id}")
+        state = str((data or {}).get("status") or "")
+        if state in self.RUNNING:
+            return KassaOperation(running=True)
+        result = None
+        raw = (data or {}).get("result")
+        if isinstance(raw, str) and raw:
+            try:
+                result = json.loads(raw)
+            except ValueError:
+                result = None
+        elif isinstance(raw, dict):
+            result = raw
+        if state == "Completed":
+            return KassaOperation(running=False, done=True, result=result)
+        reason = {
+            "Canceled": "операцию отменили на кассе",
+            "Timeout": "касса не успела — истекло время",
+        }.get(state, "")
+        message = (data or {}).get("message") or (data or {}).get("problems") or reason or state
+        return KassaOperation(running=False, done=False, result=result, message=str(message)[:300])
+
+    @staticmethod
+    def _operation_id(data) -> str:
+        op = (data or {}).get("operationId") if isinstance(data, dict) else None
+        if not op:
+            raise KassaError("aQsi не вернула номер операции")
+        return str(op)
 
     def cancel(self, payment) -> None:
         if not payment.external_id:

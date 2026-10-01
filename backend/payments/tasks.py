@@ -23,7 +23,9 @@ def settle_pending_payments_task():
     from core.models import Organization
     from core.tenancy import organization_context
 
-    from .services import pending_online_payments, settle_payment
+    from .services import (
+        pending_kassa_refunds, pending_online_payments, settle_kassa_refund, settle_payment,
+    )
 
     report = {}
     for org in Organization.objects.all():
@@ -33,6 +35,13 @@ def settle_pending_payments_task():
                 try:
                     settled += bool(settle_payment(payment))
                 except Exception as exc:  # банк недоступен, доступы стёрли
+                    report.setdefault(f"{org.slug}:ошибки", []).append(str(exc)[:200])
+            # Возвраты через кассу: бариста мог закрыть «Выданные», не
+            # дождавшись, — довести их всё равно надо.
+            for refund in pending_kassa_refunds():
+                try:
+                    settled += bool(settle_kassa_refund(refund))
+                except Exception as exc:
                     report.setdefault(f"{org.slug}:ошибки", []).append(str(exc)[:200])
             if settled:
                 report[org.slug] = settled

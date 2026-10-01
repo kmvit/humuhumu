@@ -95,6 +95,8 @@ def refund_order(order: Order, *, user=None, return_to_stock: bool = False) -> O
         raise PaymentError("Заказ не оплачен — возвращать нечего")
     if order.status == Order.Status.REFUNDED:
         raise PaymentError("Деньги по этому заказу уже вернули")
+    if kassa_refunds(order).filter(status=Payment.Status.PENDING).exists():
+        raise PaymentError("Возврат уже идёт на кассе — дождитесь, пока касса закончит")
 
     paid = list(
         Payment.objects.filter(
@@ -103,6 +105,15 @@ def refund_order(order: Order, *, user=None, return_to_stock: bool = False) -> O
     )
     if not paid:
         raise PaymentError("По заказу нет успешного платежа")
+
+    # Оплату на кассе, о которой касса сказала нам чек и слип, возвращает
+    # сама касса по нашей команде. Это несколько операций, и идут они не
+    # мгновенно (касса может попросить карту), поэтому здесь возврат
+    # только начинается, а доводит его опрос — settle_kassa_refund.
+    via_kassa = [p for p in paid if _refund_via_kassa(p)]
+    if via_kassa:
+        _start_kassa_refund(order, via_kassa, user=user, return_to_stock=return_to_stock)
+        return order
 
     for payment in paid:
         external_id = ""
@@ -130,6 +141,17 @@ def refund_order(order: Order, *, user=None, return_to_stock: bool = False) -> O
         payment.status = Payment.Status.REFUNDED
         payment.save(update_fields=["status", "updated_at"])
 
+    _close_refunded(order, user=user, return_to_stock=return_to_stock)
+    return order
+
+
+def _close_refunded(order: Order, *, user=None, return_to_stock: bool = False) -> None:
+    """Заказ — в «возврат»: бонусы назад, продукты на склад по галочке.
+
+    Ровно один раз и только когда деньги действительно ушли гостю: при
+    возврате через кассу — когда она его подтвердила, а не когда приняла
+    команду. Иначе при отказе кассы бонусы вернулись бы, а деньги нет.
+    """
     order.status = Order.Status.REFUNDED
     order.refunded_at = timezone.now()
     order.closed_by = user or order.closed_by
@@ -143,7 +165,177 @@ def refund_order(order: Order, *, user=None, return_to_stock: bool = False) -> O
         "Возврат: заказ %s, %s ₽, вернул %s%s",
         order.pk, order.payable, user, ", продукты на склад" if return_to_stock else "",
     )
-    return order
+
+
+# ── Возврат через кассу ─────────────────────────────────────────────────
+# Шаги: «slip» — касса возвращает деньги на карту по слипу оплаты;
+# «receipt» — касса пробивает чек возврата. Наличные — сразу «receipt»:
+# деньги бариста отдаёт из ящика, касса только печатает чек. Каждый шаг —
+# операция на кассе; её номер лежит в external_id записи возврата, ход —
+# в kassa_meta.
+
+def kassa_refunds(order: Order | None = None):
+    """Записи возврата через кассу (любого статуса)."""
+    from .providers import _PROVIDERS
+
+    qs = Payment.objects.filter(purpose=Payment.Purpose.REFUND, provider__in=list(_PROVIDERS))
+    return qs.filter(order=order) if order is not None else qs
+
+
+def _refund_via_kassa(payment: Payment) -> bool:
+    if not is_kassa(payment.provider) or not payment.kassa_receipt_id:
+        return False
+    return get_provider(payment.provider).can_refund
+
+
+def _start_kassa_refund(order: Order, originals: list, *, user=None, return_to_stock=False) -> None:
+    for original in originals:
+        provider = get_provider(original.provider)
+        # Прошлая попытка, где деньги на карту уже вернули, а чек не
+        # пробился: продолжаем с чека, а не возвращаем деньги второй раз.
+        resume = (
+            kassa_refunds(order)
+            .filter(status=Payment.Status.FAILED, kassa_meta__original=original.pk)
+            .order_by("-created_at")
+            .first()
+        )
+        slip_back = (resume.kassa_meta or {}).get("slip") if resume else None
+        try:
+            receipt = provider.receipt(original.kassa_receipt_id)
+            if slip_back:
+                stage, op = "receipt", provider.start_return_receipt(receipt, slip_back)
+            elif original.kassa_slip_id:
+                stage, op = "slip", provider.start_slip_refund(receipt, original.kassa_slip_id)
+            elif any(p.get("type") == 1 for p in receipt.get("payments") or []):
+                raise KassaError("в чеке есть оплата картой, а её слипа у нас нет")
+            else:
+                stage, op = "receipt", provider.start_return_receipt(receipt, None)
+        except KassaError as e:
+            raise PaymentError(f"Касса не начала возврат: {e}") from e
+        Payment.objects.create(
+            purpose=Payment.Purpose.REFUND,
+            status=Payment.Status.PENDING,
+            amount=original.amount,
+            order=order,
+            method=original.method,
+            provider=original.provider,
+            external_id=op,
+            kassa_meta={
+                "stage": stage,
+                "original": original.pk,
+                "receipt": receipt,
+                "slip": slip_back,
+                "return_to_stock": bool(return_to_stock),
+                "user": getattr(user, "pk", None),
+            },
+        )
+        logger.info(
+            "Возврат через кассу начат: заказ %s, платёж %s, шаг %s, операция %s",
+            order.pk, original.pk, stage, op,
+        )
+
+
+def _fiscal_of(receipt: dict | None) -> str:
+    doc = ((receipt or {}).get("info") or {}).get("docInfo") or {}
+    number, fp = doc.get("docNumber"), doc.get("docFiscalAttributeInt") or doc.get("docFiscalAttribute")
+    return f"ФД {number or '—'}, ФП {fp or '—'}"[:64] if (number or fp) else ""
+
+
+def settle_kassa_refund(refund: Payment) -> bool:
+    """Спросить кассу, как идёт возврат, и довести его на шаг.
+
+    Возвращает True, если что-то изменилось. Под блокировкой строки: опрос
+    приходит и с доски, и из фоновой задачи, и без неё один шаг мог бы
+    запуститься дважды — второй чек возврата или второй возврат на карту.
+    """
+    if refund.status != Payment.Status.PENDING or not refund.external_id:
+        return False
+    provider = get_provider(refund.provider)
+    try:
+        op = provider.operation(refund.external_id)
+    except KassaError as e:
+        logger.warning("Возврат %s: касса не ответила (%s)", refund.pk, e)
+        return False
+    if op.running:
+        refund.save(update_fields=["updated_at"])
+        return False
+
+    from users.models import User
+
+    with transaction.atomic():
+        fresh = Payment.objects.select_for_update().filter(pk=refund.pk).first()
+        if (
+            fresh is None
+            or fresh.status != Payment.Status.PENDING
+            or fresh.external_id != refund.external_id
+        ):
+            return False
+        meta = dict(fresh.kassa_meta or {})
+
+        if not op.done:
+            # Касса отказала. С шага «чек» это значит: деньги на карту уже
+            # ушли — слип в meta остаётся, и повтор начнёт с чека.
+            meta["error"] = (
+                f"Деньги на карту вернули, а чек возврата не пробился: {op.message}"
+                if meta.get("stage") == "receipt" and meta.get("slip")
+                else f"Касса не вернула деньги: {op.message}"
+            )
+            fresh.kassa_meta = meta
+            fresh.status = Payment.Status.FAILED
+            fresh.save(update_fields=["kassa_meta", "status", "updated_at"])
+            logger.warning("Возврат %s (заказ %s) не прошёл: %s", fresh.pk, fresh.order_id, meta["error"])
+            return True
+
+        if meta.get("stage") == "slip":
+            meta["slip"] = op.result
+            meta["stage"] = "receipt"
+            try:
+                next_op = provider.start_return_receipt(meta["receipt"], op.result)
+            except KassaError as e:
+                meta["error"] = f"Деньги на карту вернули, а чек возврата не пробился: {e}"
+                fresh.kassa_meta = meta
+                fresh.status = Payment.Status.FAILED
+                fresh.save(update_fields=["kassa_meta", "status", "updated_at"])
+                return True
+            fresh.external_id = next_op
+            fresh.kassa_meta = meta
+            fresh.save(update_fields=["external_id", "kassa_meta", "updated_at"])
+            return True
+
+        # Чек возврата пробит — деньги у гостя, документ есть.
+        meta.pop("error", None)
+        meta["return_receipt_id"] = str((op.result or {}).get("id") or "")
+        fresh.kassa_meta = meta
+        fresh.fiscal_receipt = _fiscal_of(op.result)
+        fresh.status = Payment.Status.SUCCEEDED
+        fresh.save(update_fields=["kassa_meta", "fiscal_receipt", "status", "updated_at"])
+
+        original = Payment.objects.select_for_update().filter(pk=meta.get("original")).first()
+        if original is not None and original.status == Payment.Status.SUCCEEDED:
+            original.status = Payment.Status.REFUNDED
+            original.save(update_fields=["status", "updated_at"])
+
+        order = Order.objects.select_for_update().get(pk=fresh.order_id)
+        still = kassa_refunds(order).filter(status=Payment.Status.PENDING).exists()
+        if order.status != Order.Status.REFUNDED and not still:
+            user = User.objects.filter(pk=meta.get("user")).first() if meta.get("user") else None
+            _close_refunded(order, user=user, return_to_stock=bool(meta.get("return_to_stock")))
+    return True
+
+
+def pending_kassa_refunds(*, every: timedelta | None = None):
+    """Возвраты, которые касса ещё делает и которые пора переспросить."""
+    from .providers import MockProvider, _PROVIDERS
+
+    qs = Payment.objects.filter(
+        purpose=Payment.Purpose.REFUND,
+        status=Payment.Status.PENDING,
+        provider__in=[n for n in _PROVIDERS if n != MockProvider.name],
+        created_at__gte=timezone.now() - SETTLE_WINDOW,
+    ).exclude(external_id=None)
+    if every is not None:
+        qs = qs.filter(updated_at__lte=timezone.now() - every)
+    return qs
 
 
 def _undo_bonuses(order: Order) -> None:
@@ -623,6 +815,11 @@ def settle_waiting_kassa() -> None:
             settle_kassa_payment(payment)
         except Exception:  # касса не должна ронять доску
             logger.exception("Не удалось довести платёж %s", payment.pk)
+    for refund in pending_kassa_refunds(every=KASSA_EVERY):
+        try:
+            settle_kassa_refund(refund)
+        except Exception:
+            logger.exception("Не удалось довести возврат %s", refund.pk)
 
 
 def settle_order(order: Order) -> None:
