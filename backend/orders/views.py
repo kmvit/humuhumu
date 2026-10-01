@@ -92,7 +92,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             from core.plans import RequiresLoyalty
 
             return [IsWaiterOrAdmin(), RequiresLoyalty()]
-        if self.action in ("close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "item_qty", "confirm", "prepaid", "performer", "refund", "set_comment", "move", "move_items", "serve", "pay_terminal", "pay_result"):
+        if self.action in ("close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "item_qty", "confirm", "prepaid", "performer", "refund", "set_comment", "move", "move_items", "serve", "pay_terminal", "pay_result", "kassa_paid"):
             return [IsWaiterOrAdmin()]
         # item_status — право проверяем внутри по станции позиции
         return [IsAuthenticated()]
@@ -1082,6 +1082,35 @@ class OrderViewSet(viewsets.ModelViewSet):
         # аннотацию «на кассе», и бариста видел бы прежнюю кнопку.
         order = self.get_queryset().get(pk=order.pk)
         return Response(OrderSerializer(order).data)
+
+    @action(detail=True, methods=["post"], url_path="kassa_paid")
+    def kassa_paid(self, request, pk=None):
+        """«Оплачено» за заказ на кассе, если касса сама не подтвердила.
+
+        Без method — только спрашиваем кассу: подтвердила — заказ пошёл в
+        работу; нет — 409 need_method, и бариста выбирает, чем заплатили.
+        С method — подтверждаем вручную (см. confirm_kassa_paid).
+        """
+        from payments.services import confirm_kassa_paid
+
+        order = self.get_object()
+        method = request.data.get("method") or None
+        try:
+            outcome = confirm_kassa_paid(order, method, request.user)
+        except PaymentError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        order = self.get_queryset().get(pk=order.pk)
+        if outcome == "need_method":
+            return Response(
+                {
+                    "detail": "Касса оплату не подтвердила. Чек пробит? "
+                              "Укажите, чем заплатили",
+                    "need_method": True,
+                    "order": OrderSerializer(order).data,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response({"confirmed": outcome, "order": OrderSerializer(order).data})
 
     @action(detail=True, methods=["post"], url_path="pay_result")
     def pay_result(self, request, pk=None):

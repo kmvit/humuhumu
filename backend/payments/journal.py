@@ -54,7 +54,7 @@ def day_journal(day) -> dict:
             created_at__date=day,
             purpose__in=(Payment.Purpose.ORDER, Payment.Purpose.REFUND),
         )
-        .select_related("order")
+        .select_related("order", "confirmed_by")
         .order_by("-created_at")
     )
 
@@ -90,6 +90,12 @@ def day_journal(day) -> dict:
             "channel_display": CHANNEL_TITLES[channel],
             "provider_display": provider_title(p.provider),
             "fiscal_receipt": p.fiscal_receipt,
+            # Касса оплату не подтвердила — отметил сотрудник. Сверить с
+            # отчётом кассы: не пробитый чек лежит там в отложенных.
+            "confirmed_by": (
+                (p.confirmed_by.get_full_name() or p.confirmed_by.username)
+                if p.confirmed_by else ""
+            ),
         })
 
     income = totals["cash"] + totals["card_kassa"] + totals["online"]

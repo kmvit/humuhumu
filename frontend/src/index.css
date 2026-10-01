@@ -364,6 +364,12 @@ h1, h2, h3 { font-family: var(--font-display); color: var(--fg); margin: 0; font
 .btn.block { width: 100%; }
 .btn.icon { padding: 0; width: 44px; }
 .btn.danger { background: var(--danger); color: #ffffff; }
+/* Две кнопки в строку в узкой колонке доски: делят ширину поровну и
+   сжимаются — grid с 1fr не давал колонке стать уже текста кнопки. */
+.btn-row { display: flex; gap: 8px; }
+.btn-row > .btn { flex: 1 1 0; min-width: 0; padding-left: 8px; padding-right: 8px; }
+/* в тёмной теме --success светлый — притемняем, чтобы белый текст читался */
+.btn.success { background: color-mix(in srgb, var(--success) 82%, #000); color: #ffffff; }
 
 /* свотч акцентного цвета в настройках внешнего вида */
 .accent-dot { width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--surface-solid); box-shadow: 0 0 0 1px var(--rule); cursor: pointer; padding: 0; flex: none; }

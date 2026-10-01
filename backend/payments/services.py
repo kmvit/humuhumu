@@ -496,6 +496,53 @@ def apply_bank_result(payment: Payment, result) -> bool:
     return True
 
 
+def confirm_kassa_paid(order: Order, method: str | None, user) -> str:
+    """Бариста отмечает «Оплачено» за заказ, который лежит на кассе.
+
+    Подстраховка на случай, когда касса оплату не подтвердила: не
+    ответила или назвала оплаченный заказ не так, как мы ждём. Без неё
+    стойка встала бы — заказ не идёт в работу, пока касса не скажет.
+
+    Сначала спрашиваем кассу сами: подтвердит — дальше обычным путём, и
+    ручная отметка не нужна. Нет — подтверждаем вручную тот самый платёж,
+    что лежит на кассе, под блокировкой, как apply_bank_result: фоновый
+    опрос мог увидеть оплату в ту же секунду, и заказ закрылся бы дважды.
+    С кассы заказ не снимаем — там он, скорее всего, уже оплачен.
+
+    Возвращает "kassa" (подтвердила касса), "manual" (подтвердили руками)
+    или "need_method" (касса молчит — нужен способ оплаты от баристы).
+    """
+    payment = pending_kassa_payments(order).order_by("-created_at").first()
+    if payment is None:
+        raise PaymentError("Заказ не на кассе — сначала отправьте его на кассу")
+    settle_kassa_payment(payment)
+    order.refresh_from_db()
+    if order.paid_at:
+        return "kassa"
+    if method is None:
+        return "need_method"
+    if method not in (Payment.Method.CASH, Payment.Method.CARD):
+        raise PaymentError("Укажите, чем заплатили: наличными или картой")
+    with transaction.atomic():
+        fresh = Payment.objects.select_for_update().filter(pk=payment.pk).first()
+        if fresh is None or fresh.status != Payment.Status.PENDING:
+            order.refresh_from_db()
+            if order.paid_at:
+                return "kassa"
+            raise PaymentError(
+                "Касса не знает этот заказ — отправьте его на кассу заново"
+            )
+        fresh.method = method
+        fresh.confirmed_by = user
+        fresh.save(update_fields=["method", "confirmed_by", "updated_at"])
+        apply_payment_result(fresh, success=True, user=user)
+    logger.warning(
+        "Заказ %s: оплату на кассе подтвердил вручную %s (платёж %s, %s ₽)",
+        order.pk, user, payment.pk, payment.amount,
+    )
+    return "manual"
+
+
 def settle_payment(payment: Payment) -> bool:
     """Спросить банк о незавершённом платеже и применить ответ.
 

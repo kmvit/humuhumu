@@ -9,6 +9,7 @@ import { useToast } from "../../components/ui/Toast";
 import { fmtDuration, minutesBetween } from "../../time";
 import { useFeature, useSite } from "../../site";
 import BonusPanel from "../waiter/BonusPanel";
+import KassaPaid from "./KassaPaid";
 
 function money(v: string | number | null | undefined): string {
   return Number(v ?? 0).toLocaleString("ru", { maximumFractionDigits: 2 });
@@ -253,6 +254,9 @@ export default function Counter() {
       {payingId != null && (
         <PayAtKassa
           order={payingOrder}
+          paidFallback={
+            payingOrder?.kassa_waiting ? <KassaPaid order={payingOrder} onDone={reload} /> : null
+          }
           bonus={
             bonusOn && payingOrder ? (
               <BonusPanel
@@ -471,15 +475,13 @@ export default function Counter() {
                           </button>
                         </div>
                       ) : o.kassa_waiting ? (
-                        // Оплату подтверждает только касса — заказ сам уедет
-                        // в «Новые». Ручной отметки при кассе нет: мимо неё
-                        // заведение деньги не принимает.
+                        // Оплату подтверждает касса — заказ сам уедет в
+                        // «Новые». «Оплачено» — подстраховка, если касса не
+                        // ответила: только для заказа, который на ней лежит.
                         <>
-                          <span className="badge preparing">
-                            <Icon name="cash" size={13} /> На кассе · №{o.id}
-                          </span>
-                          <p className="muted sm m-0 mt-1">
-                            Пробейте заказ №{o.id} на кассе — он сам уйдёт в работу.
+                          {/* Номер — в заголовке карточки, плашка его только повторяла. */}
+                          <p className="muted sm m-0">
+                            Лежит на кассе — пробейте, и заказ сам уйдёт в работу.
                           </p>
                           <button className="btn sm block mt-2" onClick={() => setPayingId(o.id)}>
                             <Icon name="cash" size={16} /> Экран оплаты
@@ -501,9 +503,20 @@ export default function Counter() {
                               </button>
                             </div>
                           ) : (
-                            <button className="btn sm ghost block mt-2" onClick={() => setDropFor(o.id)}>
-                              Гость ушёл — отменить
-                            </button>
+                            // «Оплачено» и «Отменить» — в одну строку: два исхода
+                            // заказа у окна, бариста выбирает один из них.
+                            <KassaPaid
+                              order={o}
+                              onDone={reload}
+                              beside={
+                                <button
+                                  className="btn sm danger block"
+                                  onClick={() => setDropFor(o.id)}
+                                >
+                                  <Icon name="close" size={15} /> Отменить
+                                </button>
+                              }
+                            />
                           )}
                         </>
                       ) : kassa ? (

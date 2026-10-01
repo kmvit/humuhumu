@@ -50,6 +50,8 @@ type JournalPayment = {
   channel_display: string;
   provider_display: string;
   fiscal_receipt: string;
+  /** Касса не подтвердила — «Оплачено» отметил этот сотрудник. */
+  confirmed_by?: string;
 };
 
 type Journal = {
@@ -245,6 +247,13 @@ export default function OrdersJournal() {
                   <span className={"badge " + (p.refund ? "cancelled" : p.status === "succeeded" ? "paid" : p.status === "pending" ? "pending" : "cancelled")}>
                     {p.refund ? "Деньги возвращены" : p.status === "pending" && p.channel === "kassa" ? "Ждёт на кассе" : p.status_display}
                   </span>
+                  {/* Сверить с отчётом кассы: если чек не пробит, заказ
+                      так и лежит там в отложенных. */}
+                  {p.confirmed_by && (
+                    <span className="badge pending" style={{ marginLeft: 6 }}>
+                      Отмечено вручную · {p.confirmed_by}
+                    </span>
+                  )}
                 </span>
               </div>
               <strong className="num">{p.refund ? "−" : ""}{money(p.amount)}</strong>

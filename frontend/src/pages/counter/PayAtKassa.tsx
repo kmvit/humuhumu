@@ -22,11 +22,14 @@ export default function PayAtKassa({
   onResend,
   onCancelOrder,
   bonus,
+  paidFallback,
 }: {
   /** null — заказа на доске больше нет (отменили, истёк). */
   order: Order | null;
   /** Панель бонусов: гость вспомнил про них у окна — сумму пересчитают. */
   bonus?: ReactNode;
+  /** «Оплачено» — если касса сама не подтвердила оплату. */
+  paidFallback?: ReactNode;
   busy: boolean;
   onClose: () => void;
   onResend: (order: Order) => void;
@@ -93,10 +96,13 @@ export default function PayAtKassa({
           {bonus}
 
           {order.kassa_waiting ? (
-            <p className="muted m-0">
-              <Icon name="spark" size={14} /> Ждём оплату на кассе — наличными или картой. Как
-              только касса пробьёт чек, заказ сам уйдёт в работу.
-            </p>
+            <>
+              <p className="muted m-0">
+                <Icon name="spark" size={14} /> Ждём оплату на кассе — наличными или картой. Как
+                только касса пробьёт чек, заказ сам уйдёт в работу.
+              </p>
+              {paidFallback}
+            </>
           ) : (
             <>
               <p className="muted m-0">

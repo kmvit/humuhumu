@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 from core.tenancy import TenantModel
@@ -65,6 +66,17 @@ class Payment(TenantModel):
         "ID у провайдера", max_length=128, null=True, blank=True
     )
     fiscal_receipt = models.CharField("Фискальный чек", max_length=64, blank=True, default="")
+    # Касса не подтвердила оплату сама, и сотрудник отметил «Оплачено»
+    # руками. Такие платежи владелец сверяет с отчётом кассы: если чек
+    # не пробит, заказ так и лежит на кассе в отложенных.
+    confirmed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+        verbose_name="Подтвердил вручную",
+    )
     created_at = models.DateTimeField("Создан", auto_now_add=True)
     updated_at = models.DateTimeField("Обновлён", auto_now=True)
 
