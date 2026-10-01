@@ -450,6 +450,135 @@ class ProfitReportTests(APITestCase):
         self.assertEqual(r["avg_check"], "0.00")
         self.assertEqual(r["margin"], 0.0)
         self.assertEqual(r["profit"], "0.00")
+        self.assertEqual(r["write_offs"], "0.00")
+        self.assertEqual(r["write_offs_by_reason"], [])
+        self.assertEqual(r["write_offs_unpriced"], 0)
+
+    # ——— списания ———
+
+    def write_off(self, lines, reason="Не продали", title="Заготовка"):
+        res = self.client.post(
+            "/api/inventory/write-offs/",
+            {"title": title, "reason": reason, "items": lines},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 201, res.data)
+        return res.data
+
+    def test_write_offs_reduce_gross_and_profit(self):
+        """Списанное мясо — продуктовый расход: минус до валовой прибыли."""
+        self.auth(self.manager)
+        self.sell(self.burger, 10)  # выручка 5000, себестоимость 1500
+        self.write_off([{"item": self.meat.id, "quantity": "200"}])  # 300 ₽
+        r = self.report()
+        self.assertEqual(r["cogs"], "1500.00")
+        self.assertEqual(r["write_offs"], "300.00")
+        self.assertEqual(r["gross"], "3200.00")
+        self.assertEqual(r["margin"], 64.0)  # 3200 / 5000
+        self.assertEqual(r["profit"], "3200.00")
+
+    def test_write_offs_grouped_by_reason_biggest_first(self):
+        self.auth(self.manager)
+        self.write_off([{"item": self.meat.id, "quantity": "10"}], reason="Персоналу")
+        self.write_off([{"item": self.meat.id, "quantity": "100"}], reason="Не продали")
+        self.write_off([{"item": self.meat.id, "quantity": "20"}], reason="Персоналу")
+        r = self.report()
+        self.assertEqual(
+            r["write_offs_by_reason"],
+            [
+                {"reason": "Не продали", "amount": "150.00"},
+                {"reason": "Персоналу", "amount": "45.00"},
+            ],
+        )
+        self.assertEqual(r["write_offs"], "195.00")
+        # без продаж валовая прибыль — чистый минус на списания
+        self.assertEqual(r["gross"], "-195.00")
+        self.assertEqual(r["profit"], "-195.00")
+
+    def test_write_off_of_other_month_is_not_counted(self):
+        from inventory.models import WriteOff
+
+        self.auth(self.manager)
+        self.write_off([{"item": self.meat.id, "quantity": "100"}])
+        WriteOff.objects.update(created_at=timezone.now() - timedelta(days=40))
+        r = self.report()
+        self.assertEqual(r["write_offs"], "0.00")
+        self.assertEqual(r["write_offs_by_reason"], [])
+
+    def test_unpriced_lines_are_counted_separately(self):
+        """Товар без цены закупа в сумму не входит, но его видно."""
+        from inventory.models import StockCategory, StockItem
+
+        self.auth(self.manager)
+        salt = StockItem.objects.create(
+            name="Соль", unit="g", category=StockCategory.objects.get()
+        )
+        self.write_off([
+            {"item": self.meat.id, "quantity": "100"},
+            {"item": salt.id, "quantity": "50"},
+        ])
+        r = self.report()
+        self.assertEqual(r["write_offs"], "150.00")
+        self.assertEqual(r["write_offs_unpriced"], 1)
+
+    def test_price_is_the_one_at_write_off_time(self):
+        """Новый приход по другой цене не переписывает прошлые списания."""
+        from inventory.models import Receipt, ReceiptItem
+
+        self.auth(self.manager)
+        self.write_off([{"item": self.meat.id, "quantity": "100"}])  # по 1.50
+        ReceiptItem.objects.create(
+            receipt=Receipt.objects.create(), item=self.meat,
+            quantity=Decimal("1000"), unit_cost=Decimal("3"),
+        )
+        self.assertEqual(self.report()["write_offs"], "150.00")
+
+    def test_kopecks_match_the_warehouse_tab(self):
+        """Строки округляются до копейки до сложения — суммы склада и
+        финансов совпадают до копейки."""
+        from inventory.models import Receipt, ReceiptItem
+
+        self.auth(self.manager)
+        ReceiptItem.objects.create(
+            receipt=Receipt.objects.create(), item=self.meat,
+            quantity=Decimal("1000"), unit_cost=Decimal("0.75"),
+        )
+        # по 15,5 г × 0,75 = 11,625 → 11,63 трижды; общий округлённый
+        # итог был бы 34,875 → 34,88, а сумма строк — 34,89
+        totals = [
+            self.write_off([{"item": self.meat.id, "quantity": "15.5"}])["total_cost"]
+            for _ in range(3)
+        ]
+        self.assertEqual(totals, ["11.63"] * 3)
+        listed = self.client.get(
+            f"/api/inventory/write-offs/?month={self.month}"
+        ).data
+        warehouse_total = sum(Decimal(w["total_cost"]) for w in listed)
+        self.assertEqual(warehouse_total, Decimal("34.89"))
+        self.assertEqual(self.report()["write_offs"], "34.89")
+
+    def test_deleted_write_off_leaves_the_report(self):
+        self.auth(self.manager)
+        wo = self.write_off([{"item": self.meat.id, "quantity": "100"}])
+        self.client.delete(f"/api/inventory/write-offs/{wo['id']}/")
+        r = self.report()
+        self.assertEqual(r["write_offs"], "0.00")
+        self.assertEqual(r["profit"], "0.00")
+
+    def test_write_offs_do_not_touch_cogs_or_purchases(self):
+        """Списание — отдельная строка: себестоимость продаж и справка о
+        закупе от него не меняются (иначе мясо посчиталось бы дважды)."""
+        self.auth(self.manager)
+        self.sell(self.burger, 1)
+        before = self.report()
+        self.write_off([{"item": self.meat.id, "quantity": "100"}])
+        after = self.report()
+        self.assertEqual(after["cogs"], before["cogs"])
+        self.assertEqual(after["purchases"], before["purchases"])
+        self.assertEqual(after["cost_coverage"], before["cost_coverage"])
+        self.assertEqual(
+            Decimal(before["profit"]) - Decimal(after["profit"]), Decimal("150")
+        )
 
     def test_worker_has_no_access_to_report(self):
         cook = User.objects.create_user(

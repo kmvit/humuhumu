@@ -4,7 +4,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import F, Sum
+from django.db.models import F
 from django.utils import timezone
 
 from catalog.models import ModifierEffect
@@ -173,24 +173,41 @@ def return_order_item(order_item, user=None) -> None:
     order_item.save(update_fields=["stock_written_off_at"])
 
 
+def _undo_movements(movements) -> None:
+    """Снять вклад движений с остатков и удалить сами движения.
+
+    Остаток уменьшается ровно на их сумму, а НЕ пересчитывается заново
+    суммой всего журнала. Остаток — кэш журнала, но кэш с историей: его
+    правили в Django-админке, товары сливали миграцией, демо заводилось
+    с готовыми остатками — и всё это мимо движений. Пересчёт «с нуля»
+    затирал такой остаток: удаление списания на 15,5 мл сиропа превратило
+    1 980 мл в −20.
+    """
+    by_item: dict[int, Decimal] = {}
+    for item_id, delta in movements.values_list("item_id", "delta"):
+        by_item[item_id] = by_item.get(item_id, Decimal("0")) + delta
+    for item in StockItem.objects.select_for_update().filter(id__in=by_item):
+        item.quantity = (item.quantity or Decimal("0")) - by_item[item.id]
+        item.save(update_fields=["quantity"])
+    movements.delete()
+
+
 @transaction.atomic
 def delete_receipt(receipt) -> None:
     """Удалить приход и откатить его влияние на остатки.
 
-    При создании приход увеличил остатки (движения kind=receipt). Здесь эти
-    движения удаляются, а остаток каждого затронутого товара пересчитывается как
-    сумма оставшихся движений — как будто прихода и не было. Остаток может уйти в
-    минус, если товар уже частично списали по тех картам, — это корректно
-    показывает, что приход был ошибочным.
+    Остаток может уйти в минус, если товар уже частично списали по тех
+    картам, — это корректно показывает, что приход был ошибочным.
     """
-    item_ids = list(receipt.items.values_list("item_id", flat=True))
-    # движения именно этого прихода (FK receipt) — снимаем их вклад в остаток
-    StockMovement.objects.filter(receipt=receipt).delete()
-    for item in StockItem.objects.select_for_update().filter(id__in=item_ids):
-        total = item.movements.aggregate(s=Sum("delta"))["s"] or Decimal("0")
-        item.quantity = total
-        item.save(update_fields=["quantity"])
+    _undo_movements(StockMovement.objects.filter(receipt=receipt))
     receipt.delete()
+
+
+@transaction.atomic
+def delete_write_off(write_off) -> None:
+    """Удалить ошибочное списание и вернуть товары в остатки."""
+    _undo_movements(StockMovement.objects.filter(write_off=write_off))
+    write_off.delete()
 
 
 def get_or_build_purchase(date) -> PurchaseList:

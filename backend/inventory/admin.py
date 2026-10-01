@@ -12,7 +12,10 @@ from .models import (
     StockItem,
     StockItemAlias,
     StockMovement,
+    WriteOff,
+    WriteOffItem,
 )
+from .services import delete_write_off
 
 
 @admin.register(StockCategory)
@@ -100,3 +103,35 @@ class ScanQuotaAdmin(admin.ModelAdmin):
     @admin.display(description="Лимит месяца")
     def limit(self, obj):
         return obj.limit
+
+
+class WriteOffItemInline(admin.TabularInline):
+    model = WriteOffItem
+    extra = 0
+    fields = ("item", "quantity", "unit_cost")
+    readonly_fields = fields
+
+    def has_add_permission(self, request, obj=None):
+        # Остатки меняет только API: строка, добавленная здесь, не
+        # записала бы движение, и склад разошёлся бы с журналом.
+        return False
+
+
+@admin.register(WriteOff)
+class WriteOffAdmin(admin.ModelAdmin):
+    list_display = ("id", "title", "reason", "created_by", "created_at")
+    search_fields = ("title", "reason")
+    readonly_fields = ("title", "reason", "created_by", "created_at")
+    inlines = [WriteOffItemInline]
+
+    def has_add_permission(self, request):
+        return False
+
+    # Удаление из админки — тем же путём, что из интерфейса: с возвратом
+    # товаров в остатки, а не голым DELETE.
+    def delete_model(self, request, obj):
+        delete_write_off(obj)
+
+    def delete_queryset(self, request, queryset):
+        for obj in queryset:
+            delete_write_off(obj)

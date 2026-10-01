@@ -1,3 +1,4 @@
+from datetime import timedelta
 from decimal import Decimal
 from unittest import mock
 
@@ -28,6 +29,7 @@ from .models import (
     StockCategory,
     StockItem,
     StockMovement,
+    WriteOff,
 )
 
 
@@ -142,6 +144,14 @@ class ReceiptDeleteTests(APITestCase):
         self.assertFalse(
             self.item.movements.filter(kind=StockMovement.Kind.RECEIPT).exists()
         )
+
+    def test_delete_keeps_stock_set_outside_the_journal(self):
+        self._receipt(qty="5000")
+        # инвентаризацию провели в админке, мимо движений: 5000 → 7000
+        StockItem.objects.filter(pk=self.item.pk).update(quantity=Decimal("7000"))
+        self.client.delete(f"/api/inventory/receipts/{Receipt.objects.get().id}/")
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, Decimal("2000"))
 
     def test_delete_keeps_other_receipts(self):
         self._receipt(qty="5000")
@@ -682,3 +692,155 @@ class ReceiptPriceScaleTests(APITestCase):
 
     def test_price_still_cannot_be_negative(self):
         self.assertEqual(self.receipt("5000", "-1").status_code, 400)
+
+
+class WriteOffTests(APITestCase):
+    """Списания мимо продажи: заготовка, порча, взяли сотрудники."""
+
+    def setUp(self):
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.HALL
+        site.save()
+        User.objects.create_user(
+            username="sklad", password="pw", role=User.Role.WAREHOUSE
+        )
+        cat = StockCategory.objects.create(name="Молочка")
+        self.cream = StockItem.objects.create(
+            category=cat, name="Сливки 33%", unit=StockItem.Unit.MILLILITER
+        )
+        self.sugar = StockItem.objects.create(
+            category=cat, name="Сахарная пудра", unit=StockItem.Unit.GRAM
+        )
+        self._login("sklad")
+        # приход с ценой: 1000 мл сливок за 500 ₽, пудра без цены
+        self.client.post(
+            "/api/inventory/receipts/",
+            {
+                "items": [
+                    {"item": self.cream.id, "quantity": "1000", "unit_cost": "0.5"},
+                    {"item": self.sugar.id, "quantity": "500"},
+                ]
+            },
+            format="json",
+        )
+
+    def _login(self, username):
+        res = self.client.post(
+            "/api/auth/token/", {"username": username, "password": "pw"}, format="json"
+        )
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {res.data['access']}")
+
+    def _write_off(self, lines, title="Сливочная шапка", reason="не продали"):
+        return self.client.post(
+            "/api/inventory/write-offs/",
+            {"title": title, "reason": reason, "items": lines},
+            format="json",
+        )
+
+    def test_write_off_reduces_stock_and_logs_movement(self):
+        res = self._write_off([
+            {"item": self.cream.id, "quantity": "200"},
+            {"item": self.sugar.id, "quantity": "30"},
+        ])
+        self.assertEqual(res.status_code, 201, res.data)
+        self.cream.refresh_from_db()
+        self.sugar.refresh_from_db()
+        self.assertEqual(self.cream.quantity, Decimal("800"))
+        self.assertEqual(self.sugar.quantity, Decimal("470"))
+        mv = self.cream.movements.get(kind=StockMovement.Kind.WRITE_OFF)
+        self.assertEqual(mv.delta, Decimal("-200"))
+        self.assertIn("Сливочная шапка", mv.comment)
+        self.assertIn("не продали", mv.comment)
+
+    def test_cost_is_counted_by_last_price(self):
+        res = self._write_off([
+            {"item": self.cream.id, "quantity": "200"},
+            {"item": self.sugar.id, "quantity": "30"},
+        ])
+        # 200 мл × 0,5 ₽; у пудры цены нет — в сумму не входит
+        self.assertEqual(Decimal(res.data["total_cost"]), Decimal("100.00"))
+
+    def test_half_kopeck_rounds_up(self):
+        # 15,5 мл × 0,75 ₽ = 11,625 ₽ → 11,63, как в форме, а не 11,62
+        self.client.post(
+            "/api/inventory/receipts/",
+            {"items": [{"item": self.cream.id, "quantity": "100", "unit_cost": "0.75"}]},
+            format="json",
+        )
+        res = self._write_off([{"item": self.cream.id, "quantity": "15.5"}])
+        self.assertEqual(res.data["total_cost"], "11.63")
+        self.assertEqual(res.data["items"][0]["subtotal"], "11.63")
+
+    def test_price_is_frozen_at_write_off(self):
+        self._write_off([{"item": self.cream.id, "quantity": "100"}])
+        self.client.post(
+            "/api/inventory/receipts/",
+            {"items": [{"item": self.cream.id, "quantity": "1000", "unit_cost": "2"}]},
+            format="json",
+        )
+        wo = WriteOff.objects.get()
+        self.assertEqual(wo.total_cost, Decimal("50"))  # прежняя цена
+
+    def test_reason_and_lines_are_required(self):
+        self.assertEqual(
+            self._write_off([{"item": self.cream.id, "quantity": "1"}], reason="").status_code,
+            400,
+        )
+        self.assertEqual(self._write_off([]).status_code, 400)
+
+    def test_same_item_twice_is_summed(self):
+        self._write_off([
+            {"item": self.cream.id, "quantity": "100"},
+            {"item": self.cream.id, "quantity": "50"},
+        ])
+        wo = WriteOff.objects.get()
+        self.assertEqual(wo.items.count(), 1)
+        self.assertEqual(wo.items.get().quantity, Decimal("150"))
+
+    def test_stock_may_go_negative(self):
+        res = self._write_off([{"item": self.cream.id, "quantity": "1500"}])
+        self.assertEqual(res.status_code, 201)
+        self.cream.refresh_from_db()
+        self.assertEqual(self.cream.quantity, Decimal("-500"))
+
+    def test_delete_returns_goods(self):
+        self._write_off([{"item": self.cream.id, "quantity": "200"}])
+        wo = WriteOff.objects.get()
+        self.assertEqual(
+            self.client.delete(f"/api/inventory/write-offs/{wo.id}/").status_code, 204
+        )
+        self.cream.refresh_from_db()
+        self.assertEqual(self.cream.quantity, Decimal("1000"))
+        self.assertFalse(
+            self.cream.movements.filter(kind=StockMovement.Kind.WRITE_OFF).exists()
+        )
+
+    def test_delete_keeps_stock_set_outside_the_journal(self):
+        # остаток правили в админке мимо движений: 1000 → 1980
+        StockItem.objects.filter(pk=self.cream.pk).update(quantity=Decimal("1980"))
+        self._write_off([{"item": self.cream.id, "quantity": "15.5"}])
+        wo = WriteOff.objects.get()
+        self.client.delete(f"/api/inventory/write-offs/{wo.id}/")
+        self.cream.refresh_from_db()
+        self.assertEqual(self.cream.quantity, Decimal("1980"))
+
+    def test_list_is_by_month(self):
+        self._write_off([{"item": self.cream.id, "quantity": "10"}])
+        old = WriteOff.objects.get()
+        WriteOff.objects.filter(pk=old.pk).update(
+            created_at=timezone.now() - timedelta(days=62)
+        )
+        self._write_off([{"item": self.cream.id, "quantity": "10"}], title="Капучино")
+        res = self.client.get("/api/inventory/write-offs/")
+        self.assertEqual([w["title"] for w in res.data], ["Капучино"])
+        month = timezone.localtime(
+            WriteOff.objects.get(pk=old.pk).created_at
+        ).strftime("%Y-%m")
+        res = self.client.get(f"/api/inventory/write-offs/?month={month}")
+        self.assertEqual([w["title"] for w in res.data], ["Сливочная шапка"])
+
+    def test_waiter_cannot_write_off(self):
+        User.objects.create_user(username="w", password="pw", role=User.Role.WAITER)
+        self._login("w")
+        res = self._write_off([{"item": self.cream.id, "quantity": "10"}])
+        self.assertEqual(res.status_code, 403)

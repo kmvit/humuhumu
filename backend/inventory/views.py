@@ -25,6 +25,7 @@ from .models import (
     StockItem,
     StockItemAlias,
     StockMovement,
+    WriteOff,
 )
 from .serializers import (
     AdjustSerializer,
@@ -40,10 +41,13 @@ from .serializers import (
     StockItemAliasSerializer,
     StockItemSerializer,
     StockMovementSerializer,
+    WriteOffCreateSerializer,
+    WriteOffSerializer,
 )
 from .services import (
     consume_scan_quota,
     delete_receipt,
+    delete_write_off,
     get_or_build_purchase,
     last_unit_costs,
     scan_quota,
@@ -121,6 +125,7 @@ class StockItemViewSet(viewsets.ModelViewSet):
             or item.receipt_items.exists()
             or item.recipe_items.exists()
             or item.purchase_lines.exists()
+            or item.write_off_items.exists()
         )
         if has_history:
             item.is_active = False
@@ -184,6 +189,47 @@ class ReceiptViewSet(viewsets.ModelViewSet):
         приход с исправленными позициями, а старый удаляется этим же методом.
         """
         delete_receipt(self.get_object())
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class WriteOffViewSet(viewsets.ModelViewSet):
+    """Списания: заготовка не ушла, продукт испортился, взяли сотрудники.
+
+    Список — за месяц (?month=ГГГГ-ММ, по умолчанию текущий): по нему
+    вкладка показывает, сколько денег ушло в списания.
+    """
+
+    permission_classes = [IsWarehouseOrAdmin, RequiresInventory]
+    http_method_names = ["get", "post", "delete", "head", "options"]
+
+    def get_queryset(self):
+        # get_queryset, а не queryset на классе — см. core/tenancy.py.
+        qs = WriteOff.objects.prefetch_related("items__item").select_related(
+            "created_by"
+        )
+        if self.action == "list":
+            year, month = self._month()
+            qs = qs.filter(created_at__year=year, created_at__month=month)
+        return qs
+
+    def _month(self) -> tuple[int, int]:
+        raw = self.request.query_params.get("month", "")
+        try:
+            year, month = (int(x) for x in raw.split("-"))
+            date_cls(year, month, 1)
+            return year, month
+        except ValueError:
+            today = timezone.localdate()
+            return today.year, today.month
+
+    def get_serializer_class(self):
+        if self.action == "create":
+            return WriteOffCreateSerializer
+        return WriteOffSerializer
+
+    def destroy(self, request, *args, **kwargs):
+        """Удалить ошибочное списание — товары возвращаются в остатки."""
+        delete_write_off(self.get_object())
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

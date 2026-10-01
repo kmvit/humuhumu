@@ -28,6 +28,7 @@ from inventory.views import (
     StockCategoryViewSet,
     StockItemAliasViewSet,
     StockItemViewSet,
+    WriteOffViewSet,
 )
 from orders.views import OrderViewSet, TableViewSet
 from billing.views import license_view
@@ -69,6 +70,7 @@ router.register("inventory/categories", StockCategoryViewSet, basename="stock-ca
 router.register("inventory/items", StockItemViewSet, basename="stock-item")
 router.register("inventory/aliases", StockItemAliasViewSet, basename="stock-alias")
 router.register("inventory/receipts", ReceiptViewSet, basename="receipt")
+router.register("inventory/write-offs", WriteOffViewSet, basename="write-off")
 router.register("inventory/receipt-scans", ReceiptScanViewSet, basename="receipt-scan")
 router.register("inventory/recipes", RecipeViewSet, basename="recipe")
 router.register("inventory/purchases", PurchaseViewSet, basename="purchase")

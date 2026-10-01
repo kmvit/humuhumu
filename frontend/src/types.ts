@@ -407,6 +407,30 @@ export interface Receipt {
   created_at: string;
 }
 
+export interface WriteOffItem {
+  id: number;
+  item: number;
+  item_name: string;
+  unit_display: string;
+  quantity: string;
+  /** Цена за базовую единицу на момент списания; null — приходов с ценой не было. */
+  unit_cost: string | null;
+  subtotal: string | null;
+}
+
+/** Списание мимо продажи: заготовка не ушла, порча, взяли сотрудники. */
+export interface WriteOff {
+  id: number;
+  /** Что списали: «Сливочная шапка», «Капучино 0,3». */
+  title: string;
+  /** За что: «не продали», «испортилось». */
+  reason: string;
+  created_by_name: string;
+  total_cost: string;
+  items: WriteOffItem[];
+  created_at: string;
+}
+
 // Оприходование по фото чека
 export type ReceiptScanStatus = "pending" | "parsed" | "failed" | "confirmed";
 
@@ -679,6 +703,12 @@ export interface ProfitReport {
   cash: string;
   card: string;
   cogs: string;
+  /** Списания со склада за месяц: заготовка не ушла, порча, персоналу. */
+  write_offs: string;
+  /** Те же списания по причинам, от большей суммы к меньшей. */
+  write_offs_by_reason: { reason: string; amount: string }[];
+  /** Строк списания без цены закупа — в сумму не вошли. */
+  write_offs_unpriced: number;
   gross: string;
   margin: number;
   payroll: string;

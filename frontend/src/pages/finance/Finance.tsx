@@ -297,6 +297,24 @@ export default function Finance() {
             </div>
 
             <div className="row">
+              <span className="tx-icon"><Icon name="trash" size={17} /></span>
+              <div className="row-body">
+                <strong>Списания</strong>
+                <span className="muted">
+                  {[
+                    ...report.write_offs_by_reason.map(
+                      (r) => `${r.reason} ${fmtMoney(r.amount)}`
+                    ),
+                    ...(report.write_offs_unpriced > 0
+                      ? [`строк без цены закупа: ${report.write_offs_unpriced} — в сумму не вошли`]
+                      : []),
+                  ].join(" · ") || "за месяц ничего не списано"}
+                </span>
+              </div>
+              <strong className="num">{minus(report.write_offs)} ₽</strong>
+            </div>
+
+            <div className="row">
               <span className="tx-icon"><Icon name="spark" size={17} /></span>
               <div className="row-body">
                 <strong>Валовая прибыль</strong>

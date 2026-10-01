@@ -15,6 +15,7 @@ import { useToast } from "../../components/ui/Toast";
 import { fmtDateTime } from "../../time";
 import Purchase from "./Purchase";
 import Recipes from "./Recipes";
+import WriteOffs from "./WriteOffs";
 
 const UNITS: { value: StockUnit; label: string }[] = [
   { value: "g", label: "г" },
@@ -50,7 +51,9 @@ export default function Warehouse() {
   const [items, setItems] = useState<StockItem[]>([]);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"stock" | "purchase" | "receipts" | "recipes">("stock");
+  const [tab, setTab] = useState<
+    "stock" | "purchase" | "receipts" | "writeoffs" | "recipes"
+  >("stock");
   const notify = useToast();
 
   // приход
@@ -573,6 +576,12 @@ export default function Warehouse() {
           <Icon name="receipt" size={16} /> Приходы
         </button>
         <button
+          className={"navlink" + (tab === "writeoffs" ? " active" : "")}
+          onClick={() => setTab("writeoffs")}
+        >
+          <Icon name="minus" size={16} /> Списания
+        </button>
+        <button
           className={"navlink" + (tab === "recipes" ? " active" : "")}
           onClick={() => setTab("recipes")}
         >
@@ -1006,6 +1015,11 @@ export default function Warehouse() {
       {/* ——— ЗАКУП ——— */}
       {tab === "purchase" && (
         <Purchase items={items} onReceive={openReceiptWith} />
+      )}
+
+      {/* ——— СПИСАНИЯ ——— */}
+      {tab === "writeoffs" && (
+        <WriteOffs items={items} onChange={() => load().catch(() => {})} />
       )}
 
       {/* ——— ТЕХ КАРТЫ ——— */}

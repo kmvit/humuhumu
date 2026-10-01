@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from django.db import transaction
 from rest_framework import serializers
@@ -14,8 +14,11 @@ from .models import (
     StockItem,
     StockItemAlias,
     StockMovement,
+    WriteOff,
+    WriteOffItem,
     normalize_name,
 )
+from .services import last_unit_costs
 
 
 class StockCategorySerializer(serializers.ModelSerializer):
@@ -214,6 +217,109 @@ class AdjustSerializer(serializers.Serializer):
         max_digits=12, decimal_places=3, min_value=Decimal("0")
     )
     comment = serializers.CharField(max_length=300, required=False, allow_blank=True)
+
+
+class WriteOffItemSerializer(serializers.ModelSerializer):
+    # Округляем по-кассовому, половину копейки вверх: по умолчанию Decimal
+    # округляет «к чётному», и 29,625 ₽ превращались в 29,62 — а форма,
+    # считающая ориентир в браузере, показывала 29,63.
+    item_name = serializers.CharField(source="item.name", read_only=True)
+    unit_display = serializers.CharField(source="item.get_unit_display", read_only=True)
+    subtotal = serializers.DecimalField(
+        max_digits=14, decimal_places=2, read_only=True, rounding=ROUND_HALF_UP
+    )
+
+    class Meta:
+        model = WriteOffItem
+        fields = (
+            "id", "item", "item_name", "unit_display",
+            "quantity", "unit_cost", "subtotal",
+        )
+
+
+class WriteOffSerializer(serializers.ModelSerializer):
+    """Чтение списания со строками и суммой."""
+
+    items = WriteOffItemSerializer(many=True, read_only=True)
+    created_by_name = serializers.CharField(
+        source="created_by.username", read_only=True, default=""
+    )
+    total_cost = serializers.DecimalField(
+        max_digits=14, decimal_places=2, read_only=True, rounding=ROUND_HALF_UP
+    )
+
+    class Meta:
+        model = WriteOff
+        fields = (
+            "id", "title", "reason", "created_by_name",
+            "total_cost", "items", "created_at",
+        )
+
+
+class WriteOffLineSerializer(serializers.Serializer):
+    # Менеджер, а не .all() — см. ReceiptItemCreateSerializer.
+    item = serializers.PrimaryKeyRelatedField(queryset=StockItem.objects)
+    quantity = serializers.DecimalField(
+        max_digits=12, decimal_places=3, min_value=Decimal("0.001")
+    )
+
+
+class WriteOffCreateSerializer(serializers.Serializer):
+    """Списание: что, за что и по каким товарам. Уменьшает остатки.
+
+    Остаток может уйти в минус — как и при продаже: списание фиксирует
+    то, что уже случилось, отказывать в нём бессмысленно. Минус виден в
+    остатках и чинится инвентаризацией.
+    """
+
+    title = serializers.CharField(max_length=200)
+    reason = serializers.CharField(max_length=300)
+    items = WriteOffLineSerializer(many=True)
+
+    def validate_items(self, value):
+        if not value:
+            raise serializers.ValidationError("Добавьте хотя бы один товар.")
+        # Один товар двумя строками сложим: «молоко 200» + «молоко 100» —
+        # это просто 300 мл молока, а не ошибка ввода.
+        merged: dict[int, dict] = {}
+        for line in value:
+            prev = merged.get(line["item"].id)
+            if prev is None:
+                merged[line["item"].id] = dict(line)
+            else:
+                prev["quantity"] += line["quantity"]
+        return list(merged.values())
+
+    @transaction.atomic
+    def create(self, validated_data):
+        user = self.context["request"].user
+        lines = validated_data.pop("items")
+        write_off = WriteOff.objects.create(
+            title=validated_data["title"].strip(),
+            reason=validated_data["reason"].strip(),
+            created_by=user,
+        )
+        costs = last_unit_costs(line["item"].id for line in lines)
+        comment = f"{write_off.title} — {write_off.reason}"[:300]
+        for line in lines:
+            item = line["item"]
+            WriteOffItem.objects.create(
+                write_off=write_off,
+                item=item,
+                quantity=line["quantity"],
+                unit_cost=costs.get(item.id),
+            )
+            item.apply_movement(
+                -line["quantity"],
+                StockMovement.Kind.WRITE_OFF,
+                user=user,
+                write_off=write_off,
+                comment=comment,
+            )
+        return write_off
+
+    def to_representation(self, instance):
+        return WriteOffSerializer(instance, context=self.context).data
 
 
 class ReceiptScanSerializer(serializers.ModelSerializer):

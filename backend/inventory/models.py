@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from django.conf import settings
 from django.db import models, transaction
@@ -115,7 +115,9 @@ class StockItem(TenantModel):
         return max(Decimal("0"), Decimal(target) - self.quantity)
 
     @transaction.atomic
-    def apply_movement(self, delta, kind, *, user=None, receipt=None, comment=""):
+    def apply_movement(
+        self, delta, kind, *, user=None, receipt=None, write_off=None, comment=""
+    ):
         """Изменить остаток на delta (со знаком) и записать движение в журнал.
 
         Строка блокируется select_for_update, чтобы параллельные приходы/корректировки
@@ -131,6 +133,7 @@ class StockItem(TenantModel):
             delta=delta,
             kind=kind,
             receipt=receipt,
+            write_off=write_off,
             created_by=user,
             comment=comment,
         )
@@ -249,6 +252,94 @@ class ReceiptItem(TenantModel):
         return f"{self.item} × {self.quantity}"
 
 
+class WriteOff(TenantModel):
+    """Списание — то, что ушло со склада мимо продажи.
+
+    Заготовку сделали и не продали, молоко скисло, сотрудник взял кофе,
+    разбили бутылку. Списывается всегда по товарам склада: что именно
+    пропало («Сливочная шапка», «Капучино 0,3») — подпись в `title`, а
+    состав кладовщик указывает сам. Для блюда с тех картой фронт
+    подставляет состав из неё, для заготовки без карты — вписывают руками.
+    """
+
+    title = models.CharField("Что списали", max_length=200)
+    # Причина обязательна: без неё списание не отличить от корректировки,
+    # а в отчёте не понять, куда ушли деньги.
+    reason = models.CharField("За что", max_length=300)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="write_offs",
+        verbose_name="Кто списал",
+    )
+    created_at = models.DateTimeField("Дата", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Списание"
+        verbose_name_plural = "Списания"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Списание №{self.pk} · {self.title}"
+
+    @property
+    def total_cost(self):
+        """Сумма по строкам с известной ценой; без цены — не учитывается.
+
+        Строки округляются до копейки до сложения — как их видит человек и
+        как считает отчёт о прибыли, иначе суммы расходились бы на копейки.
+        """
+        return sum(
+            (
+                i.subtotal.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                for i in self.items.all()
+                if i.subtotal is not None
+            ),
+            start=Decimal("0"),
+        )
+
+
+class WriteOffItem(TenantModel):
+    """Строка списания: товар склада и сколько его ушло.
+
+    Цена запоминается на момент списания — последняя цена закупки. Иначе
+    сумма прошлых списаний плыла бы с каждым новым приходом.
+    """
+
+    write_off = models.ForeignKey(
+        WriteOff, on_delete=models.CASCADE, related_name="items", verbose_name="Списание"
+    )
+    item = models.ForeignKey(
+        StockItem,
+        on_delete=models.PROTECT,
+        related_name="write_off_items",
+        verbose_name="Товар",
+    )
+    quantity = models.DecimalField("Количество", max_digits=12, decimal_places=3)
+    unit_cost = models.DecimalField(
+        "Цена за единицу, ₽",
+        max_digits=14,
+        decimal_places=6,
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        verbose_name = "Строка списания"
+        verbose_name_plural = "Строки списания"
+
+    @property
+    def subtotal(self):
+        if self.unit_cost is None:
+            return None
+        return self.unit_cost * self.quantity
+
+    def __str__(self):
+        return f"{self.item} × {self.quantity}"
+
+
 class ReceiptScan(TenantModel):
     """Фото чека и результат его распознавания — черновик будущего прихода.
 
@@ -348,6 +439,7 @@ class StockMovement(TenantModel):
         ADJUST = "adjust", "Корректировка"
         SALE = "sale", "Списание по тех карте"
         RETURN = "return", "Возврат отменённого"
+        WRITE_OFF = "writeoff", "Списание"
 
     item = models.ForeignKey(
         StockItem,
@@ -364,6 +456,14 @@ class StockMovement(TenantModel):
         blank=True,
         related_name="movements",
         verbose_name="Приход",
+    )
+    write_off = models.ForeignKey(
+        "WriteOff",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="movements",
+        verbose_name="Списание",
     )
     comment = models.CharField("Комментарий", max_length=300, blank=True)
     created_by = models.ForeignKey(

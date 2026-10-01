@@ -160,7 +160,7 @@ def _cost_per_portion(variant_ids) -> tuple[dict[int, Decimal], set[int]]:
 
 
 def report(period: date_cls) -> dict:
-    """Отчёт о прибыли за месяц: выручка → себестоимость → ФОТ → расходы.
+    """Отчёт о прибыли за месяц: выручка → себестоимость и списания → ФОТ → расходы.
 
     Закуп продуктов НЕ вычитается: расход периода — себестоимость проданного,
     а закуп это движение денег. Иначе получился бы двойной счёт, поэтому он
@@ -169,7 +169,7 @@ def report(period: date_cls) -> dict:
     from django.db.models import Count, F, Sum
     from decimal import Decimal as D
 
-    from inventory.models import Receipt, ReceiptItem
+    from inventory.models import Receipt, ReceiptItem, WriteOffItem
     from payments.models import Payment
     from orders.models import Order, OrderItem
     from shifts.models import ShiftSettings
@@ -254,7 +254,32 @@ def report(period: date_cls) -> dict:
         float(covered_revenue / turnover) if turnover else 0.0
     )
 
-    gross = money(revenue - cogs)
+    # ——— списания ———
+    # Продукты, ушедшие мимо продажи: заготовка не продалась, испортилось,
+    # взяли сотрудники, продали без кассы. Это тот же продуктовый расход,
+    # что и себестоимость, поэтому вычитается до валовой прибыли — иначе
+    # наценка выглядела бы лучше, чем есть. Цена — замороженная на момент
+    # списания; строки без цены закупа в сумму не входят, их число видно.
+    # Каждую строку округляем до копейки и только потом складываем — так
+    # же, как склад показывает строки, списание и итог месяца. Округлив
+    # общую сумму, получили бы расхождение в копейки с вкладкой склада.
+    wo_lines = WriteOffItem.objects.filter(
+        write_off__created_at__date__range=(first, last)
+    ).values_list("write_off__reason", "quantity", "unit_cost")
+    reasons: dict[str, D] = {}
+    write_offs_unpriced = 0
+    for reason, qty, unit_cost in wo_lines:
+        if unit_cost is None:
+            write_offs_unpriced += 1
+            continue
+        reasons[reason] = reasons.get(reason, D("0")) + money(qty * unit_cost)
+    write_offs = money(sum(reasons.values(), D("0")))
+    by_reason = [
+        {"reason": reason, "amount": str(amount)}
+        for reason, amount in sorted(reasons.items(), key=lambda r: (-r[1], r[0]))
+    ]
+
+    gross = money(revenue - cogs - write_offs)
     margin = round(float(gross / revenue) * 100, 1) if revenue else 0.0
 
     fot = money(D(statement(period)["totals"]["accrued"]))
@@ -284,6 +309,11 @@ def report(period: date_cls) -> dict:
         "card": str(by_method.get("card", money(0))),
         "bonuses_spent": str(bonuses_spent),
         "cogs": str(cogs),
+        "write_offs": str(write_offs),
+        # по причинам, от большей суммы к меньшей — «куда ушли продукты»
+        "write_offs_by_reason": by_reason,
+        # строк списания без цены закупа: в сумму не вошли
+        "write_offs_unpriced": write_offs_unpriced,
         "gross": str(gross),
         "margin": margin,
         "payroll": str(fot),
