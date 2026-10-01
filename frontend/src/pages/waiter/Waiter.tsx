@@ -66,10 +66,10 @@ export default function Waiter() {
   const seenServe = useRef<Set<string> | null>(null);
   const notify = useToast();
   const site = useSite();
-  // бонусы показываем, только если тариф их даёт, программа включена
-  // и владелец разрешил списывать именно официанту
-  const bonusOn =
-    useFeature("loyalty") && !!site?.bonus_enabled && !!site?.bonus_redeem_waiter;
+  // Гостя по телефону указываем всегда, когда программа работает: копить
+  // бонусы можно и без списания. Списывать — если владелец разрешил персоналу.
+  const bonusOn = useFeature("loyalty") && !!site?.bonus_enabled;
+  const canRedeem = !!site?.bonus_redeem_waiter;
 
   useEffect(() => {
     get<Table[]>("/tables/").then((ts) => setTables(ts.map((t) => t.name))).catch(() => {});
@@ -884,7 +884,7 @@ export default function Waiter() {
                           <> · бонусами {Number(o.bonus_spent).toLocaleString("ru")}</>
                         )}
                       </div>
-                      {bonusOn && <BonusPanel order={o} onDone={reload} />}
+                      {bonusOn && <BonusPanel order={o} onDone={reload} canRedeem={canRedeem} />}
                       <div className="grid cols-2 mt-2">
                         <button className="btn" disabled={busyClose === o.id} onClick={() => closeOrder(o, "cash")}>
                           <Icon name="cash" size={17} /> Наличными

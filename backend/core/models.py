@@ -288,8 +288,8 @@ class SiteSettings(TenantMixin):
         help_text="Процент от оплаченной деньгами суммы чека",
     )
     bonus_redeem_waiter = models.BooleanField(
-        "Официант списывает бонусы", default=True,
-        help_text="На закрытии счёта официант находит гостя по телефону и списывает",
+        "Персонал списывает бонусы", default=True,
+        help_text="Официант или бариста находит гостя по телефону и списывает",
     )
     bonus_redeem_guest = models.BooleanField(
         "Гость списывает сам", default=False,

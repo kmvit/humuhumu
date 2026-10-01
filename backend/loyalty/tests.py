@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from catalog.models import Category, Product, ProductVariant
@@ -209,6 +210,322 @@ class EarnTests(LoyaltyBase):
         order.refresh_from_db()
         self.pay(order)
         self.assertEqual(Payment.objects.get(order=order).amount, Decimal("1000"))
+
+
+class StaffEnrollTests(LoyaltyBase):
+    """Гостя записывает сотрудник — с отметкой о согласии."""
+
+    def enroll(self, **extra):
+        return self.client.post(
+            "/api/loyalty/enroll/",
+            {"name": "Аня", "phone": "+79991112233", **extra},
+            format="json",
+        )
+
+    def test_staff_needs_guest_consent(self):
+        self.auth(self.waiter)
+        res = self.enroll()
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("consent", res.data)
+        self.assertFalse(LoyaltyMember.objects.exists())
+
+    def test_staff_enroll_records_source_and_consent(self):
+        self.auth(self.waiter)
+        res = self.enroll(consent=True)
+        self.assertEqual(res.status_code, 201)
+        member = LoyaltyMember.objects.get()
+        self.assertEqual(member.source, LoyaltyMember.Source.STAFF)
+        self.assertIsNotNone(member.consent_at)
+        self.assertEqual(member.balance, Decimal("200"))
+
+    def test_guest_self_signup_marked_as_guest(self):
+        self.assertEqual(self.enroll().status_code, 201)
+        self.assertEqual(LoyaltyMember.objects.get().source, LoyaltyMember.Source.GUEST)
+
+
+class ManagerMembersTests(LoyaltyBase):
+    """Менеджер в панели: список гостей и ручное заведение."""
+
+    def setUp(self):
+        super().setUp()
+        self.admin = User.objects.create_user(
+            username="owner", password="demo12345", role=User.Role.ADMIN
+        )
+
+    def add(self, **data):
+        self.auth(self.admin)
+        return self.client.post("/api/loyalty/members/", data, format="json")
+
+    def test_add_new_guest_gets_welcome(self):
+        res = self.add(name="Аня", phone="89991112233", consent=True)
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.data["balance"], "200.00")
+        self.assertEqual(res.data["source"], "staff")
+
+    def test_transfer_keeps_old_balance_without_welcome(self):
+        res = self.add(name="Аня", phone="89991112233", consent=True,
+                       birth_date="1990-04-01", transfer_balance="1350")
+        self.assertEqual(res.status_code, 201)
+        member = LoyaltyMember.objects.get()
+        self.assertEqual(member.balance, Decimal("1350"))
+        self.assertEqual(member.source, LoyaltyMember.Source.IMPORT)
+        txn = member.transactions.get()
+        self.assertEqual(txn.type, BonusTransaction.Type.IMPORT)
+
+    def test_transfer_skips_existing_phone(self):
+        self.guest(phone="+79991112233")
+        res = self.add(name="Аня", phone="+79991112233", consent=True, transfer_balance="500")
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(LoyaltyMember.objects.get().balance, Decimal("200"))
+
+    def test_consent_required(self):
+        self.assertEqual(self.add(name="Аня", phone="+79991112233").status_code, 400)
+
+    def test_search_by_name_and_phone(self):
+        self.guest(phone="+79991112233", name="Аня")
+        self.guest(phone="+79995556677", name="Борис")
+        self.auth(self.admin)
+        by_phone = self.client.get("/api/loyalty/members/?q=8 999 111")
+        self.assertEqual([m["name"] for m in by_phone.data["results"]], ["Аня"])
+        by_name = self.client.get("/api/loyalty/members/?q=бор")
+        self.assertEqual(by_name.data["count"], 1)
+        # хвост номера, начинающийся с восьмёрки, — не код страны
+        self.guest(phone="+79161238455", name="Вера")
+        tail = self.client.get("/api/loyalty/members/?q=8455")
+        self.assertEqual([m["name"] for m in tail.data["results"]], ["Вера"])
+
+    def test_transfer_zero_balance(self):
+        res = self.add(name="Аня", phone="+79991112233", consent=True, transfer_balance="0")
+        self.assertEqual(res.status_code, 201)
+        member = LoyaltyMember.objects.get()
+        self.assertEqual(member.balance, Decimal("0"))
+        self.assertFalse(member.transactions.exists())
+
+    def test_transfer_negative_refused(self):
+        res = self.add(name="Аня", phone="+79991112233", consent=True, transfer_balance="-5")
+        self.assertEqual(res.status_code, 400)
+        self.assertFalse(LoyaltyMember.objects.exists())
+
+    def test_transfer_fraction_rounded_down(self):
+        """Бонусы целые: 99.9 из старой системы — 99."""
+        self.add(name="Аня", phone="+79991112233", consent=True, transfer_balance="99.9")
+        self.assertEqual(LoyaltyMember.objects.get().balance, Decimal("99"))
+
+    def test_transfer_when_program_off(self):
+        site = SiteSettings.load()
+        site.bonus_enabled = False
+        site.save()
+        res = self.add(name="Аня", phone="+79991112233", consent=True, transfer_balance="10")
+        self.assertEqual(res.status_code, 400)
+
+    def test_bad_phone_refused(self):
+        res = self.add(name="Аня", phone="123", consent=True)
+        self.assertEqual(res.status_code, 400)
+
+    def test_transferred_guest_redeems_and_earns_normally(self):
+        self.add(name="Аня", phone="+79991112233", consent=True, transfer_balance="1000")
+        order = self.make_order(qty=5)  # 1200
+        self.client.post(
+            f"/api/orders/{order.id}/bonus/", {"phone": "+79991112233", "amount": "1000"},
+            format="json",
+        )
+        self.client.post(f"/api/orders/{order.id}/close/", {"pay_method": "cash"}, format="json")
+        member = LoyaltyMember.objects.get()
+        self.assertEqual(member.balance, Decimal("10"))  # 5% от 200 деньгами
+
+    def test_existing_client_user_without_membership_is_reused(self):
+        """Гость заказывал раньше без бонусов — второго пользователя не плодим."""
+        User.objects.create_user(
+            username="+79991112233", phone="+79991112233", role=User.Role.CLIENT
+        )
+        res = self.add(name="Аня", phone="+79991112233", consent=True, transfer_balance="50")
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(User.objects.filter(phone="+79991112233").count(), 1)
+
+    def test_list_caps_at_50_and_reports_total(self):
+        for i in range(55):
+            self.guest(phone=f"+7999123{i:04d}", name=f"Гость {i}")
+        self.auth(self.admin)
+        res = self.client.get("/api/loyalty/members/?q=Гость")
+        self.assertEqual(res.data["count"], 55)
+        self.assertEqual(len(res.data["results"]), 50)
+        only_count = self.client.get("/api/loyalty/members/?limit=0")
+        self.assertEqual(only_count.data["count"], 55)
+        self.assertEqual(only_count.data["results"], [])
+
+    def test_waiter_has_no_access(self):
+        self.auth(self.waiter)
+        self.assertEqual(self.client.get("/api/loyalty/members/").status_code, 403)
+
+
+class AttachGuestTests(LoyaltyBase):
+    """Гость назвал телефон, бонусы не тратит — но за чек получает."""
+
+    def attach(self, order, phone="+79990000000"):
+        self.auth(self.waiter)
+        return self.client.post(
+            f"/api/orders/{order.id}/guest/", {"phone": phone}, format="json"
+        )
+
+    def close(self, order):
+        self.auth(self.waiter)
+        return self.client.post(
+            f"/api/orders/{order.id}/close/", {"pay_method": "cash"}, format="json"
+        )
+
+    def test_attached_guest_earns_on_payment(self):
+        member = self.guest()
+        order = self.make_order(qty=5)  # 1200 ₽
+        res = self.attach(order, "8 999 000-00-00")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["order"]["bonus_guest"]["name"], "Гость")
+        self.assertEqual(res.data["member"]["balance"], "200.00")  # ничего не списано
+        self.close(order)
+        member.refresh_from_db()
+        self.assertEqual(member.balance, Decimal("260"))  # 200 + 5% от 1200
+
+    def test_already_paid_order_earns_at_once(self):
+        """Стойка: деньги взяли вперёд, номер гость назвал потом."""
+        member = self.guest()
+        order = self.make_order(qty=5)
+        order.paid_at = timezone.now()
+        order.save(update_fields=["paid_at"])
+        res = self.attach(order)
+        self.assertEqual(res.data["earned"], Decimal("60"))
+        member.refresh_from_db()
+        self.assertEqual(member.balance, Decimal("260"))
+        # оплата закрывает заказ — второго начисления нет
+        self.close(order)
+        member.refresh_from_db()
+        self.assertEqual(member.balance, Decimal("260"))
+
+    def test_repeat_attach_does_not_earn_twice(self):
+        member = self.guest()
+        order = self.make_order(qty=5)
+        order.paid_at = timezone.now()
+        order.save(update_fields=["paid_at"])
+        self.attach(order)
+        self.attach(order)
+        member.refresh_from_db()
+        self.assertEqual(member.balance, Decimal("260"))
+
+    def test_unknown_phone_is_404(self):
+        order = self.make_order()
+        self.assertEqual(self.attach(order, "+79995554433").status_code, 404)
+
+    def test_closed_order_cannot_get_guest(self):
+        """Иначе сотрудник вписывал бы свой номер в чужие чеки."""
+        self.guest()
+        order = self.make_order()
+        self.close(order)
+        self.assertEqual(self.attach(order).status_code, 400)
+
+    def test_guest_with_bonus_history_on_order_is_not_replaced(self):
+        self.guest()
+        other = self.guest(phone="+79991110000", name="Другой")
+        order = self.make_order(qty=5)
+        self.auth(self.waiter)
+        self.client.post(
+            f"/api/orders/{order.id}/bonus/",
+            {"phone": "+79990000000", "amount": "100"}, format="json",
+        )
+        self.assertEqual(self.attach(order, other.phone).status_code, 400)
+        order.refresh_from_db()
+        self.assertNotEqual(order.client_id, other.user_id)
+
+    def test_full_flow_redeem_half_then_pay(self):
+        """Привязали, списали половину, заплатили остальное деньгами —
+        начисление только с денежной части."""
+        member = self.guest()  # 200
+        order = self.make_order(qty=5)  # 1200 ₽
+        self.attach(order)
+        self.auth(self.waiter)
+        self.client.post(
+            f"/api/orders/{order.id}/bonus/", {"phone": member.phone, "amount": "100"},
+            format="json",
+        )
+        self.close(order)
+        member.refresh_from_db()
+        # 200 − 100 + 5% от 1100
+        self.assertEqual(member.balance, Decimal("155"))
+
+    def test_switch_guest_before_any_bonus_operation(self):
+        first = self.guest()
+        second = self.guest(phone="+79991110000", name="Другой")
+        order = self.make_order()
+        self.attach(order)
+        res = self.attach(order, second.phone)
+        self.assertEqual(res.status_code, 200)
+        order.refresh_from_db()
+        self.assertEqual(order.client_id, second.user_id)
+        self.close(order)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.balance, Decimal("200"))  # первому ничего
+        self.assertGreater(second.balance, Decimal("200"))
+
+    def test_cancelled_order_cannot_get_guest(self):
+        self.guest()
+        order = self.make_order()
+        self.auth(self.waiter)
+        self.client.patch(f"/api/orders/{order.id}/cancel/", {}, format="json")
+        self.assertEqual(self.attach(order).status_code, 400)
+
+    def test_refund_takes_back_bonuses_earned_on_attach(self):
+        """Гость назвал телефон, заплатил, потом деньги вернули —
+        начисленное за этот заказ снимается."""
+        member = self.guest()
+        order = self.make_order(qty=5)
+        self.attach(order)
+        self.close(order)
+        member.refresh_from_db()
+        self.assertEqual(member.balance, Decimal("260"))
+        self.auth(self.waiter)
+        res = self.client.post(f"/api/orders/{order.id}/refund/", {}, format="json")
+        self.assertEqual(res.status_code, 200, res.content)
+        member.refresh_from_db()
+        self.assertEqual(member.balance, Decimal("200"))
+
+    def test_program_off_refuses_attach(self):
+        self.guest()
+        order = self.make_order()
+        site = SiteSettings.load()
+        site.bonus_enabled = False
+        site.save()
+        self.assertEqual(self.attach(order).status_code, 400)
+        order.refresh_from_db()
+        self.assertIsNone(order.client_id)
+
+    def test_attach_works_when_staff_redeem_is_off(self):
+        """Списание персоналу закрыто — копить гость всё равно может."""
+        site = SiteSettings.load()
+        site.bonus_redeem_waiter = False
+        site.save()
+        self.guest()
+        order = self.make_order()
+        self.assertEqual(self.attach(order).status_code, 200)
+
+    def test_bad_phone_is_400(self):
+        order = self.make_order()
+        self.assertEqual(self.attach(order, "12").status_code, 400)
+
+    def test_order_payload_shows_guest_on_board(self):
+        self.guest()
+        order = self.make_order()
+        self.attach(order)
+        self.auth(self.waiter)
+        row = next(o for o in self.client.get("/api/orders/?status=open").data if o["id"] == order.id)
+        self.assertEqual(row["bonus_guest"]["phone"], "+79990000000")
+
+    def test_guest_cannot_attach(self):
+        self.guest()
+        order = self.make_order()
+        guest = User.objects.get(phone="+79990000000")
+        self.auth(guest)
+        res = self.client.post(
+            f"/api/orders/{order.id}/guest/", {"phone": "+79990000000"}, format="json"
+        )
+        self.assertEqual(res.status_code, 403)
 
 
 class RedeemApiTests(LoyaltyBase):

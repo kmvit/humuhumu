@@ -24,7 +24,7 @@ class MemberSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = LoyaltyMember
-        fields = ("id", "name", "phone", "birth_date", "balance", "created_at")
+        fields = ("id", "name", "phone", "birth_date", "balance", "source", "created_at")
 
 
 class BonusTransactionSerializer(serializers.ModelSerializer):
@@ -44,15 +44,52 @@ class EnrollSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=150, label="Имя")
     phone = serializers.CharField(max_length=20, label="Телефон")
     birth_date = serializers.DateField(required=False, allow_null=True, label="Дата рождения")
+    consent = serializers.BooleanField(required=False, default=False, label="Согласие")
 
     def validate_phone(self, value):
         return normalize_phone(value)
 
+    def validate(self, attrs):
+        # Гостя на кассе записывает сотрудник, и согласие гостя — на нём:
+        # без отметки в базу чужие данные не заносим.
+        if self.context.get("staff") and not attrs.get("consent"):
+            raise serializers.ValidationError(
+                {"consent": "Отметьте, что гость согласен на обработку данных"}
+            )
+        return attrs
+
     def create(self, validated_data):
+        from .models import LoyaltyMember
         from .services import enroll_by_phone
 
+        staff = self.context.get("staff")
         return enroll_by_phone(
             validated_data["phone"],
             validated_data["name"],
             validated_data.get("birth_date"),
+            source=LoyaltyMember.Source.STAFF if staff else LoyaltyMember.Source.GUEST,
+            consent=validated_data.get("consent", False),
+        )
+
+
+class AdminMemberSerializer(EnrollSerializer):
+    """Менеджер заводит гостя. С остатком из прежней системы — перенос:
+    без приветственных, остаток отдельной проводкой."""
+
+    transfer_balance = serializers.DecimalField(
+        max_digits=12, decimal_places=2, required=False, allow_null=True, min_value=0,
+        label="Остаток из прежней системы",
+    )
+
+    def create(self, validated_data):
+        from .services import transfer_member
+
+        if validated_data.get("transfer_balance") is None:
+            return super().create(validated_data)
+        return transfer_member(
+            validated_data["phone"],
+            validated_data["name"],
+            validated_data.get("birth_date"),
+            validated_data["transfer_balance"],
+            consent=validated_data.get("consent", False),
         )

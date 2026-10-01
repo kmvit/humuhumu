@@ -19,7 +19,22 @@ class LoyaltyMember(TenantModel):
         related_name="loyalty",
         verbose_name="Гость",
     )
+    class Source(models.TextChoices):
+        GUEST = "guest", "Сам гость"
+        STAFF = "staff", "Персонал"
+        IMPORT = "import", "Перенос из прежней системы"
+
     birth_date = models.DateField("Дата рождения", null=True, blank=True)
+    # Откуда гость в программе. Нужно, чтобы отличить перенесённых при
+    # импорте и записанных на кассе — у них разная история согласия.
+    source = models.CharField(
+        "Как попал в программу", max_length=10,
+        choices=Source.choices, default=Source.GUEST,
+    )
+    # Согласие на обработку персональных данных. Гость, который регистрируется
+    # сам, даёт его формой; за записанного на кассе отвечает сотрудник —
+    # отметку ставит он, и момент сохраняем как подтверждение.
+    consent_at = models.DateTimeField("Согласие на обработку данных", null=True, blank=True)
     # кэш суммы транзакций; источник правды — журнал BonusTransaction
     balance = models.DecimalField("Баланс бонусов", max_digits=12, decimal_places=2, default=0)
     created_at = models.DateTimeField("В программе с", auto_now_add=True)
@@ -50,6 +65,7 @@ class BonusTransaction(TenantModel):
         REDEEM = "redeem", "Списание за заказ"
         RETURN = "return", "Возврат списанных"
         ADJUST = "adjust", "Ручная корректировка"
+        IMPORT = "import", "Перенос из прежней системы"
 
     member = models.ForeignKey(
         LoyaltyMember,

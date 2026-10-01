@@ -219,6 +219,76 @@ class CrossTenantApiTests(TestCase):
         else:
             self.assertIn(res.status_code, (400, 404))
 
+    def _real_phones(self):
+        # в build_cafe телефон с буквами из маркера — для поиска по
+        # телефону нужны настоящие номера, иначе тест упрётся в формат
+        User.objects.filter(pk=self.data_a["guest"].pk).update(phone="+79990001111")
+        User.objects.filter(pk=self.data_b["guest"].pk).update(phone="+79990002222")
+        self.data_a["guest"].phone = "+79990001111"
+        self.data_b["guest"].phone = "+79990002222"
+
+    def test_manager_guest_list_is_own(self):
+        """Список гостей в панели — только свои, и поиском чужого не достать."""
+        self._real_phones()
+        res = self.client.get("/api/loyalty/members/", {"q": "999000"}, **self.auth)
+        self.assertEqual(res.status_code, 200)
+        ids = {m["id"] for m in res.json()["results"]}
+        self.assertIn(self.data_a["member"].pk, ids)
+        self.assertNotIn(self.data_b["member"].pk, ids)
+        res = self.client.get(
+            "/api/loyalty/members/", {"q": self.data_b["guest"].phone}, **self.auth
+        )
+        self.assertEqual(res.json()["count"], 0, "поиск нашёл гостя соседнего кафе")
+        own = self.client.get(
+            "/api/loyalty/members/", {"q": "8 999 000-11"}, **self.auth
+        )
+        self.assertEqual(own.json()["count"], 1, "свой гость по телефону не нашёлся")
+        total = self.client.get("/api/loyalty/members/", {"limit": "0"}, **self.auth)
+        self.assertEqual(total.json()["count"], 1)
+
+    def _bonuses_on(self):
+        self._real_phones()
+        with organization_context(self.a):
+            site = SiteSettings.load()
+            site.bonus_enabled = True
+            site.save()
+
+    def test_foreign_guest_cannot_be_attached_to_own_order(self):
+        self._bonuses_on()
+        res = self.client.post(
+            f"/api/orders/{self.data_a['order'].pk}/guest/",
+            {"phone": self.data_b["guest"].phone}, format="json", **self.auth,
+        )
+        self.assertEqual(res.status_code, 404, "к заказу привязался гость соседнего кафе")
+
+    def test_own_guest_cannot_be_attached_to_foreign_order(self):
+        self._bonuses_on()
+        res = self.client.post(
+            f"/api/orders/{self.data_b['order'].pk}/guest/",
+            {"phone": self.data_a["guest"].phone}, format="json", **self.auth,
+        )
+        self.assertEqual(res.status_code, 404)
+        self.data_b["order"].refresh_from_db()
+        self.assertIsNone(self.data_b["order"].client_id)
+
+    def test_transfer_with_neighbours_phone_creates_own_guest(self):
+        """Телефон гостя соседнего кафе в переносе — новый свой гость,
+        чужой баланс не трогаем."""
+        self._bonuses_on()
+        res = self.client.post(
+            "/api/loyalty/members/",
+            {"name": "Перенос", "phone": self.data_b["guest"].phone,
+             "consent": True, "transfer_balance": "300"},
+            format="json", **self.auth,
+        )
+        self.assertEqual(res.status_code, 201, res.content)
+        self.data_b["member"].refresh_from_db()
+        self.assertEqual(self.data_b["member"].balance, 500)
+        with organization_context(self.a):
+            own = LoyaltyMember.objects.get(user__phone=self.data_b["guest"].phone)
+        self.assertEqual(own.balance, 300)
+        self.assertEqual(own.user.organization_id, self.a.pk)
+
     # ── настройки ────────────────────────────────────────────────────────
     def test_site_settings_are_per_domain(self):
         own = self.client.get("/api/site/", HTTP_HOST=self.HOST_A).json()

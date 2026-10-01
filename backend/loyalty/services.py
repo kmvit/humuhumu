@@ -8,6 +8,7 @@ from decimal import ROUND_DOWN, Decimal
 
 from django.db import transaction
 from django.db.models import Sum
+from django.utils import timezone
 
 from core.models import SiteSettings
 
@@ -38,7 +39,7 @@ def _apply(member: LoyaltyMember, *, type_: str, amount: Decimal, order=None, co
 
 
 @transaction.atomic
-def enroll(user, birth_date=None) -> LoyaltyMember:
+def enroll(user, birth_date=None, *, source=None, consent=False) -> LoyaltyMember:
     """Записать гостя в программу и выдать приветственные бонусы.
 
     Повторный вызов приветственные не удваивает: они привязаны к участнику,
@@ -47,12 +48,25 @@ def enroll(user, birth_date=None) -> LoyaltyMember:
     site = SiteSettings.load()
     if not site.bonus_enabled:
         raise LoyaltyError("Бонусная программа выключена")
+    now = timezone.now() if consent else None
     member, created = LoyaltyMember.objects.get_or_create(
-        user=user, defaults={"birth_date": birth_date}
+        user=user,
+        defaults={
+            "birth_date": birth_date,
+            "source": source or LoyaltyMember.Source.GUEST,
+            "consent_at": now,
+        },
     )
-    if not created and birth_date and not member.birth_date:
-        member.birth_date = birth_date
-        member.save(update_fields=["birth_date"])
+    if not created:
+        changed = []
+        if birth_date and not member.birth_date:
+            member.birth_date = birth_date
+            changed.append("birth_date")
+        if now and not member.consent_at:
+            member.consent_at = now
+            changed.append("consent_at")
+        if changed:
+            member.save(update_fields=changed)
     if created and site.bonus_welcome:
         member = LoyaltyMember.objects.select_for_update().get(pk=member.pk)
         _apply(
@@ -65,7 +79,9 @@ def enroll(user, birth_date=None) -> LoyaltyMember:
 
 
 @transaction.atomic
-def enroll_by_phone(phone: str, name: str = "", birth_date=None) -> LoyaltyMember:
+def enroll_by_phone(
+    phone: str, name: str = "", birth_date=None, *, source=None, consent=False
+) -> LoyaltyMember:
     """Записать в программу по телефону: найти гостя или завести нового.
 
     Телефон — ключ программы: гость мог заказывать раньше и уже быть в базе,
@@ -87,7 +103,84 @@ def enroll_by_phone(phone: str, name: str = "", birth_date=None) -> LoyaltyMembe
     elif not user.first_name and (name or "").strip():
         user.first_name = name.strip()
         user.save(update_fields=["first_name"])
-    return enroll(user, birth_date)
+    return enroll(user, birth_date, source=source, consent=consent)
+
+
+@transaction.atomic
+def transfer_member(
+    phone: str, name: str, birth_date=None, balance=0, *, consent=False
+) -> LoyaltyMember:
+    """Перенести гостя из прежней системы: с его остатком, без приветственных.
+
+    Приветственные он уже получал там — второй раз было бы подарком за
+    переезд. Остаток ложится отдельной проводкой, чтобы в журнале было
+    видно, откуда у гостя бонусы. Гость с этим телефоном уже есть — не
+    трогаем: его баланс у нас живой, и файл из старой системы его не знает.
+    """
+    from users.models import User
+
+    if not SiteSettings.load().bonus_enabled:
+        raise LoyaltyError("Бонусная программа выключена")
+    if LoyaltyMember.objects.filter(user__phone=phone).exists():
+        raise LoyaltyError("Гость с этим телефоном уже в программе")
+    balance = _whole(Decimal(balance or 0))
+    if balance < 0:
+        raise LoyaltyError("Остаток не может быть отрицательным")
+    user = User.tenant.filter(phone=phone).first()
+    if user is None:
+        user = User(
+            username=phone, phone=phone,
+            first_name=(name or "").strip(), role=User.Role.CLIENT,
+        )
+        user.set_unusable_password()
+        user.save()
+    member = LoyaltyMember.objects.create(
+        user=user,
+        birth_date=birth_date,
+        source=LoyaltyMember.Source.IMPORT,
+        consent_at=timezone.now() if consent else None,
+    )
+    if balance > 0:
+        member = LoyaltyMember.objects.select_for_update().get(pk=member.pk)
+        _apply(
+            member,
+            type_=BonusTransaction.Type.IMPORT,
+            amount=balance,
+            comment="Остаток из прежней системы",
+        )
+    return member
+
+
+@transaction.atomic
+def attach_guest(order, member: LoyaltyMember) -> BonusTransaction | None:
+    """Закрепить заказ за гостем: гость назвал телефон, бонусы копит.
+
+    Без этого заказ к гостю привязывало только списание, и тот, кто
+    бонусы копит, а не тратит, за чек ничего не получал. Если деньги уже
+    взяли (на стойке платят вперёд), начисляем сразу: оплата прошла без
+    гостя, и второго случая начислить не будет.
+
+    Сменить гостя можно, пока по заказу не было бонусных операций: иначе
+    списанное или начисленное одному осталось бы висеть на другом.
+    """
+    from orders.models import Order
+
+    if not SiteSettings.load().bonus_enabled:
+        raise LoyaltyError("Бонусная программа выключена")
+    order = Order.objects.select_for_update().get(pk=order.pk)
+    # Только до выдачи: иначе сотрудник мог бы вписывать свой номер в
+    # чужие закрытые чеки и собирать за них бонусы.
+    if order.status not in (Order.Status.OPEN, Order.Status.UNPAID):
+        raise LoyaltyError("Гостя можно указать только до закрытия заказа")
+    if order.client_id == member.user_id:
+        return None
+    if order.client_id and BonusTransaction.objects.filter(order=order).exists():
+        raise LoyaltyError("По заказу уже были бонусы другого гостя")
+    order.client = member.user
+    order.save(update_fields=["client"])
+    if order.paid_at:
+        return earn_for_order(order)
+    return None
 
 
 @transaction.atomic

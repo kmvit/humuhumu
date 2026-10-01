@@ -102,6 +102,7 @@ api_patterns = [
     path("loyalty/enroll/", loyalty_views.EnrollView.as_view(), name="loyalty-enroll"),
     path("loyalty/lookup/", loyalty_views.lookup, name="loyalty-lookup"),
     path("loyalty/me/", loyalty_views.me, name="loyalty-me"),
+    path("loyalty/members/", loyalty_views.members, name="loyalty-members"),
     # выдача лицензии внешним установкам (кафе на своём сервере, демо)
     path("license/", license_view, name="license-issue"),
     # лицензия «Падачи»: статус подписки и ручная сверка с пультом

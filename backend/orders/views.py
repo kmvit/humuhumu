@@ -88,6 +88,10 @@ class OrderViewSet(viewsets.ModelViewSet):
             return [IsBarOrAdmin(), RequiresStations()]
         if self.action == "item_status":
             return [IsAuthenticated(), RequiresStations()]
+        if self.action == "guest":
+            from core.plans import RequiresLoyalty
+
+            return [IsWaiterOrAdmin(), RequiresLoyalty()]
         if self.action in ("close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "item_qty", "confirm", "prepaid", "performer", "refund", "set_comment", "move", "move_items", "serve", "pay_terminal", "pay_result"):
             return [IsWaiterOrAdmin()]
         # item_status — право проверяем внутри по станции позиции
@@ -98,7 +102,7 @@ class OrderViewSet(viewsets.ModelViewSet):
 
         from payments.providers import _PROVIDERS
 
-        qs = Order.objects.prefetch_related(
+        qs = Order.objects.select_related("client__loyalty").prefetch_related(
             "items__variant__product__category", "items__modifiers"
         ).annotate(
             kassa_waiting_ann=Exists(
@@ -424,6 +428,46 @@ class OrderViewSet(viewsets.ModelViewSet):
         order.save(update_fields=["table"])
         return Response(OrderSerializer(order).data)
 
+    @action(detail=True, methods=["post"], url_path="guest")
+    def guest(self, request, pk=None):
+        """Указать гостя бонусной программы по телефону — без списания.
+
+        Гость назвал номер: заказ закрепляется за ним, и при оплате ему
+        начисляются бонусы (если уже оплачен — сразу). Нет такого гостя —
+        404, и сотрудник тут же записывает его через /loyalty/enroll/.
+        """
+        from loyalty.models import LoyaltyMember
+        from loyalty.serializers import MemberSerializer, normalize_phone
+        from loyalty.services import LoyaltyError, attach_guest
+
+        order = self.get_object()
+        try:
+            phone = normalize_phone(request.data.get("phone", ""))
+        except Exception:
+            return Response(
+                {"detail": "Введите номер, например +7 999 000-00-00"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        member = LoyaltyMember.objects.filter(user__phone=phone).select_related("user").first()
+        if member is None:
+            return Response(
+                {"detail": "Гость не найден — запишите его в программу"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            earned = attach_guest(order, member)
+        except LoyaltyError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        order.refresh_from_db()
+        member.refresh_from_db()
+        return Response(
+            {
+                "order": OrderSerializer(order).data,
+                "member": MemberSerializer(member).data,
+                "earned": earned.amount if earned else 0,
+            }
+        )
+
     @action(detail=True, methods=["post"], url_path="bonus")
     def bonus(self, request, pk=None):
         """Списать бонусы в счёт заказа. 1 бонус = 1 ₽.
@@ -465,7 +509,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         if staff:
             if not site.bonus_redeem_waiter:
                 return Response(
-                    {"detail": "Списание бонусов официантом выключено"},
+                    {"detail": "Списание бонусов персоналом выключено"},
                     status=status.HTTP_403_FORBIDDEN,
                 )
             phone = request.data.get("phone")

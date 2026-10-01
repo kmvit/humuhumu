@@ -6,7 +6,8 @@ import { useLiveOrders } from "../../useLiveOrders";
 import Compose from "../waiter/Compose";
 import { useToast } from "../../components/ui/Toast";
 import { fmtDuration, minutesBetween } from "../../time";
-import { useSite } from "../../site";
+import { useFeature, useSite } from "../../site";
+import BonusPanel from "../waiter/BonusPanel";
 
 function money(v: string | number | null | undefined): string {
   return Number(v ?? 0).toLocaleString("ru", { maximumFractionDigits: 2 });
@@ -40,6 +41,8 @@ export default function Counter() {
   // Гостю должно быть чем заплатить: онлайн или на кассе (см. prepay_required
   // на бэке) — иначе колонка «Ждут оплаты» так и стоит пустой.
   const kassa = site?.kassa_payment === true;
+  // Бариста указывает гостя по телефону — бонусы копятся и без списания.
+  const bonusOn = useFeature("loyalty") && !!site?.bonus_enabled;
   const prepay =
     site?.prepay_required === true && (site?.online_payment === true || kassa);
   const { orders, setOrders, highlight, reload } = useLiveOrders(
@@ -247,7 +250,7 @@ export default function Counter() {
                         {o.pay_method_display}
                       </span>
                     )}
-                    <span className="num">{money(o.total)} ₽</span>
+                    <span className="num">{money(o.payable)} ₽</span>
                   </span>
                 </div>
                 <div className="muted sm mt-1">
@@ -276,7 +279,7 @@ export default function Counter() {
                           disabled={busy === o.id}
                           onClick={() => refundOrder(o)}
                         >
-                          <Icon name="check" size={15} /> Да, вернуть {money(o.total)} ₽
+                          <Icon name="check" size={15} /> Да, вернуть {money(o.payable)} ₽
                         </button>
                         <button
                           className="btn sm ghost"
@@ -314,8 +317,15 @@ export default function Counter() {
                       <strong className="counter-no">
                         {o.daily_number != null ? `№${o.daily_number}` : (o.customer_name || "Без номера")}
                       </strong>
-                      <span className="num">{money(o.total)} ₽</span>
+                      {/* Сумма к оплате, а не стоимость: часть могли закрыть
+                          бонусами, и бариста взял бы с гостя лишнее. */}
+                      <span className="num">{money(o.payable)} ₽</span>
                     </div>
+                    {Number(o.bonus_spent) > 0 && (
+                      <div className="muted sm">
+                        из {money(o.total)} ₽ · {money(o.bonus_spent)} бонусами
+                      </div>
+                    )}
                     {o.paid_at && col.key !== "unpaid" && (
                       <span className="badge paid mt-1">
                         <Icon name="check" size={13} /> Оплачен
@@ -360,6 +370,13 @@ export default function Counter() {
                           </option>
                         ))}
                       </select>
+                    )}
+                    {bonusOn && (
+                      <BonusPanel
+                        order={o}
+                        onDone={reload}
+                        canRedeem={!!site?.bonus_redeem_waiter}
+                      />
                     )}
                     {col.key === "ready" && o.performer_name && (
                       <p className="muted sm m-0">Выполнил: {o.performer_name}</p>

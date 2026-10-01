@@ -269,6 +269,8 @@ export interface Order {
   total: string;
   /** Списано бонусами (1 бонус = 1 ₽). */
   bonus_spent: string;
+  /** Гость бонусной программы, за которым закреплён заказ */
+  bonus_guest: { name: string; phone: string; balance: string } | null;
   /** Сколько гость платит деньгами: total за вычетом бонусов. */
   payable: string;
   /** Заказ лежит на кассе и ждёт оплаты — номер на кассе = id заказа. */
@@ -799,6 +801,7 @@ export interface LoyaltyMember {
   phone: string;
   birth_date: string | null;
   balance: string;
+  source?: "guest" | "staff" | "import";
   created_at: string;
 }
 

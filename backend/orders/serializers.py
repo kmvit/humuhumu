@@ -43,6 +43,9 @@ class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     performer_name = serializers.SerializerMethodField()
+    # Гость бонусной программы на заказе: сотрудник видит, что номер уже
+    # назван и бонусы за чек начислятся, — и не спрашивает второй раз.
+    bonus_guest = serializers.SerializerMethodField()
     pay_method_display = serializers.CharField(source="get_pay_method_display", read_only=True)
     has_food = serializers.BooleanField(read_only=True)
     has_drinks = serializers.BooleanField(read_only=True)
@@ -120,6 +123,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "is_ready",
             "total",
             "bonus_spent",
+            "bonus_guest",
             "payable",
             "kassa_waiting",
             "pay_channel",
@@ -140,6 +144,12 @@ class OrderSerializer(serializers.ModelSerializer):
             return ""
         full = f"{obj.performer.first_name} {obj.performer.last_name}".strip()
         return full or obj.performer.username
+
+    def get_bonus_guest(self, obj):
+        member = getattr(obj.client, "loyalty", None) if obj.client_id else None
+        if member is None:
+            return None
+        return {"name": member.name, "phone": member.phone, "balance": member.balance}
 
     def get_food_served(self, obj):
         return obj.food_served_at is not None

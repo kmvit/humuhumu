@@ -4,6 +4,7 @@ import Icon from "../../components/Icon";
 import { useSite, useFeature } from "../../site";
 import { useToast } from "../../components/ui/Toast";
 import Stepper from "../../components/ui/Stepper";
+import BonusGuests from "./BonusGuests";
 
 /** Раздел «Бонусы» в панели владельца.
 
@@ -123,11 +124,11 @@ export default function Bonuses() {
                     save(
                       { bonus_redeem_waiter: !byWaiter },
                       { waiter: !byWaiter },
-                      !byWaiter ? "Официант списывает бонусы" : "Официанту списание закрыто"
+                      !byWaiter ? "Персонал списывает бонусы" : "Персоналу списание закрыто"
                     )
                   }
                 >
-                  <Icon name={byWaiter ? "check" : "close"} size={15} /> Официант на кассе
+                  <Icon name={byWaiter ? "check" : "close"} size={15} /> Официант и бариста
                 </button>
                 <button
                   className={"btn sm" + (byGuest ? "" : " ghost")}
@@ -144,7 +145,7 @@ export default function Bonuses() {
                 </button>
               </div>
               <p className="muted sm mt-2 m-0">
-                Официант находит гостя по телефону на закрытии счёта. Гость применяет
+                Официант или бариста находит гостя по телефону. Гость применяет
                 бонусы сам — в своём заказе, если вошёл в приложение.
               </p>
               {!byWaiter && !byGuest && (
@@ -156,6 +157,7 @@ export default function Bonuses() {
           </>
         )}
       </div>
+      {enabled && <BonusGuests welcome={welcome} />}
     </>
   );
 }
