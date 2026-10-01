@@ -16,6 +16,7 @@ from orders.models import Table
 
 from .models import (
     STAFF_ROLES,
+    hours_between,
     FocusItem,
     Scheme,
     Shift,
@@ -113,7 +114,7 @@ class ShiftViewSet(viewsets.ViewSet):
     #: Деньги человека в строке смены. При оплате за результат у каждого
     #: своя сумма — это его личное дело, коллегам её видеть незачем.
     _PERSONAL_MONEY = (
-        "base", "bonus", "senior_bonus", "penalty", "payout",
+        "base", "bonus", "senior_bonus", "penalty", "payout", "hourly",
         "kpi_revenue", "kpi", "kpi_bonus", "kpi_next",
         "focus_count", "focus_bonus", "focus_items",
         "upsell_count", "upsell_bonus", "upsell_items",
@@ -374,6 +375,13 @@ class ShiftViewSet(viewsets.ViewSet):
             end = fields.get("ends_at", new_type.ends_at if retyped else member.ends_at)
             if start and start == end:
                 raise ValueError("Пришёл и ушёл в одно время — проверьте часы")
+            # Время теперь деньги (оплата по часам). Уход раньше прихода
+            # читается как смена через полночь — и 11:30 при приходе в 14:00
+            # превратились бы в 21,5 часа. Таких смен не бывает.
+            if start and end and hours_between(start, end) > 20:
+                raise ValueError(
+                    "Получается больше 20 часов — проверьте время прихода и ухода"
+                )
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         update_member(
@@ -407,6 +415,8 @@ class ShiftViewSet(viewsets.ViewSet):
                 if request.data["scheme"] not in Scheme.values:
                     raise ValueError("Нет такой схемы оплаты")
                 cfg.scheme = request.data["scheme"]
+            if "prorate" in request.data:
+                cfg.prorate = bool(request.data["prorate"])
             if "senior_bonus" in request.data:
                 cfg.senior_bonus = self._money(
                     request.data["senior_bonus"], "Надбавка старшему"
@@ -444,6 +454,7 @@ class ShiftViewSet(viewsets.ViewSet):
             "scheme": cfg.scheme,
             "schemes": [{"value": v, "label": l} for v, l in Scheme.choices],
             "senior_bonus": str(money(cfg.senior_bonus)),
+            "prorate": cfg.prorate,
             "kpi_roles": cfg.kpi_roles or [],
             "kpi_grid": cfg.kpi_grid or [],
             "roles": [{"value": r.value, "label": r.label} for r in STAFF_ROLES],

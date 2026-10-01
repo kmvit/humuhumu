@@ -1,4 +1,5 @@
 import json
+from decimal import Decimal
 
 from django.conf import settings
 from django.core.files.base import ContentFile
@@ -358,7 +359,7 @@ class ModifierGroupViewSet(ProtectedDeleteMixin, viewsets.ModelViewSet):
         )
         is_stopped = serializers.BooleanField(required=False, default=False)
         upsell_bonus = serializers.DecimalField(
-            max_digits=10, decimal_places=2, required=False, min_value=0
+            max_digits=10, decimal_places=2, required=False, min_value=Decimal("0")
         )
 
     def _sync_modifiers(self, group, raw):

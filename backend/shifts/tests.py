@@ -1655,3 +1655,191 @@ class PayPrivacyTests(APITestCase):
         self.client.force_authenticate(self.vika)
         data = self.client.get("/api/shifts/day/").data
         self.assertIsNotNone(self.rows(data)[self.dima.id]["payout"])
+
+
+class ProrateTests(APITestCase):
+    """Этап 5: ставка по отработанным часам — как считает Монти.
+
+    1 100 за 6 ч и 2 200 за 12 ч — одна цена часа, 183,33. Старший —
+    2 500 за 12 ч, то есть +25 ₽ в час. Часы к оплате — до ближайшего часа.
+    """
+
+    def setUp(self):
+        from datetime import time
+
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.HALL
+        site.save()
+        self.owner = User.objects.create_user("owner-h", password="demo12345", role=User.Role.ADMIN)
+        self.manager = User.objects.create_user("man-h", password="demo12345", role=User.Role.WAREHOUSE)
+        self.bar = User.objects.create_user("bar-h", password="demo12345", role=User.Role.BAR)
+        cfg = ShiftSettings.load()
+        cfg.scheme = "result"
+        cfg.prorate = True
+        cfg.senior_bonus = Decimal("25")
+        cfg.daily_rate = Decimal("2000")
+        cfg.save()
+        self.full = ShiftType.objects.create(name="Полная", starts_at=time(8), ends_at=time(20))
+        self.short = ShiftType.objects.create(name="Короткая", starts_at=time(14), ends_at=time(20))
+        ShiftRate.objects.create(shift_type=self.full, role="bar", rate=Decimal("2200"))
+        ShiftRate.objects.create(shift_type=self.short, role="bar", rate=Decimal("1100"))
+        self.day = timezone.localdate() - timedelta(days=1)
+
+    def put(self, shift_type, end=None, start=None, senior=False):
+        from .services import update_member
+
+        _, m = add_member(self.bar, self.day, shift_type=shift_type, is_senior=senior)
+        kw = {}
+        if end is not None:
+            kw["ends_at"] = end
+        if start is not None:
+            kw["starts_at"] = start
+        if kw:
+            update_member(m, **kw)
+        return m
+
+    def row(self):
+        return shift_report(shift=get_shift(self.day))["members"][0]
+
+    def test_on_plan_pays_the_shift_rate(self):
+        self.put(self.full)
+        r = self.row()
+        self.assertEqual((r["base"], r["paid_hours"], r["planned_hours"], r["hourly"]), ("2200.00", "12", "12.00", "183.33"))
+
+    def test_hour_late_pays_one_more_hour(self):
+        from datetime import time
+
+        self.put(self.full, end=time(21))
+        self.assertEqual(self.row()["base"], "2383.33")  # не 183,33 × 13 = 2 383,29
+
+    def test_left_an_hour_early(self):
+        from datetime import time
+
+        self.put(self.short, end=time(19))
+        self.assertEqual(self.row()["base"], "916.67")
+
+    def test_rounds_to_nearest_hour(self):
+        from datetime import time
+
+        self.put(self.full, end=time(20, 40))
+        self.assertEqual(self.row()["paid_hours"], "13")
+        ShiftMember.objects.update(ends_at=time(20, 20))
+        self.assertEqual(self.row()["paid_hours"], "12")
+        ShiftMember.objects.update(ends_at=time(20, 30))
+        self.assertEqual(self.row()["paid_hours"], "13")  # ровно полчаса — вверх
+
+    def test_senior_paid_per_hour(self):
+        from datetime import time
+
+        self.put(self.full, senior=True)
+        self.assertEqual(self.row()["senior_bonus"], "300.00")  # 2 500 − 2 200
+        ShiftMember.objects.update(ends_at=time(21))
+        r = self.row()
+        self.assertEqual((r["base"], r["senior_bonus"], r["payout"]), ("2383.33", "325.00", "2708.33"))
+
+    def test_senior_on_short_shift_gets_half(self):
+        self.put(self.short, senior=True)
+        self.assertEqual(self.row()["senior_bonus"], "150.00")  # 1 250 − 1 100
+
+    def test_night_shift(self):
+        from datetime import time
+
+        night = ShiftType.objects.create(name="Ночь", starts_at=time(20), ends_at=time(8))
+        ShiftRate.objects.create(shift_type=night, role="bar", rate=Decimal("2400"))
+        self.put(night, end=time(9))
+        self.assertEqual(self.row()["base"], "2600.00")  # 200 × 13
+
+    def test_off_pays_the_whole_shift(self):
+        from datetime import time
+
+        self.put(self.full, end=time(21), senior=True)
+        Shift.objects.update(prorate=False)
+        r = self.row()
+        self.assertEqual((r["base"], r["senior_bonus"], r["paid_hours"]), ("2200.00", "25.00", None))
+
+    def test_no_time_marked_pays_the_shift(self):
+        """Время стёрли — платить «за 0 часов» нельзя: ставка за смену."""
+        m = self.put(self.full)
+        ShiftMember.objects.filter(pk=m.pk).update(starts_at=None, ends_at=None)
+        self.assertEqual(self.row()["base"], "2200.00")
+
+    def test_switch_does_not_rewrite_the_past(self):
+        from datetime import time
+
+        self.put(self.full, end=time(21))
+        self.client.force_authenticate(self.owner)
+        self.client.patch("/api/shifts/settings/", {"prorate": False}, format="json")
+        self.assertEqual(self.row()["base"], "2383.33")  # вчера — по правилам вчера
+
+    def test_payroll_and_ledger(self):
+        from datetime import time
+
+        self.put(self.full, end=time(21), senior=True)
+        row = payroll(Shift.objects.all())[0]
+        self.assertEqual((row["base"], row["paid_hours"], row["total"]), ("2383.33", "13.00", "2708.33"))
+
+    def test_owner_toggles_it(self):
+        self.client.force_authenticate(self.owner)
+        res = self.client.patch("/api/shifts/settings/", {"prorate": False}, format="json")
+        self.assertFalse(res.data["prorate"])
+        self.assertFalse(ShiftSettings.load().prorate)
+
+    def test_leave_before_arrival_is_refused(self):
+        """11:30 при приходе в 14:00 — не смена через полночь на 21,5 часа."""
+        self.put(self.short)
+        self.client.force_authenticate(self.manager)
+        res = self.client.post(
+            "/api/shifts/update_member/",
+            {"date": self.day.isoformat(), "user": self.bar.id, "ends_at": "11:30"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(self.row()["base"], "1100.00")
+
+    def test_type_retime_updates_the_plan(self):
+        """Тип «Полная» стал 08–21 — план у людей в сменах тоже 13 ч."""
+        from datetime import time
+
+        today = timezone.localdate()
+        _, m = add_member(self.bar, today, shift_type=self.full)
+        self.client.force_authenticate(self.owner)
+        self.client.patch(f"/api/shifts/types/{self.full.id}/", {"ends_at": "21:00"}, format="json")
+        m.refresh_from_db()
+        self.assertEqual((m.planned_hours, m.ends_at), (Decimal("13.00"), time(21)))
+        r = shift_report(shift=get_shift(today))["members"][0]
+        self.assertEqual((r["base"], r["hourly"]), ("2200.00", "169.23"))
+
+    def test_senior_without_time_paid_by_plan(self):
+        m = self.put(self.full, senior=True)
+        ShiftMember.objects.filter(pk=m.pk).update(starts_at=None, ends_at=None)
+        r = self.row()
+        self.assertEqual((r["base"], r["senior_bonus"], r["time_missing"]), ("2200.00", "300.00", True))
+
+    def test_no_type_no_time_senior_is_zero_and_flagged(self):
+        _, m = add_member(self.bar, self.day, is_senior=True)
+        ShiftMember.objects.filter(pk=m.pk).update(
+            shift_type=None, planned_hours=None, starts_at=None, ends_at=None, rate=None
+        )
+        r = self.row()
+        self.assertEqual((r["base"], r["senior_bonus"], r["time_missing"]), ("2000.00", "0.00", True))
+
+    def test_manual_times_without_type_pay_default_rate(self):
+        """Без типа плана нет — ставка по умолчанию целиком, старшему по часам."""
+        from datetime import time
+
+        _, m = add_member(self.bar, self.day, is_senior=True)
+        ShiftMember.objects.filter(pk=m.pk).update(
+            shift_type=None, planned_hours=None, starts_at=time(9), ends_at=time(15), rate=None
+        )
+        r = self.row()
+        self.assertEqual((r["base"], r["senior_bonus"], r["paid_hours"]), ("2000.00", "150.00", "6"))
+
+    def test_admin_refuses_leave_before_arrival(self):
+        from datetime import time
+
+        from django.core.exceptions import ValidationError
+
+        m = self.put(self.short)
+        m.ends_at = time(11, 30)
+        with self.assertRaises(ValidationError):
+            m.clean()

@@ -53,7 +53,7 @@ class ShiftSettingsAdmin(admin.ModelAdmin):
         ("Схема", {"fields": ("scheme",)}),
         (
             "Оплата за результат",
-            {"fields": ("senior_bonus", "kpi_roles", "kpi_grid")},
+            {"fields": ("prorate", "senior_bonus", "kpi_roles", "kpi_grid")},
         ),
         (
             "Ставка по умолчанию и процент",
@@ -128,11 +128,11 @@ class ShiftMemberInline(admin.TabularInline):
     model = ShiftMember
     extra = 0
     fields = (
-        "user", "role", "shift_type_name", "starts_at", "ends_at",
+        "user", "role", "shift_type_name", "planned_hours", "starts_at", "ends_at",
         "rate", "is_senior", "in_kpi", "added_by", "added_at",
     )
-    # название типа — снимок для истории, его правка ничего не меняет
-    readonly_fields = ("shift_type_name", "added_at")
+    # название типа и план — снимок для истории, их правка ничего не меняет
+    readonly_fields = ("shift_type_name", "planned_hours", "added_at")
     autocomplete_fields = ("user", "added_by")
 
 

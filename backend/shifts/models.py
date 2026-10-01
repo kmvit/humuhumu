@@ -48,7 +48,19 @@ class ShiftSettings(TenantModel):
     )
     senior_bonus = models.DecimalField(
         "Надбавка старшему", max_digits=10, decimal_places=2, default=Decimal("0"),
-        help_text="Сверх ставки тому, кто отмечен старшим смены. Только в оплате за результат.",
+        help_text=(
+            "Сверх ставки тому, кто отмечен старшим смены. Только в оплате за "
+            "результат. При оплате по часам — ₽ в час, иначе — ₽ за смену."
+        ),
+    )
+    # Монти платит, по сути, за час: 1 100 за 6 ч и 2 200 за 12 ч — одна
+    # цена часа. Задержался — получил больше, ушёл раньше — меньше.
+    prorate = models.BooleanField(
+        "Ставка по отработанным часам", default=False,
+        help_text=(
+            "Ставка смены ÷ плановые часы × отработанные часы (до ближайшего "
+            "часа). Выключено — ставка за смену целиком."
+        ),
     )
     kpi_roles = models.JSONField(
         "Роли в бонусе за КПД", default=default_kpi_roles, blank=True,
@@ -184,6 +196,7 @@ class Shift(TenantModel):
     senior_bonus = models.DecimalField(
         "Надбавка старшему", max_digits=10, decimal_places=2, default=Decimal("0")
     )
+    prorate = models.BooleanField("Ставка по отработанным часам", default=False)
     kpi_grid = models.JSONField("Сетка бонуса за КПД", default=list, blank=True)
     daily_rate = models.DecimalField(
         "Оплата за смену", max_digits=10, decimal_places=2, default=Decimal("0")
@@ -245,6 +258,11 @@ class ShiftMember(TenantModel):
     shift_type_name = models.CharField("Название типа", max_length=40, blank=True)
     starts_at = models.TimeField("Пришёл", null=True, blank=True)
     ends_at = models.TimeField("Ушёл", null=True, blank=True)
+    # Длина смены по плану — снимком из типа: от неё считается цена часа
+    # (ставка ÷ плановые часы). Время прихода и ухода правят, план — нет.
+    planned_hours = models.DecimalField(
+        "Часов по плану", max_digits=5, decimal_places=2, null=True, blank=True
+    )
     rate = models.DecimalField(
         "Ставка", max_digits=10, decimal_places=2, null=True, blank=True,
         help_text="Ставка по типу смены и роли. Пусто — общая ставка смены.",
@@ -279,6 +297,19 @@ class ShiftMember(TenantModel):
         if self.starts_at is None or self.ends_at is None:
             return None
         return hours_between(self.starts_at, self.ends_at)
+
+    def clean(self):
+        # То же правило, что в приложении: время теперь деньги, а уход
+        # раньше прихода читается как смена через полночь на 20+ часов.
+        from django.core.exceptions import ValidationError
+
+        if self.starts_at and self.ends_at:
+            if self.starts_at == self.ends_at:
+                raise ValidationError("Пришёл и ушёл в одно время — проверьте часы")
+            if hours_between(self.starts_at, self.ends_at) > 20:
+                raise ValidationError(
+                    "Получается больше 20 часов — проверьте время прихода и ухода"
+                )
 
 
 class FocusItem(TenantModel):

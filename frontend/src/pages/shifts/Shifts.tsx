@@ -657,11 +657,23 @@ export default function Shifts() {
                     {m.role_display}
                     {m.starts_at && m.ends_at
                       ? ` · ${m.shift_type_name ? m.shift_type_name + " " : ""}${m.starts_at}–${m.ends_at} (${fmtHours(m.hours)})`
-                      : ""}
+                      : m.shift_type_name
+                        ? ` · ${m.shift_type_name}`
+                        : ""}
                     {m.orders > 0
                       ? ` · ${m.orders} зак. на ${fmtMoney(m.orders_total)}`
                       : ""}
                   </span>
+                  {/* оплата по часам: видно, что задержался или ушёл раньше */}
+                  {m.paid_hours != null &&
+                    m.planned_hours != null &&
+                    Number(m.paid_hours) !== Number(m.planned_hours) && (
+                      <span className="muted">
+                        К оплате {fmtHours(m.paid_hours)} из {fmtHours(m.planned_hours)} по
+                        плану
+                        {m.hourly != null ? ` · ${fmtMoney(m.hourly)} ₽/ч` : ""}
+                      </span>
+                    )}
                   {m.kpi != null && (
                     <span className="muted">
                       КПД {fmtMoney(m.kpi)} ₽/ч ({fmtMoney(m.kpi_revenue)} за{" "}
@@ -681,8 +693,17 @@ export default function Shifts() {
                       {fmtMoney(m.upsell_bonus)}
                     </span>
                   )}
-                  {m.in_kpi && result && !m.hours && (
-                    <span className="muted">Нет времени смены — КПД не посчитать</span>
+                  {m.time_missing ? (
+                    <span className="label-bad">
+                      Время не отмечено — оплата по плану смены
+                      {m.in_kpi ? ", КПД не посчитать" : ""}
+                    </span>
+                  ) : (
+                    m.in_kpi &&
+                    result &&
+                    !m.hours && (
+                      <span className="muted">Нет времени смены — КПД не посчитать</span>
+                    )
                   )}
                   {m.is_senior && (
                     <span className="badge open mini mt-1" style={{ alignSelf: "flex-start" }}>
@@ -823,11 +844,13 @@ export default function Shifts() {
           <p className="muted mt-3">
             {result ? (
               <>
-                Ставка по типу смены и роли
+                {shift.prorate
+                  ? "Ставка по типу смены и роли за отработанные часы"
+                  : "Ставка по типу смены и роли"}
                 {shift.kpi_grid.length ? " + бонус за КПД по сетке" : ""}
                 {" + фокусные позиции + допродажи"}
                 {Number(shift.senior_bonus) > 0
-                  ? ` + ${fmtMoney(shift.senior_bonus)} старшему`
+                  ? ` + ${fmtMoney(shift.senior_bonus)}${shift.prorate ? " ₽/ч" : ""} старшему`
                   : ""}
                 {shift.penalty_table
                   ? ` − списания со стола «${shift.penalty_table}»`
@@ -850,6 +873,7 @@ export default function Shifts() {
             <MemberEditor
               member={editing}
               options={options}
+              isToday={day === today}
               busy={busy}
               onClose={() => setEditing(null)}
               onSave={(body) => saveMember(editing.user, body)}
@@ -951,7 +975,12 @@ export default function Shifts() {
                 <strong>{r.name}</strong>
                 <span className="muted">
                   {r.role_display} · {fmtDays(r.days)}
-                  {Number(r.hours) > 0 ? ` (${fmtHours(r.hours)})` : ""} · {payParts(r)}
+                  {Number(r.paid_hours) > 0
+                    ? ` (${fmtHours(r.paid_hours)} к оплате)`
+                    : Number(r.hours) > 0
+                      ? ` (${fmtHours(r.hours)})`
+                      : ""}{" "}
+                  · {payParts(r)}
                 </span>
                 {/* Сделанное за период — рядом с выплатой, чтобы одно
                     было видно вместе с другим, когда решают про сдельную. */}
@@ -980,12 +1009,15 @@ export default function Shifts() {
 function MemberEditor({
   member,
   options,
+  isToday,
   busy,
   onClose,
   onSave,
 }: {
   member: ShiftMember;
   options: ShiftOptions;
+  /** «Ушёл сейчас» имеет смысл только в сегодняшней смене. */
+  isToday: boolean;
   busy: boolean;
   onClose: () => void;
   onSave: (body: Record<string, unknown>) => void;
@@ -995,6 +1027,7 @@ function MemberEditor({
   const [start, setStart] = useState(member.starts_at ?? "");
   const [end, setEnd] = useState(member.ends_at ?? "");
   const [senior, setSenior] = useState(member.is_senior);
+  const [leaveError, setLeaveError] = useState("");
 
   // Сменили тип — время подставляется из него; поправить можно после.
   function pickType(raw: string) {
@@ -1050,6 +1083,32 @@ function MemberEditor({
           <input className="input" type="time" value={end} onChange={(e) => setEnd(e.target.value)} />
         </label>
       </div>
+      {/* Время ухода теперь деньги (оплата по часам) — отмечаем одним
+          нажатием в момент ухода, а не вспоминаем задним числом. */}
+      {isToday && (
+        <div className="mb-3">
+          <button
+            className="btn ghost sm"
+            disabled={busy}
+            onClick={() => {
+              const now = new Date();
+              const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+              // Дневная смена (по плану конец позже начала), а сейчас раньше
+              // прихода — это не уход после полуночи, а неверное «Пришёл».
+              const dayShift = !member.starts_at || !member.ends_at || member.ends_at > member.starts_at;
+              if (start && dayShift && hhmm < start) {
+                setLeaveError(`Сейчас ${hhmm}, а пришёл в ${start} — поправьте «Пришёл»`);
+                return;
+              }
+              setEnd(hhmm);
+              onSave({ ends_at: hhmm });
+            }}
+          >
+            <Icon name="logout" size={15} /> Ушёл сейчас
+          </button>
+          {leaveError && <p className="label-bad sm m-0 mt-1">{leaveError}</p>}
+        </div>
+      )}
       <label className="inline tight">
         <input type="checkbox" checked={senior} onChange={(e) => setSenior(e.target.checked)} />
         <span className="sm">Старший смены</span>

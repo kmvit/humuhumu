@@ -109,6 +109,9 @@ def user_days(period: date_cls, user_id: int) -> list[dict]:
                 "members_count": report["members_count"],
                 "shift_type_name": me["shift_type_name"],
                 "hours": me["hours"],
+                "paid_hours": me["paid_hours"],
+                "planned_hours": me["planned_hours"],
+                "hourly": me["hourly"],
                 "daily_rate": me["base"],
                 "bonus_share": str(money(Decimal(me["bonus"]) + Decimal(me["senior_bonus"]))),
                 # расшифровка надбавок: КПД и старшему отдельно

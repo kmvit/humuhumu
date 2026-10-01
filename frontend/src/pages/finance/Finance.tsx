@@ -485,6 +485,8 @@ export default function Finance() {
                           upsell_bonus: d.upsell_bonus,
                           senior_bonus: d.senior_bonus,
                           penalty: Number(d.penalty_share) + Number(d.manual_penalty_share),
+                          paid_hours: d.paid_hours,
+                          hourly: d.hourly,
                         })}
                       </span>
                     </span>

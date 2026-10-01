@@ -213,6 +213,20 @@ def kpi_revenue(day, members, penalty_table: str = "") -> tuple[dict[int, Decima
     return {uid: money(v) for uid, v in personal.items()}, money(unassigned)
 
 
+def paid_hours_of(member) -> Decimal | None:
+    """Часы к оплате — отработанное время, округлённое до ближайшего часа.
+
+    12 ч 40 мин → 13, 12 ч 20 мин → 12, ровно полчаса — вверх (решение
+    Монти). Время не отмечено — None: платить не за что считать.
+    """
+    from decimal import ROUND_HALF_UP
+
+    hours = member.hours
+    if hours is None:
+        return None
+    return hours.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+
+
 def kpi_step(grid, kpi: Decimal) -> tuple[Decimal, dict | None]:
     """Надбавка по сетке и следующая ступень (для экрана «сколько не хватает»).
 
@@ -347,6 +361,7 @@ def _shift_terms(cfg) -> dict:
     return {
         "scheme": cfg.scheme,
         "senior_bonus": cfg.senior_bonus,
+        "prorate": cfg.prorate,
         "kpi_grid": cfg.kpi_grid or [],
         "daily_rate": cfg.daily_rate,
         "bonus_percent": cfg.bonus_percent,
@@ -377,6 +392,7 @@ def _set_type(member, shift_type) -> None:
     member.shift_type_name = shift_type.name if shift_type else ""
     member.starts_at = shift_type.starts_at if shift_type else None
     member.ends_at = shift_type.ends_at if shift_type else None
+    member.planned_hours = shift_type.hours if shift_type else None
 
 
 def add_member(user, day, by=None, shift_type=None, role=None, is_senior=False):
@@ -445,7 +461,9 @@ def retime_type(shift_type, old_start, old_end, day) -> None:
     members = ShiftMember.objects.filter(shift_type=shift_type, shift__date__gte=day)
     members.filter(starts_at=old_start).update(starts_at=shift_type.starts_at)
     members.filter(ends_at=old_end).update(ends_at=shift_type.ends_at)
-    members.update(shift_type_name=shift_type.name)
+    # План — это и есть тип смены: от него считается цена часа. Остался бы
+    # старым — при оплате по часам выплата считалась бы от прежней длины.
+    members.update(shift_type_name=shift_type.name, planned_hours=shift_type.hours)
 
 
 def apply_rules_from(day) -> None:
@@ -478,6 +496,7 @@ def shift_report(shift=None, day=None) -> dict:
     if shift is not None:
         day = shift.date
         scheme, senior_bonus = shift.scheme, shift.senior_bonus
+        prorate = shift.prorate
         kpi_grid = shift.kpi_grid
         rate, percent = shift.daily_rate, shift.bonus_percent
         penalty_table = shift.penalty_table
@@ -486,6 +505,7 @@ def shift_report(shift=None, day=None) -> dict:
     else:
         cfg = ShiftSettings.load()
         scheme, senior_bonus = cfg.scheme, cfg.senior_bonus
+        prorate = cfg.prorate
         kpi_grid = cfg.kpi_grid
         rate, percent = cfg.daily_rate, cfg.bonus_percent
         penalty_table = cfg.penalty_table.name if cfg.penalty_table else ""
@@ -522,8 +542,31 @@ def shift_report(shift=None, day=None) -> dict:
         role = m.role or m.user.role
         # В оплате за результат ставка своя у каждого — по типу смены и
         # роли; клетка не заполнена — общая ставка смены.
-        base = money(rate if even or m.rate is None else m.rate)
-        senior = money(senior_bonus if not even and m.is_senior else 0)
+        full = rate if even or m.rate is None else m.rate
+        paid_hours = hourly = None
+        if not even and prorate:
+            # Платим за часы: цена часа — из ставки смены и её плана.
+            paid_hours = paid_hours_of(m)
+        if paid_hours is not None and m.planned_hours:
+            hourly = full / m.planned_hours
+            # делим один раз и округляем в конце: 183,33 × 13 дало бы
+            # 2 383,29 вместо честных 2 383,33
+            base = money(full * paid_hours / m.planned_hours)
+        else:
+            base = money(full)
+        # Время не отмечено — платим по плану (ставка выше тоже целиком).
+        # Без плана и без времени часов не знаем вовсе: «время не
+        # отмечено» видно менеджеру в строке, он поправит.
+        hours_for_senior = paid_hours
+        if hours_for_senior is None and m.planned_hours:
+            hours_for_senior = m.planned_hours.quantize(Decimal("1"))
+        if even or not m.is_senior:
+            senior = money(0)
+        elif prorate:
+            # при оплате по часам надбавка старшему — тоже в час
+            senior = money(senior_bonus * (hours_for_senior or 0))
+        else:
+            senior = money(senior_bonus)
         kpi = kpi_bonus = None
         upcoming = None
         if m.user_id in personal:
@@ -556,6 +599,14 @@ def shift_report(shift=None, day=None) -> dict:
                 "hours": str(m.hours) if m.hours is not None else None,
                 "is_senior": m.is_senior,
                 "in_kpi": m.in_kpi,
+                # оплата по часам: сколько часов к оплате, сколько по плану
+                # и цена часа. None — ставка за смену целиком.
+                "paid_hours": str(paid_hours) if paid_hours is not None else None,
+                "planned_hours": str(m.planned_hours) if m.planned_hours else None,
+                "hourly": str(money(hourly)) if hourly is not None else None,
+                # оплата по часам, а время прихода или ухода не отмечено:
+                # платим по плану — менеджеру нужно это видеть
+                "time_missing": bool(not even and prorate and paid_hours is None),
                 # из чего сложилась выплата этого человека
                 "base": str(base),
                 "bonus": str(bonus),
@@ -601,6 +652,7 @@ def shift_report(shift=None, day=None) -> dict:
         "date": day.isoformat(),
         "scheme": scheme,
         "senior_bonus": str(money(senior_bonus)),
+        "prorate": prorate,
         "kpi_grid": kpi_grid or [],
         # Выручка заказов, закрытых, когда на смене не было ни одного
         # участника КПД: её никому не засчитали.
@@ -669,6 +721,8 @@ def payroll(shifts, user=None) -> list[dict]:
                     "role_display": m["role_display"],
                     "days": 0,
                     "hours": Decimal("0"),
+                    # к оплате при оплате по часам (округлено до часа)
+                    "paid_hours": Decimal("0"),
                     "base": Decimal("0"),
                     # все надбавки вместе и отдельно — КПД и старшему:
                     # по ведомости выдают деньги, «бонус 1 000» без
@@ -693,6 +747,7 @@ def payroll(shifts, user=None) -> list[dict]:
             row["orders"] += m["orders"]
             row["orders_total"] += Decimal(m["orders_total"])
             row["hours"] += Decimal(m["hours"] or 0)
+            row["paid_hours"] += Decimal(m["paid_hours"] or 0)
             row["base"] += Decimal(m["base"])
             # надбавка старшему — тоже бонус сверх ставки
             row["bonus"] += Decimal(m["bonus"]) + Decimal(m["senior_bonus"])
@@ -711,7 +766,7 @@ def payroll(shifts, user=None) -> list[dict]:
             **{
                 k: str(money(r[k]))
                 for k in (
-                    "hours", "base", "bonus", "kpi_bonus", "focus_bonus",
+                    "hours", "paid_hours", "base", "bonus", "kpi_bonus", "focus_bonus",
                     "upsell_bonus", "senior_bonus",
                     "penalty", "total", "orders_total",
                 )

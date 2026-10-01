@@ -22,6 +22,10 @@ export default function PayRules({
   onChanged: () => void;
 }) {
   const result = pay.scheme === "result";
+  // Как сохранено на сервере: переключение галочки меняет смысл надбавки
+  // старшему (₽ в час ↔ ₽ за смену) — без явного предупреждения 25 ₽/ч
+  // тихо превратились бы в 25 ₽ за всю смену.
+  const [savedProrate, setSavedProrate] = useState(pay.prorate);
 
   function setStep(i: number, step: KpiStep) {
     setPay({ ...pay, kpi_grid: pay.kpi_grid.map((s, j) => (j === i ? step : s)) });
@@ -102,8 +106,26 @@ export default function PayRules({
 
         {result && (
           <>
+            <div className="field">
+              <label className="inline tight">
+                <input
+                  type="checkbox"
+                  checked={pay.prorate}
+                  onChange={(e) => setPay({ ...pay, prorate: e.target.checked })}
+                />
+                <span>Ставка по отработанным часам</span>
+              </label>
+              <p className="muted sm m-0 mt-1">
+                Ставка смены ÷ часы по плану × отработанные часы, до ближайшего часа:
+                задержался — получил больше, ушёл раньше — меньше. 2 200 за 12 ч и
+                13 ч работы — 2 383,33. Время прихода и ухода отмечает менеджер.
+              </p>
+            </div>
+
             <label className="field">
-              <span className="label">Надбавка старшему смены, ₽</span>
+              <span className="label">
+                Надбавка старшему смены, {pay.prorate ? "₽ в час" : "₽ за смену"}
+              </span>
               <input
                 className="input"
                 type="number"
@@ -113,8 +135,17 @@ export default function PayRules({
                 onChange={(e) => setPay({ ...pay, senior_bonus: e.target.value })}
               />
               <span className="muted sm">
-                Сверх ставки тому, кого менеджер отметил старшим.
+                {pay.prorate
+                  ? "Сверх ставки за каждый отработанный час тому, кого менеджер отметил старшим. 25 ₽/ч — это 2 500 вместо 2 200 за 12 часов."
+                  : "Сверх ставки тому, кого менеджер отметил старшим."}
               </span>
+              {pay.prorate !== savedProrate && (
+                <p className="label-bad sm m-0 mt-1">
+                  {pay.prorate
+                    ? "Теперь это сумма в час — проверьте: было за смену."
+                    : "Теперь это сумма за смену — проверьте: было в час."}
+                </p>
+              )}
             </label>
 
             <div className="field">
@@ -226,18 +257,20 @@ export default function PayRules({
         <button
           className="btn sm"
           disabled={busy}
-          onClick={() =>
+          onClick={() => {
+            setSavedProrate(pay.prorate);
             onSave({
               scheme: pay.scheme,
               daily_rate: pay.daily_rate,
               bonus_percent: pay.bonus_percent,
               senior_bonus: pay.senior_bonus,
+              prorate: pay.prorate,
               kpi_roles: pay.kpi_roles,
               // пустые строки — недописанные ступени, их не сохраняем
               kpi_grid: pay.kpi_grid.filter((s) => s.from !== "" || s.bonus !== ""),
               penalty_table: pay.penalty_table,
-            })
-          }
+            });
+          }}
         >
           <Icon name="check" size={16} /> Сохранить
         </button>

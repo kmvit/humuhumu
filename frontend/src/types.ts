@@ -484,6 +484,12 @@ export interface ShiftMember {
   is_senior: boolean;
   /** Делит выручку и получает бонус за КПД (оплата за результат). */
   in_kpi: boolean;
+  /** Оплата по часам: к оплате (до часа), по плану, цена часа. null — за смену. */
+  paid_hours: string | null;
+  planned_hours: string | null;
+  hourly: string | null;
+  /** Оплата по часам, а время не отмечено — платим по плану. */
+  time_missing?: boolean;
   /** Из чего сложилась выплата: ставка, бонус, надбавка старшему, списания. */
   base: string;
   bonus: string;
@@ -569,6 +575,8 @@ export interface PaySettings {
   scheme: PayScheme;
   schemes: Choice<PayScheme>[];
   senior_bonus: string;
+  /** Ставка по отработанным часам (до ближайшего часа); старшему — ₽ в час. */
+  prorate: boolean;
   kpi_roles: Role[];
   kpi_grid: KpiStep[];
   roles: Choice<Role>[];
@@ -593,6 +601,7 @@ export interface Shift {
   date: string;
   scheme: PayScheme;
   senior_bonus: string;
+  prorate: boolean;
   kpi_grid: KpiStep[];
   /** Выручка заказов, закрытых, когда на смене не было участников КПД. */
   kpi_unassigned: string;
@@ -640,6 +649,8 @@ export interface PayrollRow {
   role_display: string;
   days: number;
   hours: string;
+  /** К оплате при оплате по часам — округлено до часа. */
+  paid_hours: string;
   base: string;
   /** Все надбавки вместе; ниже — из них за КПД и старшему. */
   bonus: string;
@@ -755,6 +766,9 @@ export interface StatementDay {
   members_count: number;
   shift_type_name: string;
   hours: string | null;
+  paid_hours: string | null;
+  planned_hours: string | null;
+  hourly: string | null;
   daily_rate: string;
   /** Все надбавки вместе; ниже — из них за КПД и старшему. */
   bonus_share: string;
