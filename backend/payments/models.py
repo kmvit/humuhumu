@@ -158,3 +158,36 @@ class AcquiringCredentials(TenantModel):
         # «поле задано», и configured() отвечал бы «да» на пустой пароль.
         clean = {k: v.strip() for k, v in values.items() if isinstance(v, str) and v.strip()}
         self.payload = encrypt(clean)
+
+
+class KassaSync(TenantModel):
+    """Синхронизация терминала кассы с её облаком — через личный кабинет.
+
+    Терминал aQsi теряет связь с облаком: отложенный заказ лежит в
+    кабинете, а на кассу не приходит, пока там не нажмут «Синхронизировать».
+    Эту кнопку жмём мы сами (payments/kassa_sync.py). Здесь — сессия
+    кабинета, чтобы не входить заново каждый раз, и итог последней
+    попытки: его видит владелец, и по нему же держим паузу между
+    попытками — общую для всех процессов, а не в памяти одного.
+    """
+
+    provider = models.CharField("Касса", max_length=32)
+    #: Зашифрованная cookie сессии кабинета (payments/secrets.py).
+    session = models.TextField("Сессия кабинета (шифр)", blank=True, default="")
+    session_until = models.DateTimeField("Сессия до", null=True, blank=True)
+    attempted_at = models.DateTimeField("Последняя попытка", null=True, blank=True)
+    synced_at = models.DateTimeField("Последняя удачная", null=True, blank=True)
+    error = models.CharField("Ошибка последней попытки", max_length=300, blank=True, default="")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "provider"],
+                name="uniq_kassa_sync_per_org",
+            ),
+        ]
+        verbose_name = "Синхронизация кассы"
+        verbose_name_plural = "Синхронизация касс"
+
+    def __str__(self):
+        return f"Синхронизация {self.provider}"

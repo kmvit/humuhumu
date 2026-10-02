@@ -4,7 +4,7 @@ import type { Order, PayMethod, Performer } from "../../types";
 import Icon from "../../components/Icon";
 import { useLiveOrders } from "../../useLiveOrders";
 import Compose from "../waiter/Compose";
-import PayAtKassa from "./PayAtKassa";
+import PayAtKassa, { KassaResync } from "./PayAtKassa";
 import { useToast } from "../../components/ui/Toast";
 import { fmtDuration, minutesBetween } from "../../time";
 import { useFeature, useSite } from "../../site";
@@ -405,6 +405,13 @@ export default function Counter() {
                 <span>{col.label}</span>
                 <span className="chip sm">{byStage[col.key].length}</span>
               </div>
+              {/* Терминал aQsi теряет связь с облаком — заказ на кассу не
+                  приходит. Кнопка под рукой, пока на кассе что-то ждёт. */}
+              {col.key === "unpaid" && byStage.unpaid.some((o) => o.kassa_waiting) && (
+                <div style={{ marginBottom: 8 }}>
+                  <KassaResync />
+                </div>
+              )}
               <div className="stack loose">
                 {byStage[col.key].map((o) => (
                   <div className={"card" + (highlight.has(o.id) ? " new-order" : "")} key={o.id}>

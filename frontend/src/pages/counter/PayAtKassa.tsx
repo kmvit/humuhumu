@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import Icon from "../../components/Icon";
 import Modal from "../../components/ui/Modal";
+import { useToast } from "../../components/ui/Toast";
+import { ApiError, post } from "../../api";
 import type { Order } from "../../types";
 
 const money = (v: string | number) => Number(v).toLocaleString("ru", { maximumFractionDigits: 2 });
@@ -102,6 +104,7 @@ export default function PayAtKassa({
                 только касса пробьёт чек, заказ сам уйдёт в работу.
               </p>
               {paidFallback}
+              <KassaResync />
             </>
           ) : (
             <>
@@ -138,5 +141,33 @@ export default function PayAtKassa({
         </div>
       )}
     </Modal>
+  );
+}
+
+/** «Заказа нет на кассе» — синхронизировать терминал с облаком кассы.
+
+    Терминал aQsi теряет связь с облаком: заказ в кабинете есть, а на
+    кассу не приходит. Синхронизация — только по этой кнопке (решение
+    владельца): она есть здесь и в шапке колонки «Ждут оплаты».
+*/
+export function KassaResync() {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+
+  async function resync() {
+    setBusy(true);
+    try {
+      toast((await post<{ detail: string }>("/kassa/resync/", {})).detail);
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : "Не удалось синхронизировать кассу");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <button className="btn sm ghost block" disabled={busy} onClick={resync}>
+      <Icon name="spark" size={14} /> {busy ? "Синхронизируем…" : "Заказа нет на кассе? Синхронизировать"}
+    </button>
   );
 }

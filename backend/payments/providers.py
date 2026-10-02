@@ -43,6 +43,10 @@ class KassaNotFound(KassaError):
     """Касса не знает такого заказа — его удалили на ней самой."""
 
 
+class KassaSessionExpired(KassaError):
+    """Сессия личного кабинета кассы истекла — надо войти заново."""
+
+
 @dataclass(frozen=True)
 class KassaResult:
     """Что касса сказала о заказе."""
@@ -105,6 +109,10 @@ class BaseProvider:
     def filled(self) -> dict[str, bool]:
         """Какие поля заданы — для панели владельца (без самих значений)."""
         return {f.key: bool(str(self._credentials.get(f.key, "")).strip()) for f in self.fields}
+
+    def can_resync(self) -> bool:
+        """Умеем ли сами синхронизировать терминал с облаком кассы."""
+        return False
 
     def require_configured(self) -> None:
         if not self.configured():
@@ -203,11 +211,36 @@ class AqsiProvider(BaseProvider):
               secret=False, required=False),
         Field("vat", "Ставка НДС", env="", secret=False, required=False,
               choices=AQSI_VAT, default="6"),
+        # Вход в личный кабинет — для одной кнопки «Синхронизировать» у
+        # кассы. Терминал теряет связь с облаком aQsi: отложенный заказ
+        # есть в кабинете, а на кассу не приходит, пока там не нажмут
+        # синхронизацию. В открытом API такой команды нет — см. kassa_sync.
+        Field("lk_login", "Логин кабинета aQsi", env="", secret=False, required=False,
+              hint="Почта или телефон для входа в lk.aqsi.ru. Нужен для кнопки "
+                   "«Синхронизировать» у баристы — когда заказ не доходит до кассы"),
+        Field("lk_password", "Пароль кабинета aQsi", env="", required=False,
+              hint="Пароль для входа в lk.aqsi.ru"),
+        Field("lk_device", "Код кассы в кабинете", env="", secret=False, required=False,
+              hint="Вида 29df2999-7035-4459-8175-56edbf1ee0f5 — можно вставить ссылку "
+                   "из кабинета, где он есть",
+              pattern=r".*[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}.*",
+              error="Нужен код кассы вида 29df2999-7035-4459-8175-56edbf1ee0f5."),
     )
+
+    #: Поля входа в кабинет: либо все три, либо ни одного.
+    LK_FIELDS = ("lk_login", "lk_password", "lk_device")
+    #: Кабинет aQsi. Его внутреннее API не документировано — адреса взяты
+    #: из того, что шлёт сам кабинет (проверено 02.10.2026).
+    default_lk = "https://lk.aqsi.ru"
+    LK_COOKIE = "aqsi-web-app.sid"
 
     @property
     def api(self) -> str:
         return (os.getenv("AQSI_API_URL") or self.default_api).rstrip("/")
+
+    @property
+    def lk(self) -> str:
+        return (os.getenv("AQSI_LK_URL") or self.default_lk).rstrip("/")
 
     @property
     def headers(self) -> dict:
@@ -221,6 +254,73 @@ class AqsiProvider(BaseProvider):
         # Ключ проверяем самым дешёвым запросом, а заодно — что магазин
         # находится: без него касса заказ не примет.
         self.shop()
+        given = [f for f in self.LK_FIELDS if self.value(f)]
+        if given and len(given) < len(self.LK_FIELDS):
+            raise KassaError(
+                "Для синхронизации кассы нужны все три поля: логин, пароль и код кассы "
+                "в кабинете. Не нужна — оставьте все три пустыми."
+            )
+        if given:
+            # Пароль проверяем входом: неверный должен найти владелец сейчас,
+            # а не бариста, у которого заказ не дошёл до кассы.
+            self.lk_login()
+
+    # ── Синхронизация терминала через кабинет ──────────────────────────
+    # Не открытое API, а то, что делает кнопка в кабинете. Сессия кабинета
+    # хранится у нас (kassa_sync), здесь — только запросы.
+
+    def can_resync(self) -> bool:
+        return all(self.value(f) for f in self.LK_FIELDS)
+
+    def lk_device(self) -> str:
+        found = re.search(
+            r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", self.value("lk_device")
+        )
+        if not found:
+            raise KassaError("Не задан код кассы в кабинете aQsi")
+        return found.group(0).lower()
+
+    @property
+    def lk_headers(self) -> dict:
+        # Кабинет — сайт, а не API: без Origin такие сервера часто отказывают.
+        return {"Origin": self.lk, "Referer": f"{self.lk}/"}
+
+    def lk_login(self) -> tuple[str, float | None]:
+        """Войти в кабинет. Возвращает cookie сессии и когда она истекает."""
+        try:
+            response = httpx.post(
+                f"{self.lk}/auth",
+                json={"emailOrPhone": self.value("lk_login"), "password": self.value("lk_password")},
+                headers=self.lk_headers, timeout=TIMEOUT, follow_redirects=False,
+            )
+        except httpx.HTTPError as e:
+            raise KassaError(f"Кабинет aQsi недоступен: {e}") from e
+        sid, expires = None, None
+        for cookie in response.cookies.jar:
+            if cookie.name == self.LK_COOKIE:
+                sid, expires = cookie.value, cookie.expires
+        if response.status_code >= 300 or not sid:
+            reason = self._reason(response) if response.status_code >= 400 else ""
+            raise KassaError(
+                "Кабинет aQsi не принял логин или пароль" + (f": {reason}" if reason else "")
+            )
+        return sid, float(expires) if expires else None
+
+    def lk_resync(self, sid: str) -> None:
+        """Нажать «Синхронизировать» у кассы. Сессия истекла — KassaSessionExpired."""
+        try:
+            response = httpx.put(
+                f"{self.lk}/api/v1/devices/settings/{self.lk_device()}/resync",
+                json={}, cookies={self.LK_COOKIE: sid},
+                headers=self.lk_headers, timeout=TIMEOUT, follow_redirects=False,
+            )
+        except httpx.HTTPError as e:
+            raise KassaError(f"Кабинет aQsi недоступен: {e}") from e
+        # Без сессии кабинет отвечает отказом или уводит на страницу входа.
+        if response.status_code in (401, 403) or 300 <= response.status_code < 400:
+            raise KassaSessionExpired("Сессия кабинета aQsi истекла")
+        if response.status_code >= 400:
+            raise KassaError(f"Кабинет aQsi не синхронизировал кассу: {self._reason(response)}")
 
     def shop(self) -> str:
         """Магазин, на кассы которого кладём заказ."""

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { del, get, put, ApiError } from "../../api";
+import { del, get, post, put, ApiError } from "../../api";
 import Icon from "../../components/Icon";
 import { useToast } from "../../components/ui/Toast";
 
@@ -31,7 +31,12 @@ type State = {
   filled: Record<string, boolean>;
   values: Record<string, string>;
   kassas: KassaKind[];
+  /** Синхронизация терминала через кабинет кассы; null — не настроена. */
+  sync: { synced_at: string | null; attempted_at: string | null; error: string } | null;
 };
+
+const when = (iso: string) =>
+  new Date(iso).toLocaleString("ru", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
 
 const NONE = "none";
 
@@ -71,6 +76,19 @@ export default function Kassa() {
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "Не удалось сохранить", "bad");
     } finally {
+      setSaving(false);
+    }
+  }
+
+  async function resync() {
+    setSaving(true);
+    try {
+      const res = await post<{ detail: string }>("/kassa/resync/", {});
+      notify(res.detail, "ok");
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Не удалось синхронизировать", "bad");
+    } finally {
+      apply(await get<State>("/kassa/").catch(() => state!));
       setSaving(false);
     }
   }
@@ -172,6 +190,23 @@ export default function Kassa() {
                 </button>
               ))}
           </div>
+
+          {same && state.sync && (
+            <div className="rule-top mt-3">
+              <strong className="title mt-3">Синхронизация с терминалом</strong>
+              <p className="muted sm m-0">
+                Заказ есть в кабинете aQsi, а на кассу не пришёл — бариста жмёт «Синхронизировать»
+                на доске стойки — как кнопку в кабинете.{" "}
+                {state.sync.synced_at
+                  ? `Последняя: ${when(state.sync.synced_at)}.`
+                  : "Ещё не синхронизировали."}
+              </p>
+              {state.sync.error && <p className="error sm m-0">{state.sync.error}</p>}
+              <button className="btn sm ghost mt-2" disabled={saving} onClick={resync}>
+                <Icon name="spark" size={15} /> Синхронизировать сейчас
+              </button>
+            </div>
+          )}
 
           <p className="muted sm mt-3 m-0">
             {state.ready

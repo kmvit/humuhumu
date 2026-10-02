@@ -16,7 +16,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.models import SiteSettings
-from users.permissions import IsAdminRole
+from users.permissions import IsAdminRole, IsStaffRole
 
 from .acquiring import AcquiringError, NoAcquirer, acquirer_class, acquirers, get_acquirer
 from .models import AcquiringCredentials, Payment
@@ -243,6 +243,7 @@ class KassaSettingsView(APIView):
         return Response(self._state())
 
     def _state(self) -> dict:
+        from .kassa_sync import sync_state
         from .providers import NONE, get_provider, kassa_available, kassas
 
         site = SiteSettings.load()
@@ -251,6 +252,8 @@ class KassaSettingsView(APIView):
         return {
             "provider": site.kassa,
             "ready": kassa_available(),
+            # Синхронизация терминала через кабинет: null — не настроена.
+            "sync": sync_state() if chosen else None,
             "filled": provider.filled() if provider else {},
             "values": {
                 f.key: provider.value(f.key)
@@ -277,6 +280,31 @@ class KassaSettingsView(APIView):
                 for cls in kassas()
             ],
         }
+
+
+class KassaResyncView(APIView):
+    """POST /api/kassa/resync/ — синхронизировать терминал кассы с облаком.
+
+    Жмёт бариста, когда отправленного заказа нет на кассе (сами по себе не
+    синхронизируем, см. kassa_sync), и владелец в панели. Доступна любому
+    сотруднику: у окна стоит бариста, а не владелец.
+    """
+
+    permission_classes = [IsStaffRole]
+
+    def post(self, request):
+        from .kassa_sync import resync_kassa
+        from .providers import KassaError
+
+        try:
+            done = resync_kassa()
+        except KassaError as e:
+            return Response({"detail": str(e)}, status=400)
+        return Response({
+            "done": done,
+            "detail": "Касса синхронизирована — заказы сейчас появятся на ней"
+            if done else "Синхронизация уже идёт — подождите полминуты",
+        })
 
 
 class PaymentJournalView(APIView):
