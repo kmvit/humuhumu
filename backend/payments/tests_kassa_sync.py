@@ -20,6 +20,7 @@ from .providers import KassaError
 from .tests_kassa import KEY, KassaBase
 
 DEVICE = "29df2999-7035-4459-8175-56edbf1ee0f5"
+IMEI = "351381971880207"
 
 
 class FakeLk:
@@ -50,6 +51,9 @@ class FakeLk:
         if self.expired or (cookies or {}).get("aqsi-web-app.sid") != self.sid:
             return httpx.Response(401, request=request)
         assert url.endswith("/resync")
+        if json != {"devices": [IMEI]}:
+            return httpx.Response(400, json={
+                "message": 'WHERE parameter "imei" has invalid "undefined" value'}, request=request)
         self.resyncs.append(url.split("/devices/settings/", 1)[1].removesuffix("/resync"))
         return httpx.Response(200, json={}, request=request)
 
@@ -60,7 +64,7 @@ class KassaSyncTests(KassaBase):
         row = AcquiringCredentials.objects.get(provider="aqsi")
         row.set_values({
             "api_key": KEY, "lk_login": "owner@monty.ru", "lk_password": "lk-pass",
-            "lk_device": f"https://lk.aqsi.ru/devices/{DEVICE}/settings",
+            "lk_device": f"https://lk.aqsi.ru/devices/{DEVICE}/settings", "lk_imei": IMEI,
         })
         row.save()
         self.lk = FakeLk()

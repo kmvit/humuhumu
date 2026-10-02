@@ -225,10 +225,14 @@ class AqsiProvider(BaseProvider):
                    "из кабинета, где он есть",
               pattern=r".*[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}.*",
               error="Нужен код кассы вида 29df2999-7035-4459-8175-56edbf1ee0f5."),
+        Field("lk_imei", "IMEI кассы", env="", secret=False, required=False,
+              hint="15 цифр — в кабинете aQsi в карточке кассы",
+              pattern=r"\s*\d{15}\s*",
+              error="IMEI — 15 цифр, например 351381971880207."),
     )
 
-    #: Поля входа в кабинет: либо все три, либо ни одного.
-    LK_FIELDS = ("lk_login", "lk_password", "lk_device")
+    #: Поля для синхронизации через кабинет: либо все, либо ни одного.
+    LK_FIELDS = ("lk_login", "lk_password", "lk_device", "lk_imei")
     #: Кабинет aQsi. Его внутреннее API не документировано — адреса взяты
     #: из того, что шлёт сам кабинет (проверено 02.10.2026).
     default_lk = "https://lk.aqsi.ru"
@@ -257,8 +261,8 @@ class AqsiProvider(BaseProvider):
         given = [f for f in self.LK_FIELDS if self.value(f)]
         if given and len(given) < len(self.LK_FIELDS):
             raise KassaError(
-                "Для синхронизации кассы нужны все три поля: логин, пароль и код кассы "
-                "в кабинете. Не нужна — оставьте все три пустыми."
+                "Для синхронизации кассы нужны все четыре поля: логин, пароль, код кассы "
+                "в кабинете и IMEI. Не нужна — оставьте их пустыми."
             )
         if given:
             # Пароль проверяем входом: неверный должен найти владелец сейчас,
@@ -311,7 +315,10 @@ class AqsiProvider(BaseProvider):
         try:
             response = httpx.put(
                 f"{self.lk}/api/v1/devices/settings/{self.lk_device()}/resync",
-                json={}, cookies={self.LK_COOKIE: sid},
+                # Кабинет синхронизирует перечисленные кассы — по IMEI
+                # (проверено 02.10.2026: без него отказ «imei undefined»).
+                json={"devices": [self.value("lk_imei").strip()]},
+                cookies={self.LK_COOKIE: sid},
                 headers=self.lk_headers, timeout=TIMEOUT, follow_redirects=False,
             )
         except httpx.HTTPError as e:
