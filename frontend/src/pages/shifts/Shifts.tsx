@@ -77,6 +77,7 @@ export default function Shifts() {
   const [adding, setAdding] = useState(false);
   const [penEdit, setPenEdit] = useState(false); // менеджер правит ручной штраф
   const [penVal, setPenVal] = useState("");
+  const [confirmRecalc, setConfirmRecalc] = useState(false);
   // правила оплаты (ставка, процент, штрафной стол) — вкладка владельца
   const [pay, setPay] = useState<PaySettings | null>(null);
   // типы смен и роли — из них менеджер выбирает, ставя человека в смену
@@ -112,6 +113,7 @@ export default function Shifts() {
 
   useEffect(() => {
     setPenEdit(false); // при смене дня закрываем правку штрафа
+    setConfirmRecalc(false); // и подтверждение пересчёта — оно про ту смену
     loadDay(day)
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -225,6 +227,21 @@ export default function Shifts() {
       setShift(await post<Shift>("/shifts/update_member/", { user: userId, date: day, ...body }));
       setEditing(null);
       notify("Сохранено", "ok");
+      loadPeriod().catch(() => {});
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Не получилось", "bad");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Пересчёт прошлой смены по текущим правилам — только эту смену.
+  async function recalcShift() {
+    setBusy(true);
+    try {
+      setShift(await post<Shift>("/shifts/apply_rules/", { date: day }));
+      setConfirmRecalc(false);
+      notify("Смена пересчитана по текущим правилам", "ok");
       loadPeriod().catch(() => {});
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "Не получилось", "bad");
@@ -496,6 +513,31 @@ export default function Shifts() {
               )}
             </div>
           </div>
+
+          {/* Прошлая смена считается по правилам дня открытия. Если их
+              поменяли позже (например, включили оплату по часам), владелец
+              может пересчитать именно эту смену — остальные не трогаются. */}
+          {!!shift.rules_diff?.length && (
+            <div className="card mt-4">
+              <p className="m-0">Смена посчитана по правилам оплаты на день открытия.</p>
+              <div className="wrap mt-2">
+                {confirmRecalc ? (
+                  <>
+                    <button className="btn sm" disabled={busy} onClick={recalcShift}>
+                      Да, пересчитать эту смену
+                    </button>
+                    <button className="btn ghost sm" onClick={() => setConfirmRecalc(false)}>
+                      Отмена
+                    </button>
+                  </>
+                ) : (
+                  <button className="btn sm" onClick={() => setConfirmRecalc(true)}>
+                    Пересчитать по текущим правилам
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="grid stats stagger mt-4">
             {stats &&
@@ -1074,13 +1116,27 @@ function MemberEditor({
         <span className="muted sm">Например, официант сегодня за стойкой — ставка бариста.</span>
       </label>
       <div className="wrap">
-        <label className="field" style={{ flex: "1 1 120px" }}>
+        {/* minWidth 0 и ширина 100%: у поля времени в iOS своя минимальная
+            ширина, и без этого «Ушёл» вылезал за правый край экрана */}
+        <label className="field" style={{ flex: "1 1 120px", minWidth: 0 }}>
           <span className="label">Пришёл</span>
-          <input className="input" type="time" value={start} onChange={(e) => setStart(e.target.value)} />
+          <input
+            className="input"
+            type="time"
+            style={{ width: "100%", minWidth: 0 }}
+            value={start}
+            onChange={(e) => setStart(e.target.value)}
+          />
         </label>
-        <label className="field" style={{ flex: "1 1 120px" }}>
+        <label className="field" style={{ flex: "1 1 120px", minWidth: 0 }}>
           <span className="label">Ушёл</span>
-          <input className="input" type="time" value={end} onChange={(e) => setEnd(e.target.value)} />
+          <input
+            className="input"
+            type="time"
+            style={{ width: "100%", minWidth: 0 }}
+            value={end}
+            onChange={(e) => setEnd(e.target.value)}
+          />
         </label>
       </div>
       {/* Время ухода теперь деньги (оплата по часам) — отмечаем одним

@@ -1843,3 +1843,126 @@ class ProrateTests(APITestCase):
         m.ends_at = time(11, 30)
         with self.assertRaises(ValidationError):
             m.clean()
+
+
+class ApplyRulesToPastShiftTests(APITestCase):
+    """Правила поменяли сегодня, а вчерашнюю смену надо посчитать по ним.
+
+    Случай Монти 03.10: включили оплату по часам, а Савелий вчера пришёл
+    в 14:00 на смену 10–22 — время правили, а сумма не менялась, потому
+    что вчерашняя смена хранит правила дня открытия.
+    """
+
+    def setUp(self):
+        from datetime import time
+
+        site = SiteSettings.load()
+        site.plan = SiteSettings.Plan.HALL
+        site.save()
+        self.owner = User.objects.create_user("owner-ar", password="demo12345", role=User.Role.ADMIN)
+        self.manager = User.objects.create_user("man-ar", password="demo12345", role=User.Role.WAREHOUSE)
+        self.sava = User.objects.create_user("sava-ar", password="demo12345", role=User.Role.BAR)
+        self.anna = User.objects.create_user("anna-ar", password="demo12345", role=User.Role.BAR)
+        cfg = ShiftSettings.load()
+        cfg.scheme = "result"
+        cfg.prorate = False
+        cfg.senior_bonus = Decimal("300")
+        cfg.save()
+        self.full = ShiftType.objects.create(name="Полная", starts_at=time(10), ends_at=time(22))
+        ShiftRate.objects.create(shift_type=self.full, role="bar", rate=Decimal("2200"))
+        self.y = timezone.localdate() - timedelta(days=1)
+        from .services import update_member
+
+        _, m = add_member(self.sava, self.y, shift_type=self.full)
+        update_member(m, starts_at=time(14))
+        add_member(self.anna, self.y, shift_type=self.full, is_senior=True)
+        # сегодня владелец включил оплату по часам, старшему — 25 ₽/ч
+        cfg.prorate = True
+        cfg.senior_bonus = Decimal("25")
+        cfg.save()
+
+    def rows(self, data):
+        return {m["user"]: m for m in data["members"]}
+
+    def day(self, user):
+        self.client.force_authenticate(user)
+        return self.client.get(f"/api/shifts/day/?date={self.y.isoformat()}").data
+
+    def test_yesterday_keeps_its_rules_until_owner_decides(self):
+        data = self.day(self.owner)
+        self.assertEqual(self.rows(data)[self.sava.id]["base"], "2200.00")
+        self.assertIn("оплата по отработанным часам включена", data["rules_diff"])
+        self.assertIn("надбавка старшему: 300 → 25", data["rules_diff"])
+
+    def test_owner_recalculates_yesterday(self):
+        self.client.force_authenticate(self.owner)
+        res = self.client.post("/api/shifts/apply_rules/", {"date": self.y.isoformat()}, format="json")
+        self.assertEqual(res.status_code, 200)
+        rows = self.rows(res.data)
+        self.assertEqual(rows[self.sava.id]["base"], "1466.67")  # 8 ч × 183,33
+        self.assertEqual(rows[self.anna.id]["senior_bonus"], "300.00")  # 25 × 12
+        self.assertEqual(res.data["rules_diff"], [])
+        # факты не тронуты: пришёл всё так же в 14:00
+        self.assertEqual(rows[self.sava.id]["starts_at"], "14:00")
+
+    def test_only_owner(self):
+        self.client.force_authenticate(self.manager)
+        res = self.client.post("/api/shifts/apply_rules/", {"date": self.y.isoformat()}, format="json")
+        self.assertEqual(res.status_code, 403)
+        self.assertEqual(self.day(self.manager)["rules_diff"], [])
+
+    def test_today_never_shows_diff(self):
+        add_member(self.sava, timezone.localdate(), shift_type=self.full)
+        self.client.force_authenticate(self.owner)
+        self.assertEqual(self.client.get("/api/shifts/day/").data["rules_diff"], [])
+
+    def test_rate_change_is_listed(self):
+        ShiftRate.objects.filter(shift_type=self.full).update(rate=Decimal("2400"))
+        self.assertIn("ставки по типам смен и ролям", self.day(self.owner)["rules_diff"])
+
+    def test_deleted_type_keeps_the_rate(self):
+        """Тип смены удалили — пересчёт не роняет ставку до ставки по умолчанию."""
+        ShiftType.objects.filter(pk=self.full.pk).delete()
+        self.client.force_authenticate(self.owner)
+        res = self.client.post("/api/shifts/apply_rules/", {"date": self.y.isoformat()}, format="json")
+        rows = self.rows(res.data)
+        # план 12 ч сохранён снимком, ставка 2 200 — тоже: 8 ч × 183,33
+        self.assertEqual(rows[self.sava.id]["base"], "1466.67")
+
+    def test_other_past_shifts_untouched(self):
+        """Пересчёт одной смены не трогает остальные прошлые."""
+        from datetime import time
+
+        from .services import update_member
+
+        before = self.y - timedelta(days=1)
+        _, m = add_member(self.sava, before, shift_type=self.full)
+        Shift.objects.filter(date=before).update(prorate=False, senior_bonus=Decimal("300"))
+        update_member(m, starts_at=time(14))
+        self.client.force_authenticate(self.owner)
+        self.client.post("/api/shifts/apply_rules/", {"date": self.y.isoformat()}, format="json")
+        other = shift_report(shift=Shift.objects.get(date=before))["members"][0]
+        self.assertEqual(other["base"], "2200.00")
+        self.assertFalse(Shift.objects.get(date=before).prorate)
+
+    def test_payroll_follows_the_recalc(self):
+        self.client.force_authenticate(self.owner)
+        self.client.post("/api/shifts/apply_rules/", {"date": self.y.isoformat()}, format="json")
+        rows = {r["user"]: r for r in payroll(Shift.objects.all())}
+        self.assertEqual(rows[self.sava.id]["total"], "1466.67")
+        self.assertEqual(rows[self.anna.id]["total"], "2500.00")
+
+    def test_bad_requests(self):
+        self.client.force_authenticate(self.owner)
+        self.assertEqual(
+            self.client.post("/api/shifts/apply_rules/", {"date": "вчера"}, format="json").status_code, 400
+        )
+        empty_day = (self.y - timedelta(days=30)).isoformat()
+        self.assertEqual(
+            self.client.post("/api/shifts/apply_rules/", {"date": empty_day}, format="json").status_code, 400
+        )
+
+    def test_worker_cannot_recalc(self):
+        self.client.force_authenticate(self.sava)
+        res = self.client.post("/api/shifts/apply_rules/", {"date": self.y.isoformat()}, format="json")
+        self.assertEqual(res.status_code, 403)

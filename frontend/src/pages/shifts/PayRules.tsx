@@ -383,20 +383,22 @@ function TypeEditor({
             onChange={(e) => setName(e.target.value)}
           />
         </label>
-        <label className="field m-0" style={{ flex: "0 1 110px" }}>
+        <label className="field m-0" style={{ flex: "1 1 110px", minWidth: 0 }}>
           <span className="label">Начало</span>
           <input
             className="input"
             type="time"
+            style={{ width: "100%", minWidth: 0 }}
             value={start}
             onChange={(e) => setStart(e.target.value)}
           />
         </label>
-        <label className="field m-0" style={{ flex: "0 1 110px" }}>
+        <label className="field m-0" style={{ flex: "1 1 110px", minWidth: 0 }}>
           <span className="label">Конец</span>
           <input
             className="input"
             type="time"
+            style={{ width: "100%", minWidth: 0 }}
             value={end}
             onChange={(e) => setEnd(e.target.value)}
           />

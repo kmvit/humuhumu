@@ -29,11 +29,13 @@ from .services import (
     _MISSING,
     add_member,
     apply_rules_from,
+    apply_rules_to_shift,
     clean_amount,
     clean_kpi_grid,
     clean_kpi_roles,
     money,
     retime_type,
+    rules_diff,
     payroll,
     remove_member,
     shift_report,
@@ -66,7 +68,7 @@ class ShiftViewSet(viewsets.ViewSet):
         # Ставка и процент бонуса — деньги персонала: их задаёт владелец,
         # а не менеджер, который ставит состав смены. Типы смен тоже: у
         # каждого своя ставка.
-        if self.action in ("pay_settings", "shift_types", "shift_type"):
+        if self.action in ("pay_settings", "shift_types", "shift_type", "apply_rules"):
             return [IsAdminRole(), RequiresShifts()]
         return super().get_permissions()
 
@@ -148,6 +150,15 @@ class ShiftViewSet(viewsets.ViewSet):
             m["user"] == request.user.id for m in report["members"]
         )
         report["can_edit"] = self.is_manager
+        # Прошлая смена считается по правилам дня открытия. Владельцу
+        # показываем, чем они отличаются от текущих, — и даём пересчитать.
+        report["rules_diff"] = (
+            rules_diff(shift)
+            if shift is not None
+            and request.user.role == User.Role.ADMIN
+            and day < timezone.localdate()
+            else []
+        )
         return Response(report)
 
     # ——— чтение ———
@@ -469,6 +480,29 @@ class ShiftViewSet(viewsets.ViewSet):
                 for t in Table.objects.filter(is_active=True).order_by("sort_order", "name")
             ],
         }
+
+    @action(detail=False, methods=["post"], url_path="apply_rules")
+    def apply_rules(self, request):
+        """Пересчитать прошлую смену по текущим правилам оплаты.
+
+        Только владелец и только явным действием: по умолчанию прошлое
+        не переписывается. Нужно, когда правила поменяли сегодня, а
+        вчерашнюю смену надо посчитать уже по ним.
+        """
+        day = self._day(request.data)
+        if day is None:
+            return Response(
+                {"detail": "Дата в формате ГГГГ-ММ-ДД"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        shift = Shift.objects.filter(date=day).first()
+        if shift is None:
+            return Response(
+                {"detail": "На этот день смена не поставлена"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        apply_rules_to_shift(shift)
+        return self._day_response(request, day)
 
     # ——— типы смен и ставки (владелец) ———
 

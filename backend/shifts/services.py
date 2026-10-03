@@ -478,6 +478,84 @@ def apply_rules_from(day) -> None:
         member.save(update_fields=["rate", "in_kpi"])
 
 
+def _num(value) -> str:
+    """300.00 → «300», 12.50 → «12,5» — как суммы на экранах."""
+    text = format(Decimal(value).normalize(), "f")
+    return text.replace(".", ",")
+
+
+def rules_diff(shift) -> list[str]:
+    """Чем правила этой смены отличаются от текущих — словами, для владельца.
+
+    Смена хранит правила дня открытия: правка ставок не переписывает
+    прошлое. Но бывает, что прошлую смену как раз нужно посчитать по
+    новым правилам (включили оплату по часам сегодня, а вчерашнего
+    опоздавшего надо посчитать по ней). Этот список — что именно изменится.
+    """
+    cfg = ShiftSettings.load()
+    now = _shift_terms(cfg)
+    out = []
+    if shift.scheme != now["scheme"]:
+        out.append(f"схема оплаты: {Scheme(shift.scheme).label} → {Scheme(now['scheme']).label}")
+    if shift.scheme == Scheme.RESULT or now["scheme"] == Scheme.RESULT:
+        if shift.prorate != now["prorate"]:
+            out.append(
+                "оплата по отработанным часам включена"
+                if now["prorate"]
+                else "оплата по отработанным часам выключена"
+            )
+        if money(shift.senior_bonus) != money(now["senior_bonus"]):
+            out.append(
+                f"надбавка старшему: {_num(shift.senior_bonus)} → {_num(now['senior_bonus'])}"
+            )
+        if (shift.kpi_grid or []) != now["kpi_grid"]:
+            out.append("сетка КПД")
+    if money(shift.daily_rate) != money(now["daily_rate"]):
+        out.append(f"ставка по умолчанию: {_num(shift.daily_rate)} → {_num(now['daily_rate'])}")
+    if shift.scheme == Scheme.EVEN and money(shift.bonus_percent) != money(now["bonus_percent"]):
+        out.append(f"процент от выручки: {_num(shift.bonus_percent)} → {_num(now['bonus_percent'])}")
+    if shift.penalty_table != now["penalty_table"]:
+        out.append("штрафной стол")
+    rates_changed = False
+    for m in shift.members.select_related("user", "shift_type"):
+        before = (m.rate, m.in_kpi, m.planned_hours)
+        _recalc_member(m, cfg)
+        if before != (m.rate, m.in_kpi, m.planned_hours):
+            rates_changed = True
+    if rates_changed:
+        out.append("ставки по типам смен и ролям")
+    return out
+
+
+def apply_rules_to_shift(shift) -> None:
+    """Пересчитать прошлую смену по текущим правилам — по решению владельца.
+
+    Факты (кто был, пришёл/ушёл, старший) не трогаем — только правила:
+    схему, ставки, надбавки, сетку, план типа смены.
+    """
+    cfg = ShiftSettings.load()
+    for key, value in _shift_terms(cfg).items():
+        setattr(shift, key, value)
+    shift.save()
+    for m in shift.members.select_related("user", "shift_type"):
+        _recalc_member(m, cfg)
+        m.save(update_fields=["rate", "in_kpi", "planned_hours"])
+
+
+def _recalc_member(member, cfg) -> None:
+    """Текущие правила для человека в прошлой смене.
+
+    Тип смены с тех пор удалили — текущей ставки для него нет: оставляем
+    ставку и план, что были. Иначе пересчёт молча уронил бы человеку
+    ставку до ставки по умолчанию.
+    """
+    if member.shift_type_id is None:
+        member.in_kpi = (member.role or member.user.role) in (cfg.kpi_roles or [])
+        return
+    _apply_member_terms(member, cfg)
+    member.planned_hours = member.shift_type.hours
+
+
 def remove_member(user, day):
     """Менеджер убирает работника из смены. Пустая смена не хранится."""
     shift = get_shift(day)
