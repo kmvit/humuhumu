@@ -28,10 +28,15 @@ import hashlib
 import logging
 import os
 import re
+import ssl
 import uuid
 from dataclasses import dataclass
 from decimal import Decimal
+from functools import lru_cache
+from pathlib import Path
+from urllib.parse import urlsplit
 
+import certifi
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -118,6 +123,12 @@ def _rubles(amount: Decimal) -> str:
     return str(Decimal(amount).quantize(Decimal("0.01")))
 
 
+def _callback_url(return_url: str, provider: str) -> str:
+    """Адрес нашего вебхука на том же домене, что и страница гостя."""
+    parts = urlsplit(return_url)
+    return f"{parts.scheme}://{parts.netloc}/api/payments/callback/{provider}/"
+
+
 def _description(payment) -> str:
     """Назначение платежа — то, что гость увидит в выписке."""
     return f"Заказ №{payment.order_id}" if payment.order_id else "Оплата"
@@ -130,6 +141,12 @@ class BaseAcquirer:
     title = "—"
     #: Какие доступы нужны этому банку (см. Field).
     fields: tuple[Field, ...] = ()
+    #: Тело ответа на уведомление, если банку нужно что-то особенное.
+    #: Пусто — обычный JSON.
+    ack: str = ""
+    #: Сами ли мы сообщаем банку адрес уведомлений (с каждым платежом).
+    #: Нет — владелец вписывает его в кабинете банка руками.
+    sends_callback_url: bool = False
 
     def __init__(self, credentials: dict | None = None) -> None:
         self._credentials = credentials or {}
@@ -254,23 +271,67 @@ class NoAcquirer(BaseAcquirer):
         raise AcquiringError("Онлайн-оплата у заведения не подключена")
 
 
+#: Корневой сертификат Минцифры. Т-Банк перевёл securepay на сертификаты
+#: Russian Trusted CA, а их нет ни в certifi, ни в образе python:slim —
+#: без этого файла любой запрос к банку падал бы на проверке TLS, и гость
+#: видел бы «Т-Касса недоступна». Доверяем ему только в запросах к
+#: Т-Банку, а не всему процессу.
+RUSSIAN_TRUSTED_ROOT = Path(__file__).resolve().parent / "certs" / "russian_trusted_root_ca.pem"
+
+
+@lru_cache(maxsize=1)
+def _russian_tls() -> ssl.SSLContext:
+    """Обычные корни (certifi) плюс корень Минцифры."""
+    context = ssl.create_default_context(cafile=certifi.where())
+    context.load_verify_locations(cafile=str(RUSSIAN_TRUSTED_ROOT))
+    return context
+
+
 class TBankAcquirer(BaseAcquirer):
-    """Т-Касса (Т-Банк).
+    """Т-Касса (Т-Банк), developer.tbank.ru/eacq.
 
     Подпись у Т-Кассы одна и та же в обе стороны: значения полей верхнего
     уровня сортируются по имени ключа, к ним добавляется пароль терминала,
     всё склеивается и берётся SHA-256. Поэтому одна функция _token()
     и подписывает наш запрос, и проверяет их уведомление.
+
+    Тестовый терминал (ключ оканчивается на DEMO) живёт на том же адресе,
+    что и боевой, — отдельного переключателя не нужно.
     """
 
     name = "tbank"
     title = "Т-Банк (Т-Касса)"
     api = "https://securepay.tinkoff.ru/v2"
+    #: Т-Банк считает уведомление доставленным, только если в ответ пришло
+    #: ровно «OK». На что-то другое повторяет его раз в час сутки, а потом
+    #: раз в сутки месяц.
+    ack = "OK"
+    #: Адрес уведомлений уходит банку с каждым платежом (NotificationURL),
+    #: прописывать его в кабинете не нужно.
+    sends_callback_url = True
+
     fields = (
         Field("terminal_key", "Ключ терминала", env="TBANK_TERMINAL_KEY",
-              hint="Из личного кабинета Т-Кассы, раздел «Терминалы»", secret=False),
+              hint="Кабинет Т-Бизнеса → Интернет-эквайринг → Магазины → Терминалы. "
+                   "Для проверки — тестовый терминал, его ключ оканчивается на DEMO",
+              secret=False),
         Field("password", "Пароль терминала", env="TBANK_PASSWORD"),
     )
+
+    #: Конечные статусы, при которых денег нет и не будет. Всё остальное —
+    #: «ещё в работе»: незнакомый статус безопаснее переждать, чем отменить
+    #: заказ, за который гость, возможно, уже заплатил.
+    FAILED = frozenset({
+        "REJECTED", "AUTH_FAIL", "CANCELED", "DEADLINE_EXPIRED", "ATTEMPTS_EXPIRED",
+        "REVERSED", "PARTIAL_REVERSED", "REFUNDED", "PARTIAL_REFUNDED",
+    })
+
+    #: Ошибки, по которым видно, что не так с ключами, а не с запросом.
+    BAD_KEYS = {
+        "501": "банк не знает такого терминала — проверьте ключ терминала.",
+        "204": "пароль не подходит к этому терминалу. Пароль берётся там же, "
+               "где ключ, — у тестового и боевого терминала они разные.",
+    }
 
     @property
     def terminal(self) -> str:
@@ -282,14 +343,30 @@ class TBankAcquirer(BaseAcquirer):
 
     def _token(self, data: dict) -> str:
         # В подпись идут только простые поля: вложенные объекты (Receipt,
-        # DATA) и сам Token исключаются — так описано у банка.
+        # DATA) и сам Token исключаются, null банк тоже пропускает.
         parts = {
             k: v for k, v in data.items()
-            if k != "Token" and not isinstance(v, (dict, list))
+            if k != "Token" and v is not None and not isinstance(v, (dict, list))
         }
         parts["Password"] = self.password
-        joined = "".join(str(parts[k]) for k in sorted(parts))
+        # Логическое значение банк пишет как в JSON — «true», а не «True».
+        # В уведомлении всегда есть Success, и с питоньим str() подпись
+        # не сошлась бы ни на одном настоящем уведомлении.
+        joined = "".join(
+            (("true" if v else "false") if isinstance(v, bool) else str(v))
+            for v in (parts[k] for k in sorted(parts))
+        )
         return hashlib.sha256(joined.encode()).hexdigest()
+
+    @classmethod
+    def _result(cls, external_id: str, status: str) -> Result:
+        return Result(
+            external_id=external_id,
+            # AUTHORIZED — деньги захолдированы, но не списаны. Заказ
+            # оплаченным считаем только после CONFIRMED.
+            success=status == "CONFIRMED",
+            pending=status != "CONFIRMED" and status not in cls.FAILED,
+        )
 
     def create(self, payment, *, return_url: str) -> str:
         self.require_configured()
@@ -302,16 +379,24 @@ class TBankAcquirer(BaseAcquirer):
             # после отказа, и повтор OrderId банк отклонит.
             "OrderId": str(payment.pk),
             "Description": _description(payment),
+            # Одностадийная оплата: заказ уже собран, держать холд и
+            # подтверждать вторым запросом незачем. Без этого поля решает
+            # настройка терминала, и при двухстадийной платёж навсегда
+            # застрял бы в AUTHORIZED.
+            "PayType": "O",
             "SuccessURL": return_url,
             "FailURL": return_url,
+            # Адрес уведомлений — с каждым платежом, а не из кабинета: на
+            # ЮKassa уведомление однажды не пришло вовсе, потому что адрес
+            # в кабинет никто не вписал. Домен тот же, что у страницы
+            # гостя, — по нему уведомление и находит заведение.
+            "NotificationURL": _callback_url(return_url, self.name),
         }
         body["Token"] = self._token(body)
 
-        data = self._post(f"{self.api}/Init", body)
+        data = self._post("Init", body)
         if not data.get("Success"):
-            raise AcquiringError(
-                data.get("Message") or data.get("Details") or "Банк отклонил платёж"
-            )
+            raise AcquiringError(self._reason(data, "Банк отклонил платёж"))
 
         payment.external_id = str(data["PaymentId"])
         payment.save(update_fields=["external_id", "updated_at"])
@@ -325,38 +410,69 @@ class TBankAcquirer(BaseAcquirer):
         if str(payload.get("TerminalKey")) != self.terminal:
             logger.warning("Т-Касса: уведомление с чужого терминала")
             return None
+        return self._result(str(payload.get("PaymentId", "")), str(payload.get("Status", "")))
 
-        status = str(payload.get("Status", ""))
-        return Result(
-            external_id=str(payload.get("PaymentId", "")),
-            # AUTHORIZED — деньги захолдированы, но не списаны. Заказ
-            # оплаченным считаем только после CONFIRMED.
-            success=status == "CONFIRMED",
-            pending=status in ("NEW", "FORM_SHOWED", "AUTHORIZING", "AUTHORIZED"),
-        )
+    def status(self, external_id: str) -> Result | None:
+        """GetState. Ошибку сети наружу не глушим — см. BaseAcquirer.status."""
+        self.require_configured()
+        body = {"TerminalKey": self.terminal, "PaymentId": str(external_id)}
+        body["Token"] = self._token(body)
+
+        data = self._post("GetState", body)
+        if not data.get("Success"):
+            raise AcquiringError(self._reason(data, "Т-Касса не назвала статус платежа"))
+        return self._result(str(external_id), str(data.get("Status", "")))
+
+    def check(self) -> None:
+        """Проверка ключей: CheckOrder по заказу, которого заведомо нет.
+
+        Денег не двигает и платежей не создаёт. Неверный терминал и
+        неверный пароль банк называет своими кодами — их и ловим. Любой
+        другой ответ (в том числе «заказ не найден») значит, что подпись
+        принята, то есть ключи верные.
+        """
+        self.require_configured()
+        self.check_format()
+        body = {"TerminalKey": self.terminal, "OrderId": "padacha-check"}
+        body["Token"] = self._token(body)
+
+        data = self._post("CheckOrder", body)
+        code = str(data.get("ErrorCode", ""))
+        if not data.get("Success") and code in self.BAD_KEYS:
+            raise AcquiringError(f"{self.title}: {self.BAD_KEYS[code]}")
 
     def refund(self, payment) -> str:
         """Cancel у Т-Кассы делает и отмену холда, и возврат списанного —
         банк сам выбирает по состоянию платежа. Сумму не передаём: без неё
-        возврат полный, а частичных мы и не делаем."""
+        возврат полный, а частичных мы и не делаем. Если к терминалу
+        подключена онлайн-касса, чек возврата банк пробьёт сам."""
         self.require_configured()
 
         body = {"TerminalKey": self.terminal, "PaymentId": str(payment.external_id)}
         body["Token"] = self._token(body)
 
-        data = self._post(f"{self.api}/Cancel", body)
+        data = self._post("Cancel", body)
         if not data.get("Success"):
-            raise AcquiringError(
-                data.get("Message") or data.get("Details") or "Банк отказал в возврате"
-            )
+            raise AcquiringError(self._reason(data, "Банк отказал в возврате"))
         return str(data.get("PaymentId") or payment.external_id)
 
-    def _post(self, url: str, body: dict) -> dict:
+    @staticmethod
+    def _reason(data: dict, fallback: str) -> str:
+        """Message у банка общий («Неверные параметры.»), суть — в Details."""
+        message = str(data.get("Message") or "").strip()
+        details = str(data.get("Details") or "").strip()
+        if message and details:
+            return f"{message} {details}"
+        return message or details or fallback
+
+    def _post(self, method: str, body: dict) -> dict:
         try:
-            response = httpx.post(url, json=body, timeout=TIMEOUT)
+            response = httpx.post(
+                f"{self.api}/{method}", json=body, timeout=TIMEOUT, verify=_russian_tls()
+            )
             response.raise_for_status()
             return response.json()
-        except httpx.HTTPError as e:
+        except (httpx.HTTPError, ValueError) as e:
             raise AcquiringError(f"Т-Касса недоступна: {e}") from e
 
 

@@ -10,6 +10,7 @@
 """
 import logging
 
+from django.http import HttpResponse
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -23,6 +24,14 @@ from .models import AcquiringCredentials, Payment
 from .services import apply_bank_result
 
 logger = logging.getLogger(__name__)
+
+
+def _ack(acquirer, *, ok: bool = True):
+    """Ответ банку. Т-Банку нужен ровно текст «OK» — на любой другой он
+    повторяет уведомление месяц, — остальным хватает кода 200."""
+    if acquirer.ack:
+        return HttpResponse(acquirer.ack, content_type="text/plain")
+    return Response({"ok": ok}, status=200)
 
 
 @api_view(["POST"])
@@ -41,33 +50,33 @@ def callback(request, provider: str):
     result = acquirer.read_callback(payload, dict(request.headers))
     if result is None:
         logger.warning("Уведомление %s не прошло проверку", provider)
-        return Response({"ok": False}, status=200)
+        return _ack(acquirer, ok=False)
 
     # Платёж ещё в работе: гость открыл страницу банка, но не заплатил.
     # Заказ трогать рано — иначе отменим его на полпути.
     if result.pending:
-        return Response({"ok": True})
+        return _ack(acquirer)
 
     payment = Payment.objects.filter(
         external_id=result.external_id, provider=acquirer.name
     ).first()
     if payment is None:
         logger.warning("Уведомление %s: платёж %s не найден", provider, result.external_id)
-        return Response({"ok": False}, status=200)
+        return _ack(acquirer, ok=False)
 
     # Банки повторяют уведомления, и повтор по уже закрытому платежу
     # переписал бы closed_at и closed_by. Той же строкой отсекается и
     # гонка с опросом банка: кто пришёл вторым, тот ничего не делает
     # (проверка внутри — под блокировкой строки платежа).
     if not apply_bank_result(payment, result):
-        return Response({"ok": True})
+        return _ack(acquirer)
 
     logger.info(
         "Оплата %s: платёж %s → %s (заказ %s)",
         provider, result.external_id,
         "успех" if result.success else "отказ", payment.order_id,
     )
-    return Response({"ok": True})
+    return _ack(acquirer)
 
 
 class AcquiringSettingsView(APIView):
@@ -163,6 +172,9 @@ class AcquiringSettingsView(APIView):
                 if site.acquiring != NoAcquirer.name
                 else ""
             ),
+            # Банк сам получает адрес с каждым платежом — в кабинет его
+            # вписывать не нужно, показываем лишь для сверки.
+            "callback_auto": acquirer.sends_callback_url,
             "banks": [
                 {
                     "name": cls.name,

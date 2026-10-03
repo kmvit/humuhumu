@@ -35,6 +35,8 @@ type State = {
   filled: Record<string, boolean>;
   /** Адрес, который владелец вписывает в кабинете банка (пусто — банка нет). */
   callback_url: string;
+  /** Банк получает адрес с каждым платежом — в кабинет вписывать не нужно. */
+  callback_auto: boolean;
   banks: Bank[];
 };
 
@@ -265,7 +267,9 @@ export default function OnlinePayment() {
             <div className="rule-top mt-3 pt-3">
               <span className="label">Адрес для уведомлений банка</span>
               <p className="muted sm m-0">
-                Впишите его в кабинете банка — тогда заказ закроется сразу после оплаты.
+                {state.callback_auto
+                  ? "Мы сообщаем его банку с каждым платежом — в кабинете ничего вписывать не нужно."
+                  : "Впишите его в кабинете банка — тогда заказ закроется сразу после оплаты."}
               </p>
               <div className="wrap mt-2">
                 <code className="sm" style={{ wordBreak: "break-all", alignSelf: "center" }}>

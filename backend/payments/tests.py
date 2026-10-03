@@ -60,7 +60,13 @@ class AcquirerChoiceTests(TestCase):
 
 
 class TBankSignatureTests(TestCase):
-    """Подпись Т-Кассы — единственное, что отличает банк от подделки."""
+    """Подпись Т-Кассы — единственное, что отличает банк от подделки.
+
+    Эталоны взяты из документации банка (developer.tbank.ru/eacq), а не
+    посчитаны нашей же функцией: раньше тест подписывал уведомление тем
+    же _token(), что и проверял, и не заметил, что ни одно настоящее
+    уведомление подпись не проходит.
+    """
 
     def setUp(self):
         patcher = mock.patch.dict(
@@ -70,21 +76,43 @@ class TBankSignatureTests(TestCase):
         self.addCleanup(patcher.stop)
         self.acq = TBankAcquirer()
 
-    def test_signature_roundtrip(self):
-        payload = {
-            "TerminalKey": "term-1",
-            "OrderId": "7",
-            "Success": True,
-            "Status": "CONFIRMED",
-            "PaymentId": "999",
-            "Amount": 12000,
+    def test_request_token_matches_bank_example(self):
+        """Пример «Сформировать токен» для Init: вложенные DATA и Receipt не в счёт."""
+        acq = TBankAcquirer({"terminal_key": "MerchantTerminalKey", "password": "11111111111111"})
+        body = {
+            "TerminalKey": "MerchantTerminalKey",
+            "Amount": 19200,
+            "OrderId": "00000",
+            "Description": "Подарочная карта на 1000 рублей",
+            "DATA": {"Phone": "+71234567890", "Email": "a@test.com"},
+            "Receipt": {"Email": "a@test.ru", "Taxation": "osn", "Items": []},
         }
-        payload["Token"] = self.acq._token(payload)
+        self.assertEqual(
+            acq._token(body),
+            "72dd466f8ace0a37a1f740ce5fb78101712bc0665d91a8108c7c8a0ccd426db2",
+        )
 
-        result = self.acq.read_callback(payload, {})
+    def test_real_notification_is_accepted(self):
+        """Пример уведомления из документации — с логическим Success: true."""
+        acq = TBankAcquirer({"terminal_key": "1234567890DEMO", "password": "11111111111"})
+        payload = {
+            "TerminalKey": "1234567890DEMO",
+            "OrderId": "000000",
+            "Success": True,
+            "Status": "AUTHORIZED",
+            "PaymentId": "0000000",
+            "ErrorCode": "0",
+            "Amount": "1111",
+            "CardId": "000000",
+            "Pan": "200000******0000",
+            "ExpDate": "1111",
+            "RebillId": "000000",
+            "Token": "1c0964277d0213349243065a0d5b838b8e90d2d25f740d0f2767836e710e80c8",
+        }
+        result = acq.read_callback(payload, {})
         self.assertIsNotNone(result)
-        self.assertTrue(result.success)
-        self.assertEqual(result.external_id, "999")
+        self.assertEqual(result.external_id, "0000000")
+        self.assertTrue(result.pending)
 
     def test_forged_notification_rejected(self):
         payload = {
@@ -103,11 +131,101 @@ class TBankSignatureTests(TestCase):
 
     def test_authorized_is_not_paid_yet(self):
         """AUTHORIZED — деньги захолдированы, но не списаны."""
-        payload = {"TerminalKey": "term-1", "PaymentId": "5", "Status": "AUTHORIZED"}
-        payload["Token"] = self.acq._token(payload)
-        result = self.acq.read_callback(payload, {})
+        result = TBankAcquirer._result("5", "AUTHORIZED")
         self.assertFalse(result.success)
         self.assertTrue(result.pending)
+
+    def test_statuses(self):
+        self.assertTrue(TBankAcquirer._result("1", "CONFIRMED").success)
+        for failed in ("REJECTED", "AUTH_FAIL", "CANCELED", "DEADLINE_EXPIRED"):
+            result = TBankAcquirer._result("1", failed)
+            self.assertFalse(result.success or result.pending, failed)
+        # Промежуточные и незнакомые — пережидаем, а не отменяем заказ.
+        for waiting in ("NEW", "FORM_SHOWED", "3DS_CHECKING", "CONFIRMING", "НЕЧТО"):
+            self.assertTrue(TBankAcquirer._result("1", waiting).pending, waiting)
+
+
+class TBankRequestsTests(TestCase):
+    """Что уходит в банк и как читается ответ (сеть подменена)."""
+
+    def setUp(self):
+        self.acq = TBankAcquirer({"terminal_key": "term-1", "password": "secret"})
+
+    def test_init_is_one_stage_and_names_our_webhook(self):
+        payment = Payment.objects.create(
+            purpose=Payment.Purpose.ORDER, amount=Decimal("240"), provider="tbank"
+        )
+        answer = {"Success": True, "PaymentId": "777", "PaymentURL": "https://pay.example/777"}
+        with mock.patch.object(self.acq, "_post", return_value=answer) as post:
+            url = self.acq.create(payment, return_url="https://cafe.padacha.ru/?token=abc")
+
+        self.assertEqual(url, "https://pay.example/777")
+        method, body = post.call_args.args
+        self.assertEqual(method, "Init")
+        self.assertEqual(body["Amount"], 24000)
+        self.assertEqual(body["PayType"], "O")
+        self.assertEqual(
+            body["NotificationURL"], "https://cafe.padacha.ru/api/payments/callback/tbank/"
+        )
+        self.assertEqual(body["Token"], self.acq._token(body))
+        payment.refresh_from_db()
+        self.assertEqual(payment.external_id, "777")
+
+    def test_bank_refusal_reason_reaches_staff(self):
+        payment = Payment.objects.create(
+            purpose=Payment.Purpose.ORDER, amount=Decimal("0.5"), provider="tbank"
+        )
+        answer = {
+            "Success": False, "ErrorCode": "251", "Message": "Неверные параметры.",
+            "Details": "Неверная сумма. Сумма должна быть больше или равна 100 копеек.",
+        }
+        with mock.patch.object(self.acq, "_post", return_value=answer):
+            with self.assertRaisesMessage(AcquiringError, "100 копеек"):
+                self.acq.create(payment, return_url="https://cafe.padacha.ru/")
+
+    def test_status_asks_get_state(self):
+        with mock.patch.object(
+            self.acq, "_post", return_value={"Success": True, "Status": "CONFIRMED"}
+        ) as post:
+            result = self.acq.status("777")
+        self.assertEqual(post.call_args.args[0], "GetState")
+        self.assertTrue(result.success)
+        self.assertEqual(result.external_id, "777")
+
+    def test_check_refuses_wrong_password(self):
+        answer = {"Success": False, "ErrorCode": "204", "Message": "Неверные параметры.",
+                  "Details": "Неверный токен. Проверьте пару TerminalKey/SecretKey."}
+        with mock.patch.object(self.acq, "_post", return_value=answer):
+            with self.assertRaisesMessage(AcquiringError, "пароль не подходит"):
+                self.acq.check()
+
+    def test_check_refuses_unknown_terminal(self):
+        answer = {"Success": False, "ErrorCode": "501", "Details": "Терминал не найден."}
+        with mock.patch.object(self.acq, "_post", return_value=answer):
+            with self.assertRaisesMessage(AcquiringError, "банк не знает такого терминала"):
+                self.acq.check()
+
+    def test_check_accepts_keys_when_only_the_order_is_missing(self):
+        """Подпись принята, просто заказа нет — значит, ключи верные."""
+        answer = {"Success": False, "ErrorCode": "7", "Details": "Заказ не найден."}
+        with mock.patch.object(self.acq, "_post", return_value=answer) as post:
+            self.acq.check()
+        self.assertEqual(post.call_args.args[0], "CheckOrder")
+
+    def test_bank_certificate_is_trusted(self):
+        """Т-Банк на сертификатах Минцифры — без их корня TLS не сойдётся."""
+        from .acquiring import _russian_tls
+
+        names = [str(c["subject"]) for c in _russian_tls().get_ca_certs()]
+        self.assertTrue(any("Russian Trusted Root CA" in n for n in names))
+        with mock.patch("payments.acquiring.httpx.post") as post:
+            post.return_value = httpx.Response(
+                200,
+                json={"Success": True, "Status": "NEW"},
+                request=httpx.Request("POST", "https://securepay.tinkoff.ru/v2/GetState"),
+            )
+            self.acq.status("1")
+        self.assertIs(post.call_args.kwargs["verify"], _russian_tls())
 
 
 class SberCallbackTests(TestCase):
@@ -240,7 +358,9 @@ class CallbackEndpointTests(APITestCase):
             "TerminalKey": "term-1",
             "PaymentId": "999",
             "OrderId": str(self.payment.pk),
+            "Success": True,
             "Status": status,
+            "ErrorCode": "0",
             "Amount": 24000,
         }
         payload["Token"] = acq._token(payload)
@@ -249,7 +369,10 @@ class CallbackEndpointTests(APITestCase):
         )
 
     def test_notification_closes_order(self):
-        self.assertEqual(self.notify().status_code, 200)
+        response = self.notify()
+        self.assertEqual(response.status_code, 200)
+        # Т-Банку нужен ровно «OK», иначе он повторяет уведомление месяц.
+        self.assertEqual(response.content, b"OK")
         self.order.refresh_from_db()
         self.payment.refresh_from_db()
         self.assertEqual(self.order.status, Order.Status.PAID)
@@ -1081,3 +1204,4 @@ class RefundTests(APITestCase):
 
         milk.refresh_from_db()
         self.assertEqual(milk.quantity, Decimal("0.000"))
+
