@@ -18,7 +18,7 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from catalog.models import Category, Modifier, ModifierGroup, Product, ProductVariant
-from core.models import SiteSettings
+from core.models import Organization, SiteSettings
 from orders.models import Order, OrderItemModifier
 from users.models import User
 
@@ -202,7 +202,8 @@ class PayAtKassaTests(KassaBase):
         self.aqsi.key_ok = False
         response = self.to_kassa(order)
         self.assertEqual(response.status_code, 400)
-        self.assertIn("API-ключ", response.data["detail"])
+        # Причина («не приняла API-ключ») — владельцу, не гостю: см. KassaRefusalTests.
+        self.assertNotIn("API-ключ", response.data["detail"])
         self.assertFalse(Payment.objects.filter(order=order).exists())
 
 
@@ -501,3 +502,55 @@ class BaristaOrderKassaTests(KassaBase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["status"], Order.Status.PAID)
         self.assertEqual(Payment.objects.filter(order=order, status="succeeded").count(), 1)
+
+
+class KassaRefusalTests(KassaBase):
+    """Касса не приняла заказ: гостю — что делать, владельцу — почему."""
+
+    def setUp(self):
+        super().setUp()
+        self.aqsi.key_ok = False  # ключ отозвали в кабинете aQsi
+        self.owner = User.objects.create_user(
+            "owner", password="Sh4-owner", role=User.Role.ADMIN,
+            organization=Organization.objects.order_by("pk").first(),
+        )
+
+    def panel(self):
+        self.client.force_authenticate(self.owner)
+        try:
+            return self.client.get("/api/kassa/").data
+        finally:
+            self.client.force_authenticate(None)
+
+    def test_guest_gets_a_plain_instruction(self):
+        order = self.place()
+        response = self.to_kassa(order)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Подойдите к баристе", response.data["detail"])
+        self.assertNotIn("ключ", response.data["detail"])
+        # Заказ записан и ждёт оплаты — бариста отправит его сам.
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.UNPAID)
+        self.assertFalse(Payment.objects.filter(order=order).exists())
+
+    def test_staff_still_gets_the_reason(self):
+        """Бариста отправляет на кассу сам — ему причина нужна, чтобы позвать владельца."""
+        from .services import ProviderRefused, start_terminal_payment
+
+        order = self.place()
+        with self.assertRaises(ProviderRefused) as caught:
+            start_terminal_payment(order)
+        self.assertIn("ключ", str(caught.exception))
+
+    def test_owner_sees_the_reason(self):
+        order = self.place()
+        self.to_kassa(order)
+        error = self.panel()["last_error"]
+        self.assertIn("ключ", error["error"])
+        self.assertEqual(error["order"], order.pk)
+
+    def test_error_disappears_when_kassa_works_again(self):
+        self.to_kassa(self.place())
+        self.aqsi.key_ok = True
+        self.assertEqual(self.to_kassa(self.place()).status_code, 200)
+        self.assertIsNone(self.panel()["last_error"])

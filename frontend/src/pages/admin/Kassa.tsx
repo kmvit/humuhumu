@@ -33,6 +33,8 @@ type State = {
   kassas: KassaKind[];
   /** Синхронизация терминала через кабинет кассы; null — не настроена. */
   sync: { synced_at: string | null; attempted_at: string | null; error: string } | null;
+  /** Последний отказ кассы, после которого заказы на неё не уходили. */
+  last_error: { error: string; at: string; order: number | null } | null;
 };
 
 const when = (iso: string) =>
@@ -190,6 +192,24 @@ export default function Kassa() {
                 </button>
               ))}
           </div>
+
+          {/* Гость на «Оплатить на кассе» видит лишь «подойдите к баристе» —
+              причину отказа кассы знает только владелец, отсюда. Пропадает
+              сама, когда заказ снова уйдёт на кассу или касса примет ключ. */}
+          {same && state.last_error && (
+            <div className="rule-top mt-3 pt-3">
+              <strong className="title">Заказы не уходят на кассу</strong>
+              <p className="muted sm m-0">
+                {when(state.last_error.at)}
+                {state.last_error.order ? `, заказ №${state.last_error.order}` : ""} — касса ответила:
+              </p>
+              <p className="error sm m-0">{state.last_error.error}</p>
+              <p className="muted sm mt-2 m-0">
+                Гость видит «Подойдите к баристе», заказ ждёт в «Ждут оплаты». Проверьте ключ
+                ниже или кабинет кассы; сообщение исчезнет, когда заказ снова уйдёт на кассу.
+              </p>
+            </div>
+          )}
 
           {same && state.sync && (
             <div className="rule-top mt-3">

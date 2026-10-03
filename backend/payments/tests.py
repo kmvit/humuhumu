@@ -1205,3 +1205,89 @@ class RefundTests(APITestCase):
         milk.refresh_from_db()
         self.assertEqual(milk.quantity, Decimal("0.000"))
 
+
+class GuestPaymentErrorTests(APITestCase):
+    """Отказ банка: гостю — что делать, владельцу — почему.
+
+    Онлайн-оплату запускает только гость. Раньше текст банка доходил до
+    него как есть («Неверные параметры…», ошибка TLS, «введите ключи в
+    панели»), а заведение об отказе не узнавало вовсе.
+    """
+
+    def setUp(self):
+        self.order = Order.objects.create(
+            status=Order.Status.OPEN, total=Decimal("290"), public_token=uuid.uuid4()
+        )
+        site = SiteSettings.load()
+        site.acquiring = SiteSettings.Acquiring.YOOKASSA
+        site.online_payment_on = True
+        site.save()
+        env = mock.patch.dict(
+            "os.environ", {"YOOKASSA_SHOP_ID": "100500", "YOOKASSA_SECRET_KEY": SECRET}
+        )
+        env.start()
+        self.addCleanup(env.stop)
+        self.owner = User.objects.create_user(
+            "owner", password="Sh4-owner", role=User.Role.ADMIN,
+            organization=Organization.objects.order_by("pk").first(),
+        )
+
+    def pay(self):
+        return self.client.post(
+            "/api/orders/pay_online/", {"token": str(self.order.public_token)}, format="json"
+        )
+
+    def refuse(self, reason="Incorrect password format in the Authorization header"):
+        return mock.patch.object(
+            YooKassaAcquirer, "_post", side_effect=AcquiringError(reason)
+        )
+
+    def panel(self):
+        self.client.force_authenticate(self.owner)
+        try:
+            return self.client.get("/api/acquiring/").data
+        finally:
+            self.client.force_authenticate(None)
+
+    def test_guest_does_not_see_the_bank_reason(self):
+        with self.refuse():
+            response = self.pay()
+        self.assertEqual(response.status_code, 400)
+        self.assertNotIn("Authorization", response.data["detail"])
+        self.assertIn("оплатите на месте", response.data["detail"])
+        # Пустышка в реестре не осталась.
+        self.assertFalse(Payment.objects.filter(order=self.order).exists())
+
+    def test_owner_sees_the_reason_and_the_order(self):
+        """Запись переживает откат транзакции, в которой банк отказал."""
+        with self.refuse():
+            self.pay()
+        error = self.panel()["last_error"]
+        self.assertIn("Authorization", error["error"])
+        self.assertEqual(error["order"], self.order.pk)
+
+    def test_missing_keys_are_reported_to_owner_not_guest(self):
+        with mock.patch.dict("os.environ", {"YOOKASSA_SECRET_KEY": ""}):
+            response = self.pay()
+        self.assertNotIn("панели", response.data["detail"])
+        self.assertIn("доступы", self.panel()["last_error"]["error"])
+
+    def test_error_disappears_after_a_payment_goes_through(self):
+        with self.refuse():
+            self.pay()
+        answer = {"id": "p-1", "confirmation": {"confirmation_url": "https://pay.example/1"}}
+        with mock.patch.object(YooKassaAcquirer, "_post", return_value=answer):
+            self.assertEqual(self.pay().status_code, 200)
+        self.assertIsNone(self.panel()["last_error"])
+
+    def test_error_disappears_when_owner_saves_keys_the_bank_accepts(self):
+        with self.refuse():
+            self.pay()
+        self.client.force_authenticate(self.owner)
+        with mock.patch.object(YooKassaAcquirer, "_get", return_value={}):
+            data = self.client.put(
+                "/api/acquiring/",
+                {"provider": "yookassa", "values": {"shop_id": "100500", "secret_key": SECRET}},
+                format="json",
+            ).data
+        self.assertIsNone(data["last_error"])

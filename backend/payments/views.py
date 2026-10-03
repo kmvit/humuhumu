@@ -21,7 +21,7 @@ from users.permissions import IsAdminRole, IsStaffRole
 
 from .acquiring import AcquiringError, NoAcquirer, acquirer_class, acquirers, get_acquirer
 from .models import AcquiringCredentials, Payment
-from .services import apply_bank_result
+from .services import apply_bank_result, note_payment_ok, payment_health
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +154,9 @@ class AcquiringSettingsView(APIView):
             row = AcquiringCredentials(provider=provider)
         row.set_values(stored)
         row.save()
+        # Банк ключи принял — прежняя ошибка, скорее всего, была в них.
+        # Не убрать её значило бы пугать владельца уже починенным.
+        note_payment_ok(provider)
 
     def _state(self, request) -> dict:
         site = SiteSettings.load()
@@ -175,6 +178,13 @@ class AcquiringSettingsView(APIView):
             # Банк сам получает адрес с каждым платежом — в кабинет его
             # вписывать не нужно, показываем лишь для сверки.
             "callback_auto": acquirer.sends_callback_url,
+            # Последний отказ банка, после которого гости так и не смогли
+            # перейти к оплате. Гость причину не видит — только владелец.
+            "last_error": (
+                payment_health(site.acquiring)
+                if site.acquiring != NoAcquirer.name
+                else None
+            ),
             "banks": [
                 {
                     "name": cls.name,
@@ -236,6 +246,7 @@ class KassaSettingsView(APIView):
                 row = AcquiringCredentials(provider=provider)
             row.set_values(stored)
             row.save()
+            note_payment_ok(provider)
 
         site = SiteSettings.load()
         if provider != site.kassa:
@@ -267,6 +278,9 @@ class KassaSettingsView(APIView):
             # Синхронизация терминала через кабинет: null — не настроена.
             "sync": sync_state() if chosen else None,
             "filled": provider.filled() if provider else {},
+            # Последний отказ кассы, после которого заказы на неё так и не
+            # уходили. Гость на «Оплатить на кассе» причину не видит.
+            "last_error": payment_health(site.kassa) if chosen else None,
             "values": {
                 f.key: provider.value(f.key)
                 for f in (provider.fields if provider else ())

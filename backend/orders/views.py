@@ -31,7 +31,9 @@ from .services import (
 )
 from payments.models import Payment
 from payments.services import (
+    GUEST_KASSA_FAILED,
     PaymentError,
+    ProviderRefused,
     apply_payment_result,
     drop_kassa_orders,
     record_manual_payment,
@@ -377,6 +379,12 @@ class OrderViewSet(viewsets.ModelViewSet):
             )
         try:
             start_terminal_payment(order)
+        except ProviderRefused:
+            # Причину кассы («не приняла API-ключ») гостю не показываем —
+            # она в логе и в панели владельца. Гостю — что делать дальше.
+            return Response(
+                {"detail": GUEST_KASSA_FAILED}, status=status.HTTP_400_BAD_REQUEST
+            )
         except PaymentError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         order.refresh_from_db()

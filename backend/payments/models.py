@@ -191,3 +191,38 @@ class KassaSync(TenantModel):
 
     def __str__(self):
         return f"Синхронизация {self.provider}"
+
+
+class PaymentHealth(TenantModel):
+    """Удаётся ли гостям перейти к оплате — для панели владельца.
+
+    Отказ банка (онлайн-оплата) или кассы («Оплатить на кассе») гость
+    видит общей фразой: причина ему ни к чему. Заведение же иначе не
+    узнало бы о нём вовсе — гость молча платит наличными или уходит.
+    Поэтому последний отказ и последний удачный переход храним здесь:
+    протухший ключ или заблокированный терминал владелец увидит в панели,
+    а не по жалобам.
+
+    Строка на заведение и провайдера (банк или касса), как у доступов:
+    сменили банк — ошибка прежнего к новому не относится.
+    """
+
+    provider = models.CharField("Банк или касса", max_length=32)
+    error = models.CharField("Последняя ошибка", max_length=300, blank=True, default="")
+    error_at = models.DateTimeField("Когда", null=True, blank=True)
+    #: Номер заказа, на котором случился отказ, — чтобы найти его в логах.
+    error_order = models.PositiveIntegerField("Заказ", null=True, blank=True)
+    ok_at = models.DateTimeField("Последний удачный переход к оплате", null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "provider"],
+                name="uniq_payment_health_per_org",
+            ),
+        ]
+        verbose_name = "Состояние приёма оплаты"
+        verbose_name_plural = "Состояние приёма оплаты"
+
+    def __str__(self):
+        return f"Приём оплаты {self.provider}"

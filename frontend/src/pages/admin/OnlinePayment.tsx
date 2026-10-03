@@ -37,10 +37,15 @@ type State = {
   callback_url: string;
   /** Банк получает адрес с каждым платежом — в кабинет вписывать не нужно. */
   callback_auto: boolean;
+  /** Последний отказ банка, после которого оплата ещё не проходила. */
+  last_error: { error: string; at: string; order: number | null } | null;
   banks: Bank[];
 };
 
 const NONE = "none";
+
+const when = (iso: string) =>
+  new Date(iso).toLocaleString("ru", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
 
 export default function OnlinePayment() {
   const notify = useToast();
@@ -197,6 +202,25 @@ export default function OnlinePayment() {
             Пока не работают ни оплата картой, ни касса, заказы принимаются как раньше —
             платить гостю было бы нечем.
           </p>
+        )}
+
+        {/* Отказ банка гость видит общей фразой «не получилось перейти к
+            оплате» — причину знает только владелец, отсюда. Иначе протухший
+            ключ находился бы по жалобам гостей. Пропадает сама, как только
+            следующая оплата пройдёт или банк примет новые ключи. */}
+        {state.last_error && state.provider === provider && (
+          <div className="rule-top mt-3 pt-3">
+            <strong className="title">Гости не могут перейти к оплате</strong>
+            <p className="muted sm m-0">
+              {when(state.last_error.at)}
+              {state.last_error.order ? `, заказ №${state.last_error.order}` : ""} — банк ответил:
+            </p>
+            <p className="error sm m-0">{state.last_error.error}</p>
+            <p className="muted sm mt-2 m-0">
+              Гость видит «Не получилось перейти к оплате» и платит на месте. Проверьте
+              ключи ниже или кабинет банка; сообщение исчезнет, когда оплата снова пройдёт.
+            </p>
+          </div>
         )}
 
         <div className="rule-top mt-3">

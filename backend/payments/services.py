@@ -443,7 +443,14 @@ def start_terminal_payment(order: Order, method: str = Payment.Method.CARD) -> P
         # Пустышку в реестре не оставляем: она висела бы «создан» и
         # опрашивалась бы у кассы, которая о ней не знает.
         payment.delete()
-        raise PaymentError(str(e)) from e
+        logger.warning(
+            "Заказ %s не ушёл на кассу %s: %s", order.pk, provider.name, e
+        )
+        # Владельцу — в панель «Касса»: бариста ошибку видит, а гость,
+        # нажавший «Оплатить на кассе», — только общую фразу.
+        note_payment_error(provider.name, str(e), order)
+        raise ProviderRefused(provider.name, str(e)) from e
+    note_payment_ok(provider.name)
     if order.status == Order.Status.OPEN:
         order.status = Order.Status.AWAITING
         order.save(update_fields=["status"])
@@ -564,9 +571,41 @@ def settle_kassa(order: Order) -> None:
             logger.exception("Не удалось довести платёж %s", payment.pk)
 
 
-@transaction.atomic
+class ProviderRefused(PaymentError):
+    """Банк или касса не дали перейти к оплате.
+
+    Текст — причина провайдера: сотруднику он нужен, гостю — нет. Гостевые
+    ручки ловят это исключение отдельно и отвечают своей фразой.
+    """
+
+    def __init__(self, provider: str, reason: str) -> None:
+        super().__init__(reason)
+        self.provider = provider
+
+
 def start_online_payment(order: Order, *, return_url: str) -> tuple[Payment, str]:
-    """Оплата картой онлайн: создать платёж у банка и вернуть ссылку для гостя.
+    """Оплата картой онлайн для гостя — с ошибками, понятными гостю.
+
+    Отказ банка запоминается для владельца уже ПОСЛЕ отката транзакции:
+    внутри неё запись откатилась бы вместе с платежом.
+    """
+    try:
+        return _start_online_payment(order, return_url=return_url)
+    except ProviderRefused as e:
+        logger.warning(
+            "Онлайн-оплата не началась: заказ %s, %s ₽, банк %s — %s",
+            order.pk, order.payable, e.provider, e,
+        )
+        note_payment_error(e.provider, str(e), order)
+        # Причину банка гостю не показываем: «Неверные параметры» или
+        # ошибка TLS ему ничего не скажут, а выдают внутренности. Она в
+        # логе и в панели владельца, гостю — что делать дальше.
+        raise PaymentError(GUEST_PAYMENT_FAILED) from e
+
+
+@transaction.atomic
+def _start_online_payment(order: Order, *, return_url: str) -> tuple[Payment, str]:
+    """Создать платёж у банка и вернуть ссылку для гостя.
 
     Заказ в «к оплате» здесь НЕ переводим, в отличие от терминала: гость
     может закрыть страницу банка и вернуться платить наличными, а заказ,
@@ -585,7 +624,7 @@ def start_online_payment(order: Order, *, return_url: str) -> tuple[Payment, str
 
     acquirer = get_acquirer()
     if not acquirer.configured():
-        raise PaymentError("Онлайн-оплата у заведения не подключена")
+        raise ProviderRefused(acquirer.name, "Не заданы доступы к банку")
 
     payment = Payment.objects.create(
         purpose=Payment.Purpose.ORDER,
@@ -605,8 +644,70 @@ def start_online_payment(order: Order, *, return_url: str) -> tuple[Payment, str
         # Платёж-пустышку не оставляем: он бы висел в реестре как
         # «создан» и портил сверку с банком.
         payment.delete()
-        raise PaymentError(str(e)) from e
+        raise ProviderRefused(acquirer.name, str(e)) from e
+    note_payment_ok(acquirer.name)
     return payment, url
+
+
+#: Что видит гость, если банк не дал перейти к оплате.
+GUEST_PAYMENT_FAILED = (
+    "Не получилось перейти к оплате. Попробуйте ещё раз или оплатите на месте."
+)
+
+#: Что видит гость, если заказ не ушёл на кассу. Заказ при этом записан и
+#: ждёт в «Ждут оплаты» — бариста отправит его сам.
+GUEST_KASSA_FAILED = (
+    "Не получилось отправить заказ на кассу. Подойдите к баристе и назовите номер заказа."
+)
+
+
+def note_payment_error(provider: str, error: str, order: Order | None = None) -> None:
+    """Запомнить отказ банка или кассы для панели владельца (см. PaymentHealth).
+
+    Сбой записи не должен заслонять сам отказ: гость всё равно получит
+    свою фразу, а причина останется в логе.
+    """
+    from .models import PaymentHealth
+
+    try:
+        PaymentHealth.objects.update_or_create(
+            provider=provider,
+            defaults={
+                "error": error[:300],
+                "error_at": timezone.now(),
+                "error_order": order.pk if order else None,
+            },
+        )
+    except Exception:
+        logger.exception("Не удалось записать ошибку онлайн-оплаты")
+
+
+def note_payment_ok(provider: str) -> None:
+    """Банк или касса приняли платёж — прежняя ошибка, если была, позади."""
+    from .models import PaymentHealth
+
+    try:
+        PaymentHealth.objects.update_or_create(
+            provider=provider, defaults={"ok_at": timezone.now()}
+        )
+    except Exception:
+        logger.exception("Не удалось записать удачную онлайн-оплату")
+
+
+def payment_health(provider: str) -> dict | None:
+    """Последний отказ банка или кассы, если после него оплата не проходила.
+
+    Ошибку, за которой уже были удачные переходы к оплате, не показываем:
+    это был разовый сбой, и владельцу чинить нечего.
+    """
+    from .models import PaymentHealth
+
+    row = PaymentHealth.objects.filter(provider=provider).first()
+    if row is None or not row.error_at:
+        return None
+    if row.ok_at and row.ok_at > row.error_at:
+        return None
+    return {"error": row.error, "at": row.error_at, "order": row.error_order}
 
 
 @transaction.atomic
