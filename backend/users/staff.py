@@ -10,7 +10,8 @@ admin) заводит людей, меняет им пароли и увольн
 - суперпользователей не видно и не тронуть: это наш, «Падачи», доступ
   для поддержки, владелец заведения его не редактирует;
 - увольнение — деактивация, а не удаление: у сотрудника остаются смены,
-  заказы и выплаты, и удаление порвало бы историю.
+  заказы и выплаты, и удаление порвало бы историю. Удалить насовсем можно
+  только того, за кем истории нет — заведённого по ошибке или с опечаткой.
 """
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -101,8 +102,13 @@ class StaffViewSet(viewsets.ModelViewSet):
 
     serializer_class = StaffSerializer
     permission_classes = [IsAdminRole]
-    # Удаления нет намеренно: увольнение — это is_active=False (см. dismiss).
-    http_method_names = ["get", "post", "patch", "head", "options"]
+    # Удаление — только для записей без истории (см. destroy); у кого
+    # история есть, того увольняют: is_active=False (см. dismiss).
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    #: Связи, которые историей не считаются: кошелёк и бонусный счёт
+    #: заводятся сигналом каждому пользователю, журнал админки — служебный.
+    NOT_HISTORY = {"wallet", "loyalty", "logentry"}
 
     def get_queryset(self):
         # Суперпользователи — доступ поддержки «Падачи»; заведение их не
@@ -123,11 +129,39 @@ class StaffViewSet(viewsets.ModelViewSet):
 
     def partial_update(self, request, *args, **kwargs):
         user = self.get_object()
-        # Смена пароля самому себе — единственное безопасное самодействие.
-        touches_more = set(request.data) - {"password"}
+        # Себе можно поменять пароль, имя и логин; роль и доступ — нельзя.
+        touches_more = set(request.data) - {"password", "name", "username"}
         if touches_more and (blocked := self._guard_self(user)):
             return blocked
         return super().partial_update(request, *args, **kwargs)
+
+    def _has_history(self, user) -> bool:
+        """Есть ли за человеком смены, заказы, выплаты, приходы и т.п.
+
+        Проверяем все обратные связи разом, а не перечнем: появится новая
+        таблица со ссылкой на сотрудника — она сама начнёт защищать запись.
+        """
+        for rel in user._meta.related_objects:
+            if rel.name in self.NOT_HISTORY or rel.one_to_one:
+                continue
+            if rel.related_model._base_manager.filter(**{rel.field.name: user}).exists():
+                return True
+        return False
+
+    def destroy(self, request, *args, **kwargs):
+        user = self.get_object()
+        if blocked := self._guard_self(user):
+            return blocked
+        if self._has_history(user):
+            return Response(
+                {
+                    "detail": "У сотрудника есть смены или заказы — удалить нельзя, "
+                    "иначе пропадёт история. Его можно уволить."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        user.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=["post"])
     def dismiss(self, request, pk=None):

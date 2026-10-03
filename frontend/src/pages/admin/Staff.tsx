@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { get, patch, post, ApiError } from "../../api";
+import { del, get, patch, post, ApiError } from "../../api";
 import Icon from "../../components/Icon";
 import Modal from "../../components/ui/Modal";
 import { useToast } from "../../components/ui/Toast";
@@ -9,7 +9,8 @@ import type { Role, StaffMember } from "../../types";
  *
  * Смысл раздела — чтобы заведению не выдавать Django-админку: логины
  * персоналу владелец заводит сам. Уволенные не удаляются, а прячутся под
- * переключателем: у человека остаются смены и заказы.
+ * переключателем: у человека остаются смены и заказы. Удалить насовсем
+ * можно только запись без истории — заведённую по ошибке.
  */
 
 const ROLES: { key: StaffRole; name: string; note: string }[] = [
@@ -21,7 +22,14 @@ const ROLES: { key: StaffRole; name: string; note: string }[] = [
 ];
 
 type StaffRole = Exclude<Role, "client">;
-type Draft = { username: string; name: string; role: StaffRole; password: string };
+// id есть — правим существующего, нет — заводим нового.
+type Draft = {
+  id?: number;
+  username: string;
+  name: string;
+  role: StaffRole;
+  password: string;
+};
 
 const EMPTY: Draft = { username: "", name: "", role: "waiter", password: "" };
 
@@ -32,6 +40,7 @@ export default function Staff() {
   const [pwFor, setPwFor] = useState<StaffMember | null>(null);
   const [password, setPassword] = useState("");
   const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const notify = useToast();
 
   const load = () =>
@@ -60,12 +69,44 @@ export default function Staff() {
     notify(text, "bad");
   };
 
-  const create = () => {
+  const openForm = (draft: Draft) => {
+    setConfirmDelete(false);
+    setForm(draft);
+  };
+
+  const edit = (p: StaffMember) =>
+    openForm({
+      id: p.id,
+      username: p.username,
+      name: p.name,
+      role: p.role as StaffRole,
+      password: "",
+    });
+
+  const save = () => {
     if (!form) return;
     setSaving(true);
-    post<StaffMember>("/staff/", form)
+    const { id, password, ...fields } = form;
+    // Пароль при правке меняется отдельной кнопкой «Пароль».
+    const request = id
+      ? patch<StaffMember>(`/staff/${id}/`, fields)
+      : post<StaffMember>("/staff/", { ...fields, password });
+    request
       .then(() => {
-        notify(`${form.username}: доступ создан`, "ok");
+        notify(id ? "Изменения сохранены" : `${form.username}: доступ создан`, "ok");
+        setForm(null);
+        load();
+      })
+      .catch(fail)
+      .finally(() => setSaving(false));
+  };
+
+  const remove = () => {
+    if (!form?.id) return;
+    setSaving(true);
+    del(`/staff/${form.id}/`)
+      .then(() => {
+        notify("Сотрудник удалён", "ok");
         setForm(null);
         load();
       })
@@ -108,7 +149,7 @@ export default function Staff() {
             Логины для персонала. Уволенный не может войти, но его смены и
             заказы остаются в отчётах.
           </p>
-          <button className="btn sm" onClick={() => setForm({ ...EMPTY })}>
+          <button className="btn sm" onClick={() => openForm({ ...EMPTY })}>
             <Icon name="user" size={15} /> Добавить
           </button>
         </div>
@@ -125,6 +166,9 @@ export default function Staff() {
                 </div>
               </div>
               <div className="wrap">
+                <button className="btn sm ghost" onClick={() => edit(p)}>
+                  Изменить
+                </button>
                 <button
                   className="btn sm ghost"
                   onClick={() => {
@@ -154,7 +198,10 @@ export default function Staff() {
       </div>
 
       {form && (
-        <Modal onClose={() => setForm(null)} head={<strong>Новый сотрудник</strong>}>
+        <Modal
+          onClose={() => setForm(null)}
+          head={<strong>{form.id ? "Сотрудник" : "Новый сотрудник"}</strong>}
+        >
           <label className="field">
             <span className="label">Имя</span>
             <input
@@ -176,15 +223,17 @@ export default function Staff() {
           </label>
           {/* Пароль намеренно виден: владелец сам придумывает его и диктует
               сотруднику, прятать точками тут нечего и незачем. */}
-          <label className="field">
-            <span className="label">Пароль</span>
-            <input
-              className="input"
-              value={form.password}
-              onChange={(e) => setForm({ ...form, password: e.target.value })}
-              placeholder="Не короче 8 символов"
-            />
-          </label>
+          {!form.id && (
+            <label className="field">
+              <span className="label">Пароль</span>
+              <input
+                className="input"
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                placeholder="Не короче 8 символов"
+              />
+            </label>
+          )}
           <div className="field">
             <span className="label">Роль</span>
             <div className="grid cols-2 mt-2">
@@ -202,9 +251,41 @@ export default function Staff() {
               ))}
             </div>
           </div>
-          <button className="btn mt-3" disabled={saving} onClick={create}>
-            {saving ? "Создаём…" : "Создать доступ"}
+          <button className="btn mt-3" disabled={saving} onClick={save}>
+            {form.id
+              ? saving ? "Сохраняем…" : "Сохранить"
+              : saving ? "Создаём…" : "Создать доступ"}
           </button>
+          {/* Подтверждение в самом окне: confirm() в киоск-браузерах глушится. */}
+          {form.id && !confirmDelete && (
+            <button
+              className="btn ghost mt-3"
+              disabled={saving}
+              onClick={() => setConfirmDelete(true)}
+            >
+              Удалить
+            </button>
+          )}
+          {form.id && confirmDelete && (
+            <div className="mt-3">
+              <p className="muted">
+                Удалить «{form.name || form.username}» насовсем? Получится, только
+                если у сотрудника ещё нет смен и заказов — иначе его можно уволить.
+              </p>
+              <div className="wrap">
+                <button className="btn danger" disabled={saving} onClick={remove}>
+                  {saving ? "Удаляем…" : "Да, удалить"}
+                </button>
+                <button
+                  className="btn ghost"
+                  disabled={saving}
+                  onClick={() => setConfirmDelete(false)}
+                >
+                  Отмена
+                </button>
+              </div>
+            </div>
+          )}
         </Modal>
       )}
 

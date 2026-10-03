@@ -3,6 +3,19 @@ from rest_framework import serializers
 from .models import SiteSettings
 
 
+#: Лицо заведения для гостей и банка: название, контакты, реквизиты.
+#: Правит только админ — менеджеру по складу и сменам они ни к чему,
+#: а ошибка в ИНН ломает оферту и проверку сайта банком.
+PROFILE_FIELDS = frozenset({
+    "name", "tagline", "app_short_name", "phone", "email", "address",
+    "working_hours", "instagram", "telegram", "about",
+    "merchant_type", "merchant_name", "merchant_short", "merchant_address",
+    "merchant_inn", "merchant_ogrn", "merchant_account", "merchant_bank",
+    "merchant_bank_inn", "merchant_bik", "merchant_corr_account",
+    "merchant_bank_address", "acquirer", "legal_updated",
+})
+
+
 class SiteSettingsSerializer(serializers.ModelSerializer):
     logo = serializers.SerializerMethodField()
     # Тариф и его фичи: фронт по ним прячет разделы, которых нет в тарифе.
@@ -106,32 +119,11 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
             "plan",
             "features",
         )
-        # через API правится только внешний вид; остальное — в админке
+        # Название, контакты и реквизиты владелец правит сам из панели
+        # (раздел «Заведение»): это его данные, не «Падачи». Закрыто только
+        # то, что зависит от денег и договора с нами. Менеджеру эти поля
+        # не открыты — см. PROFILE_FIELDS и SiteSettingsView.
         read_only_fields = (
-            "name",
-            "tagline",
-            "app_short_name",
-            "phone",
-            "email",
-            "address",
-            "working_hours",
-            "instagram",
-            "telegram",
-            "about",
-            "merchant_type",
-            "merchant_name",
-            "merchant_short",
-            "merchant_address",
-            "merchant_inn",
-            "merchant_ogrn",
-            "merchant_account",
-            "merchant_bank",
-            "merchant_bank_inn",
-            "merchant_bik",
-            "merchant_corr_account",
-            "merchant_bank_address",
-            "acquirer",
-            "legal_updated",
             # тариф заведению назначает «Падача», не само заведение
             "plan",
             # формат едет за тарифом и стоит денег: «Стойка» дешевле «Зала».
@@ -139,6 +131,42 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
             # заведение могло включить себе зал обычным PATCH.
             "service_mode",
         )
+
+    # Реквизиты попадают в оферту и на страницу оплаты — банк при проверке
+    # сайта сверяет их с выпиской. Опечатку в ИНН проще поймать здесь, чем
+    # потом объяснять банку. Пусто — можно: новое заведение заполняет позже.
+    # Проверки на уровне полей, а не в validate(): тот не запускается, если
+    # упало хоть одно поле, и владелец узнавал бы об ошибках по одной.
+    @staticmethod
+    def _digits(value: str, lengths: tuple[int, ...], message: str) -> str:
+        value = "".join(value.split())  # пробелы из копипаста выписки
+        if value and not (value.isdigit() and len(value) in lengths):
+            raise serializers.ValidationError(message)
+        return value
+
+    def validate_merchant_inn(self, value):
+        return self._digits(value, (10, 12), "ИНН — 10 цифр у организации или 12 у ИП")
+
+    def validate_merchant_ogrn(self, value):
+        return self._digits(value, (13, 15), "ОГРН — 13 цифр, ОГРНИП — 15")
+
+    def validate_merchant_bank_inn(self, value):
+        return self._digits(value, (10,), "ИНН банка — 10 цифр")
+
+    def validate_merchant_bik(self, value):
+        return self._digits(value, (9,), "БИК — 9 цифр")
+
+    def validate_merchant_account(self, value):
+        return self._digits(value, (20,), "Расчётный счёт — 20 цифр")
+
+    def validate_merchant_corr_account(self, value):
+        return self._digits(value, (20,), "Корр. счёт — 20 цифр")
+
+    def validate_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Название заведения не может быть пустым")
+        return value
 
     def get_logo(self, obj):
         return obj.logo.url if obj.logo else None

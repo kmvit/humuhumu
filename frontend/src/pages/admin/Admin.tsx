@@ -10,6 +10,7 @@ import OnlinePayment from "./OnlinePayment";
 import Kassa from "./Kassa";
 import OrderingPause from "./OrderingPause";
 import Subscription from "./Subscription";
+import VenueProfile from "./VenueProfile";
 
 // Темы продукта: ключи совпадают с SiteSettings.Theme на бэкенде.
 // Формат обслуживания: зал со столами или стойка с выдачей по номеру.
@@ -239,6 +240,8 @@ export default function Admin() {
           />
         </div>
       </div>
+
+      <VenueProfile />
 
       <OnlinePayment />
 

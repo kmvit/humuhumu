@@ -576,6 +576,9 @@ h1, h2, h3 { font-family: var(--font-display); color: var(--fg); margin: 0; font
 .grid.cards { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
 .grid.tiles { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
 .grid.cols-2 { grid-template-columns: 1fr 1fr; gap: 10px; }
+/* Форма в две колонки на широком экране и в одну на телефоне. */
+.form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); column-gap: 14px; margin-top: 10px; }
+.form-grid > .field { min-width: 0; }
 
 /* ——— Номер выдачи на стойке: гость показывает его в окне ——— */
 .pickup-no {

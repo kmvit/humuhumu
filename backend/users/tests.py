@@ -122,9 +122,42 @@ class StaffApiTests(APITestCase):
             404,
         )
 
-    def test_delete_is_not_allowed(self):
+    def test_edit_name_login_role(self):
+        res = self.client.patch(
+            f"/api/staff/{self.waiter.pk}/",
+            {"name": "Анна", "username": "anna", "role": "bar"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200, res.data)
+        self.waiter.refresh_from_db()
+        self.assertEqual(
+            (self.waiter.first_name, self.waiter.username, self.waiter.role),
+            ("Анна", "anna", User.Role.BAR),
+        )
+        self.assertTrue(self.waiter.check_password("Sh4-waiter-pass"))  # пароль цел
+
+    def test_can_rename_self(self):
+        res = self.client.patch(
+            f"/api/staff/{self.owner.pk}/", {"name": "Хозяин"}, format="json"
+        )
+        self.assertEqual(res.status_code, 200)
+
+    def test_delete_without_history(self):
         res = self.client.delete(f"/api/staff/{self.waiter.pk}/")
-        self.assertEqual(res.status_code, 405)
+        self.assertEqual(res.status_code, 204)
+        self.assertFalse(User.objects.filter(pk=self.waiter.pk).exists())
+
+    def test_delete_refused_when_there_is_history(self):
+        from orders.models import Order
+
+        Order.objects.create(waiter=self.waiter)
+        res = self.client.delete(f"/api/staff/{self.waiter.pk}/")
+        self.assertEqual(res.status_code, 400)
+        self.assertTrue(User.objects.filter(pk=self.waiter.pk).exists())
+
+    def test_cannot_delete_self(self):
+        res = self.client.delete(f"/api/staff/{self.owner.pk}/")
+        self.assertEqual(res.status_code, 400)
 
 
 class LoginMessageTests(APITestCase):

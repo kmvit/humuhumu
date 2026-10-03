@@ -64,6 +64,9 @@ type Appearance = {
 };
 
 const SiteContext = createContext<Site | null>(null);
+// Подменить настройки после сохранения из панели: иначе подвал, вкладка и
+// юр. страницы показывали бы старое название до перезагрузки.
+const SiteUpdateContext = createContext<(site: Site) => void>(() => {});
 const AppearanceContext = createContext<Appearance>({
   theme: "neutral",
   accent: "",
@@ -88,6 +91,11 @@ export function SiteProvider({ children }: { children: ReactNode }) {
     setLook({ theme, accent });
   }, []);
 
+  const update = useCallback((s: Site) => {
+    setSite(s);
+    applyIdentity(s);
+  }, []);
+
   useEffect(() => {
     get<Site>("/site/")
       .then((s) => {
@@ -101,15 +109,22 @@ export function SiteProvider({ children }: { children: ReactNode }) {
 
   return (
     <SiteContext.Provider value={site}>
-      <AppearanceContext.Provider value={{ theme: look.theme, accent: look.accent, set }}>
-        {children}
-      </AppearanceContext.Provider>
+      <SiteUpdateContext.Provider value={update}>
+        <AppearanceContext.Provider value={{ theme: look.theme, accent: look.accent, set }}>
+          {children}
+        </AppearanceContext.Provider>
+      </SiteUpdateContext.Provider>
     </SiteContext.Provider>
   );
 }
 
 export function useSite() {
   return useContext(SiteContext);
+}
+
+/** Положить в контекст свежие настройки — ответ PATCH /api/site/. */
+export function useUpdateSite() {
+  return useContext(SiteUpdateContext);
 }
 
 /** Входит ли фича в тариф заведения.

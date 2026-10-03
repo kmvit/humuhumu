@@ -127,6 +127,66 @@ class PlanGateTests(APITestCase):
         self.assertEqual(self.site.service_mode, SiteSettings.ServiceMode.COUNTER)
 
 
+class SiteProfileTests(APITestCase):
+    """Название, контакты и реквизиты админ правит из панели сам."""
+
+    def setUp(self):
+        self.site = SiteSettings.load()
+        self.waiter = User.objects.create_user("w1", password="x", role=User.Role.WAITER)
+        self.manager = User.objects.create_user(
+            "m1", password="x", role=User.Role.WAREHOUSE
+        )
+        self.admin = User.objects.create_user("a1", password="x", role=User.Role.ADMIN)
+
+    def test_admin_edits_contacts_and_requisites(self):
+        self.client.force_authenticate(self.admin)
+        res = self.client.patch(
+            "/api/site/",
+            {
+                "name": "Монти",
+                "phone": "+7 906 000-00-00",
+                "email": "cafe@example.com",
+                "merchant_inn": "2618 0629 8966",  # с пробелами из выписки
+                "merchant_ogrn": "325265100094438",
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200, res.data)
+        self.site.refresh_from_db()
+        self.assertEqual(self.site.phone, "+7 906 000-00-00")
+        self.assertEqual(self.site.merchant_inn, "261806298966")
+
+    def test_bad_requisites_rejected(self):
+        self.client.force_authenticate(self.admin)
+        res = self.client.patch(
+            "/api/site/",
+            {"merchant_inn": "12345", "merchant_bik": "abc", "email": "не почта", "name": " "},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(
+            set(res.data), {"merchant_inn", "merchant_bik", "email", "name"}
+        )
+
+    def test_empty_requisites_allowed(self):
+        self.client.force_authenticate(self.admin)
+        res = self.client.patch("/api/site/", {"merchant_inn": ""}, format="json")
+        self.assertEqual(res.status_code, 200)
+
+    def test_manager_cannot_edit_profile(self):
+        """Менеджеру PATCH открыт ради других настроек, но не реквизитов."""
+        self.client.force_authenticate(self.manager)
+        res = self.client.patch("/api/site/", {"merchant_inn": "2618062989"}, format="json")
+        self.assertEqual(res.status_code, 403)
+        self.site.refresh_from_db()
+        self.assertNotEqual(self.site.merchant_inn, "2618062989")
+
+    def test_waiter_cannot_edit(self):
+        self.client.force_authenticate(self.waiter)
+        res = self.client.patch("/api/site/", {"phone": "1"}, format="json")
+        self.assertEqual(res.status_code, 403)
+
+
 @override_settings(LICENSE_KEY="testkey", LICENSE_URL="https://pult.test/api/license/")
 class LicenseClientTests(APITestCase):
     """Сверка с пультом, фейл-опен и блокировка middleware."""

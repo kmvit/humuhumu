@@ -1,4 +1,5 @@
 from rest_framework import generics
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -8,14 +9,14 @@ from users.permissions import IsStaffRole, IsWarehouseOrAdmin
 from .license import status_payload, sync_license
 
 from .models import SiteSettings
-from .serializers import SiteSettingsSerializer
+from .serializers import PROFILE_FIELDS, SiteSettingsSerializer
 
 
 class SiteSettingsView(generics.RetrieveUpdateAPIView):
     """GET /api/site/ — публичные настройки сайта (видны и до авторизации).
 
-    PATCH /api/site/ — тема оформления и акцентный цвет; доступно
-    менеджеру (складу) и админу.
+    PATCH /api/site/ — настройки из панели; доступно менеджеру (складу) и
+    админу. Название, контакты и реквизиты — только админу.
     """
 
     serializer_class = SiteSettingsSerializer
@@ -28,6 +29,11 @@ class SiteSettingsView(generics.RetrieveUpdateAPIView):
 
     def get_object(self):
         return SiteSettings.load()
+
+    def perform_update(self, serializer):
+        if PROFILE_FIELDS & set(self.request.data) and self.request.user.role != "admin":
+            raise PermissionDenied("Название, контакты и реквизиты меняет администратор")
+        serializer.save()
 
 
 @api_view(["GET"])
