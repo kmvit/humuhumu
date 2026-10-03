@@ -215,7 +215,11 @@ class BaseAcquirer:
     def refund(self, payment) -> str:
         """Вернуть гостю деньги по уже оплаченному платежу.
 
-        Возвращает номер возврата у банка (для сверки). Возврат всегда
+        Возвращает номер возврата у банка (для сверки) — или пусто, если
+        отдельного номера банк не выдаёт: у Т-Банка и Сбера возврат — это
+        операция над тем же платежом. Номер исходного платежа сюда
+        возвращать нельзя: он уже занят в реестре, запись возврата с ним
+        не сохранится, а деньги к тому времени банк уже отправил. Возврат всегда
         полный: частичные суммы продукт пока не умеет, и лучше честный
         отказ, чем возврат «примерно на сколько-то».
 
@@ -459,7 +463,9 @@ class TBankAcquirer(BaseAcquirer):
         data = self._post("Cancel", body)
         if not data.get("Success"):
             raise AcquiringError(self._reason(data, "Банк отказал в возврате"))
-        return str(data.get("PaymentId") or payment.external_id)
+        # Своего номера у возврата нет: Cancel отвечает PaymentId исходного
+        # платежа, а он уже занят в реестре (см. BaseAcquirer.refund).
+        return ""
 
     @staticmethod
     def _reason(data: dict, fallback: str) -> str:
@@ -555,8 +561,9 @@ class SberAcquirer(BaseAcquirer):
     def refund(self, payment) -> str:
         """У RBS-шлюза возврат — refund.do с суммой в копейках.
 
-        Свой номер возврата шлюз не выдаёт: успех — это errorCode 0, и
-        для сверки остаётся номер исходного заказа у банка.
+        Свой номер возврата шлюз не выдаёт: успех — это errorCode 0, а
+        для сверки остаётся номер исходного заказа у банка — он и так
+        записан на исходном платеже.
         """
         self.require_configured()
 
@@ -567,7 +574,7 @@ class SberAcquirer(BaseAcquirer):
         })
         if data.get("errorCode") and str(data["errorCode"]) != "0":
             raise AcquiringError(data.get("errorMessage") or "Банк отказал в возврате")
-        return str(payment.external_id)
+        return ""
 
     def status(self, external_id: str) -> Result | None:
         data = self._post(f"{self.api_url}/getOrderStatusExtended.do", {

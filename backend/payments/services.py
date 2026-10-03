@@ -128,6 +128,12 @@ def refund_order(order: Order, *, user=None, return_to_stock: bool = False) -> O
                 external_id = acquirer.refund(payment)
             except AcquiringError as e:
                 raise PaymentError(str(e)) from e
+            # Деньги банк уже отправил — запись возврата обязана лечь.
+            # Номер исходного платежа занят в реестре (номер у банка
+            # уникален), и с ним вставка упала бы, откатив учёт возврата:
+            # гость с деньгами, а у нас заказ оплачен. Так было с Т-Банком.
+            if external_id == payment.external_id:
+                external_id = ""
 
         Payment.objects.create(
             purpose=Payment.Purpose.REFUND,

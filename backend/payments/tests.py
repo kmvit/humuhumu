@@ -1291,3 +1291,64 @@ class GuestPaymentErrorTests(APITestCase):
                 format="json",
             ).data
         self.assertIsNone(data["last_error"])
+
+
+class RefundWithoutOwnNumberTests(APITestCase):
+    """Т-Банк и Сбер не выдают возврату своего номера.
+
+    Т-Банк отвечает на Cancel номером исходного платежа. Мы писали его в
+    запись возврата, вставка падала на уникальности номера и откатывала
+    учёт — а деньги банк к тому времени уже вернул (нашли на тестовом
+    терминале 03.10.2026).
+    """
+
+    setUp = RefundTests.setUp
+    ENV = RefundTests.ENV
+
+    def pay(self, provider):
+        payment = Payment.objects.create(
+            purpose=Payment.Purpose.ORDER,
+            status=Payment.Status.PENDING,
+            amount=self.order.payable,
+            order=self.order,
+            method=Payment.Method.CARD,
+            provider=provider,
+            external_id="9368792155",
+        )
+        apply_payment_result(payment, success=True)
+        return payment
+
+    def assert_refunded(self, payment):
+        self.order.refresh_from_db()
+        payment.refresh_from_db()
+        self.assertEqual(self.order.status, Order.Status.REFUNDED)
+        self.assertEqual(payment.status, Payment.Status.REFUNDED)
+        self.assertTrue(
+            Payment.objects.filter(order=self.order, purpose=Payment.Purpose.REFUND).exists()
+        )
+
+    def test_tbank_refund_is_recorded(self):
+        payment = self.pay("tbank")
+        answer = {"Success": True, "Status": "REFUNDED", "PaymentId": "9368792155"}
+        with mock.patch.dict("os.environ", {"TBANK_TERMINAL_KEY": "t", "TBANK_PASSWORD": "p"}), \
+                mock.patch.object(TBankAcquirer, "_post", return_value=answer):
+            response = self.client.post(f"/api/orders/{self.order.pk}/refund/", {}, format="json")
+        self.assertEqual(response.status_code, 200, response.content[:300])
+        self.assert_refunded(payment)
+
+    def test_sber_refund_is_recorded(self):
+        payment = self.pay("sber")
+        env = {"SBER_USERNAME": "u", "SBER_PASSWORD": "p"}
+        with mock.patch.dict("os.environ", env), \
+                mock.patch.object(SberAcquirer, "_post", return_value={"errorCode": "0"}):
+            response = self.client.post(f"/api/orders/{self.order.pk}/refund/", {}, format="json")
+        self.assertEqual(response.status_code, 200, response.content[:300])
+        self.assert_refunded(payment)
+
+    def test_driver_echoing_the_payment_number_does_not_lose_the_refund(self):
+        """Страховка в сервисе: новый банк повторит ошибку — учёт не потеряется."""
+        payment = self.pay("yookassa")
+        with mock.patch.object(YooKassaAcquirer, "refund", return_value="9368792155"):
+            response = self.client.post(f"/api/orders/{self.order.pk}/refund/", {}, format="json")
+        self.assertEqual(response.status_code, 200, response.content[:300])
+        self.assert_refunded(payment)
