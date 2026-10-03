@@ -85,15 +85,20 @@ export default function Admin() {
     }
   }
 
-  // Возвращённые заказы в оборот не идут — деньги ушли назад; показываем
-  // их отдельной плиткой, иначе оборот не сходится с налом и картой.
-  const revenue = useMemo(
+  // Оборот и его разбивка считаются по факту оплаты (paid_at), а не по
+  // статусу. На стойке с предоплатой оплаченный заказ ещё «в работе» до
+  // выдачи — по статусу «закрыт» его деньги пропадали из нала, карты и
+  // онлайна. А неоплаченные (брошенные у кассы, ждущие официанта) в оборот
+  // не идут: денег по ним нет. Возвращённые показываем отдельной плиткой —
+  // деньги ушли назад. Так оборот = наличные + карта + онлайн.
+  const paid = useMemo(
     () =>
-      orders
-        .filter((o) => o.status !== "cancelled" && o.status !== "refunded")
-        .reduce((s, o) => s + Number(o.total), 0),
+      orders.filter(
+        (o) => o.paid_at && o.status !== "cancelled" && o.status !== "refunded"
+      ),
     [orders]
   );
+  const revenue = paid.reduce((s, o) => s + Number(o.total), 0);
   const refunded = useMemo(
     () => orders.filter((o) => o.status === "refunded").reduce((s, o) => s + Number(o.total), 0),
     [orders]
@@ -102,7 +107,6 @@ export default function Admin() {
   // и карту на кассе держим отдельно — это разные деньги на разных счетах,
   // и сверяют их с разными выписками.
   const { cash, card, online } = useMemo(() => {
-    const paid = orders.filter((o) => o.status === "paid");
     const sum = (pick: (o: Order) => boolean) =>
       paid.filter(pick).reduce((s, o) => s + Number(o.total), 0);
     return {
@@ -110,7 +114,7 @@ export default function Admin() {
       card: sum((o) => o.pay_method === "card" && o.pay_channel !== "online"),
       online: sum((o) => o.pay_channel === "online"),
     };
-  }, [orders]);
+  }, [paid]);
   const active = orders.filter((o) => o.status === "open").length;
 
   // Копейки в сводке не нужны и только удлиняют семизначные суммы: сложение
@@ -119,7 +123,7 @@ export default function Admin() {
 
   const stats = [
     { icon: "receipt", label: "Всего заказов", value: orders.length },
-    { icon: "chart", label: "Оборот (без отмен и возвратов)", value: money(revenue) },
+    { icon: "chart", label: "Оборот (оплачено, без возвратов)", value: money(revenue) },
     { icon: "cash", label: "Наличными", value: money(cash) },
     { icon: "card", label: "Картой на месте", value: money(card) },
     { icon: "laptop", label: "Онлайн", value: money(online) },
