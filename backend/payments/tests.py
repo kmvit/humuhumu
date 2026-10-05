@@ -171,6 +171,19 @@ class TBankRequestsTests(TestCase):
         payment.refresh_from_db()
         self.assertEqual(payment.external_id, "777")
 
+    def test_webhook_address_is_https_even_if_django_saw_http(self):
+        """За прокси Django видел http — банк слал уведомление в 301 и терял его."""
+        from .acquiring import _callback_url
+
+        self.assertEqual(
+            _callback_url("http://monti.padacha.ru/?token=x", "tbank"),
+            "https://monti.padacha.ru/api/payments/callback/tbank/",
+        )
+        self.assertEqual(
+            _callback_url("http://localhost:5174/?token=x", "tbank"),
+            "http://localhost:5174/api/payments/callback/tbank/",
+        )
+
     def test_bank_refusal_reason_reaches_staff(self):
         payment = Payment.objects.create(
             purpose=Payment.Purpose.ORDER, amount=Decimal("0.5"), provider="tbank"

@@ -129,9 +129,18 @@ def _rubles(amount: Decimal) -> str:
 
 
 def _callback_url(return_url: str, provider: str) -> str:
-    """Адрес нашего вебхука на том же домене, что и страница гостя."""
+    """Адрес нашего вебхука на том же домене, что и страница гостя.
+
+    На настоящем домене — всегда https, какую бы схему ни увидел Django за
+    прокси: на http:// сервер отвечает 301, банк повторяет уведомление
+    GET-ом и получает 405 — так уведомления Т-Банка и терялись (05.10.2026).
+    """
     parts = urlsplit(return_url)
-    return f"{parts.scheme}://{parts.netloc}/api/payments/callback/{provider}/"
+    local = (parts.hostname or "") in ("localhost", "127.0.0.1", "::1") or (
+        parts.hostname or ""
+    ).endswith((".localhost", ".test"))
+    scheme = parts.scheme if local else "https"
+    return f"{scheme}://{parts.netloc}/api/payments/callback/{provider}/"
 
 
 def _description(payment) -> str:
