@@ -41,6 +41,7 @@ from .serializers import (
     StockItemAliasSerializer,
     StockItemSerializer,
     StockMovementSerializer,
+    WriteOffBatchSerializer,
     WriteOffCreateSerializer,
     WriteOffSerializer,
 )
@@ -226,6 +227,17 @@ class WriteOffViewSet(viewsets.ModelViewSet):
         if self.action == "create":
             return WriteOffCreateSerializer
         return WriteOffSerializer
+
+    @action(detail=False, methods=["post"])
+    def batch(self, request):
+        """Несколько позиций одной причиной: {reason, positions: [{title, items}]}."""
+        ser = WriteOffBatchSerializer(data=request.data, context={"request": request})
+        ser.is_valid(raise_exception=True)
+        # ser.data тут не подходит: Serializer обещает словарь, а пачка — список
+        created = ser.save()
+        return Response(
+            WriteOffSerializer(created, many=True).data, status=status.HTTP_201_CREATED
+        )
 
     def destroy(self, request, *args, **kwargs):
         """Удалить ошибочное списание — товары возвращаются в остатки."""

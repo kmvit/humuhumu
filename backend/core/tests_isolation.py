@@ -21,7 +21,7 @@ from catalog.models import Category, Product, ProductVariant
 from core.models import Organization, SiteSettings
 from core.tenancy import organization_context
 from finance.models import Expense, ExpenseCategory
-from inventory.models import Receipt, StockCategory, StockItem
+from inventory.models import Receipt, StockCategory, StockItem, WriteOff, WriteOffItem
 from loyalty.models import LoyaltyMember
 from orders.models import Order, OrderItem, Table
 from shifts.models import Shift
@@ -48,6 +48,8 @@ def build_cafe(org, marker: str):
             name=f"Позиция {marker}", category=stock_category, unit="g"
         )
         receipt = Receipt.objects.create(supplier=f"Поставщик {marker}")
+        write_off = WriteOff.objects.create(title=f"Заготовка {marker}", reason="Не продали")
+        WriteOffItem.objects.create(write_off=write_off, item=stock_item, quantity=10)
 
         expense_category = ExpenseCategory.objects.create(name=f"Расход {marker}")
         expense = Expense.objects.create(
@@ -67,7 +69,8 @@ def build_cafe(org, marker: str):
     return {
         "category": category, "product": product, "table": table, "order": order,
         "stock_category": stock_category, "stock_item": stock_item,
-        "receipt": receipt, "expense_category": expense_category,
+        "receipt": receipt, "write_off": write_off,
+        "expense_category": expense_category,
         "expense": expense, "staff": staff, "guest": guest,
         "member": member, "shift": shift,
     }
@@ -84,6 +87,7 @@ RESOURCES = [
     ("/api/inventory/categories/", "stock_category", "name"),
     ("/api/inventory/items/", "stock_item", "name"),
     ("/api/inventory/receipts/", "receipt", None),
+    ("/api/inventory/write-offs/", "write_off", "title"),
     ("/api/finance/expenses/", "expense", None),
     ("/api/finance/expense-categories/", "expense_category", "name"),
 ]
@@ -193,6 +197,39 @@ class CrossTenantApiTests(TestCase):
             **self.auth,
         )
         self.assertNotEqual(res.status_code, 201, "чужая позиция склада прошла в приход")
+
+    def test_cannot_write_off_foreign_stock_item(self):
+        """Списать чужой товар нельзя — ни одной позицией, ни пачкой."""
+        foreign = self.data_b["stock_item"]
+        line = [{"item": foreign.pk, "quantity": "5"}]
+        single = self.client.post(
+            "/api/inventory/write-offs/",
+            {"title": "Подсадка", "reason": "Не продали", "items": line},
+            format="json", **self.auth,
+        )
+        self.assertEqual(single.status_code, 400, single.data)
+        batch = self.client.post(
+            "/api/inventory/write-offs/batch/",
+            {"reason": "Не продали", "positions": [
+                {"title": "Своё", "items": [{"item": self.data_a["stock_item"].pk, "quantity": "1"}]},
+                {"title": "Подсадка", "items": line},
+            ]},
+            format="json", **self.auth,
+        )
+        self.assertEqual(batch.status_code, 400, batch.data)
+        # остатки обоих кафе не тронуты: чужое не списано, своё — тоже,
+        # пачка целиком отклонена
+        foreign.refresh_from_db()
+        self.assertEqual(foreign.quantity, 0)
+        self.assertEqual(StockItem.all_objects.get(pk=self.data_a["stock_item"].pk).quantity, 0)
+
+    def test_cannot_delete_foreign_write_off(self):
+        """Удаление чужого списания вернуло бы товар на чужой склад."""
+        res = self.client.delete(
+            f"/api/inventory/write-offs/{self.data_b['write_off'].pk}/", **self.auth
+        )
+        self.assertEqual(res.status_code, 404)
+        self.assertTrue(WriteOff.all_objects.filter(pk=self.data_b["write_off"].pk).exists())
 
     def test_cannot_put_foreign_employee_into_own_shift(self):
         res = self.client.post(

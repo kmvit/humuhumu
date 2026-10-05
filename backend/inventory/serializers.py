@@ -263,63 +263,119 @@ class WriteOffLineSerializer(serializers.Serializer):
         max_digits=12, decimal_places=3, min_value=Decimal("0.001")
     )
 
+    def validate_item(self, item):
+        # Скрытый товар в форме не выбрать, но строка с ним могла приехать
+        # из старого списания или тех карты. Списать его молча — значит
+        # списать то, чего человек на экране не видел.
+        if not item.is_active:
+            raise serializers.ValidationError(
+                f"«{item.name}» скрыт со склада — уберите эту строку."
+            )
+        return item
 
-class WriteOffCreateSerializer(serializers.Serializer):
-    """Списание: что, за что и по каким товарам. Уменьшает остатки.
+
+def _merge_lines(value):
+    if not value:
+        raise serializers.ValidationError("Добавьте хотя бы один товар.")
+    # Один товар двумя строками сложим: «молоко 200» + «молоко 100» —
+    # это просто 300 мл молока, а не ошибка ввода.
+    merged: dict[int, dict] = {}
+    for line in value:
+        prev = merged.get(line["item"].id)
+        if prev is None:
+            merged[line["item"].id] = dict(line)
+        else:
+            prev["quantity"] += line["quantity"]
+    return list(merged.values())
+
+
+def _write_off(*, title: str, reason: str, lines, user) -> WriteOff:
+    """Провести одну позицию списания: запись, строки с ценой и движения.
 
     Остаток может уйти в минус — как и при продаже: списание фиксирует
     то, что уже случилось, отказывать в нём бессмысленно. Минус виден в
     остатках и чинится инвентаризацией.
     """
+    write_off = WriteOff.objects.create(
+        title=title.strip(), reason=reason.strip(), created_by=user
+    )
+    costs = last_unit_costs(line["item"].id for line in lines)
+    comment = f"{write_off.title} — {write_off.reason}"[:300]
+    for line in lines:
+        item = line["item"]
+        WriteOffItem.objects.create(
+            write_off=write_off,
+            item=item,
+            quantity=line["quantity"],
+            unit_cost=costs.get(item.id),
+        )
+        item.apply_movement(
+            -line["quantity"],
+            StockMovement.Kind.WRITE_OFF,
+            user=user,
+            write_off=write_off,
+            comment=comment,
+        )
+    return write_off
+
+
+class WriteOffPositionSerializer(serializers.Serializer):
+    """Позиция списания: что ушло («Сливочная шапка») и из каких товаров."""
 
     title = serializers.CharField(max_length=200)
-    reason = serializers.CharField(max_length=300)
     items = WriteOffLineSerializer(many=True)
 
     def validate_items(self, value):
+        return _merge_lines(value)
+
+
+class WriteOffCreateSerializer(WriteOffPositionSerializer):
+    """Списание одной позиции: что, за что и по каким товарам."""
+
+    reason = serializers.CharField(max_length=300)
+
+    @transaction.atomic
+    def create(self, validated_data):
+        return _write_off(
+            title=validated_data["title"],
+            reason=validated_data["reason"],
+            lines=validated_data["items"],
+            user=self.context["request"].user,
+        )
+
+    def to_representation(self, instance):
+        return WriteOffSerializer(instance, context=self.context).data
+
+
+class WriteOffBatchSerializer(serializers.Serializer):
+    """Несколько позиций за раз с общей причиной — «списать всё за день».
+
+    Каждая позиция становится своим списанием: в журнале её видно отдельно,
+    её можно повторить или удалить, не трогая соседей. Проводится пачка
+    целиком или никак — иначе при ошибке в третьей позиции первые две
+    списались бы молча, и человек провёл бы их второй раз.
+    """
+
+    reason = serializers.CharField(max_length=300)
+    positions = WriteOffPositionSerializer(many=True)
+
+    def validate_positions(self, value):
         if not value:
-            raise serializers.ValidationError("Добавьте хотя бы один товар.")
-        # Один товар двумя строками сложим: «молоко 200» + «молоко 100» —
-        # это просто 300 мл молока, а не ошибка ввода.
-        merged: dict[int, dict] = {}
-        for line in value:
-            prev = merged.get(line["item"].id)
-            if prev is None:
-                merged[line["item"].id] = dict(line)
-            else:
-                prev["quantity"] += line["quantity"]
-        return list(merged.values())
+            raise serializers.ValidationError("Добавьте хотя бы одну позицию.")
+        return value
 
     @transaction.atomic
     def create(self, validated_data):
         user = self.context["request"].user
-        lines = validated_data.pop("items")
-        write_off = WriteOff.objects.create(
-            title=validated_data["title"].strip(),
-            reason=validated_data["reason"].strip(),
-            created_by=user,
-        )
-        costs = last_unit_costs(line["item"].id for line in lines)
-        comment = f"{write_off.title} — {write_off.reason}"[:300]
-        for line in lines:
-            item = line["item"]
-            WriteOffItem.objects.create(
-                write_off=write_off,
-                item=item,
-                quantity=line["quantity"],
-                unit_cost=costs.get(item.id),
-            )
-            item.apply_movement(
-                -line["quantity"],
-                StockMovement.Kind.WRITE_OFF,
+        return [
+            _write_off(
+                title=pos["title"],
+                reason=validated_data["reason"],
+                lines=pos["items"],
                 user=user,
-                write_off=write_off,
-                comment=comment,
             )
-        return write_off
-
-    def to_representation(self, instance):
-        return WriteOffSerializer(instance, context=self.context).data
+            for pos in validated_data["positions"]
+        ]
 
 
 class ReceiptScanSerializer(serializers.ModelSerializer):

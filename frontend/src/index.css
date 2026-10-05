@@ -721,6 +721,14 @@ h1, h2, h3 { font-family: var(--font-display); color: var(--fg); margin: 0; font
 @media (max-width: 520px) { .receipt-line { grid-template-columns: minmax(0, 1fr) 4.3rem 4.3rem auto; gap: 6px; } }
 /* строка без суммы: товар + количество (списание) */
 .receipt-line.two { grid-template-columns: minmax(0, 1fr) 5.5rem auto; }
+/* позиция списания — отдельный блок внутри формы, их может быть несколько */
+.wo-pos { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; }
+/* на телефоне каждый пиксель — названию товара, иначе «Кофе в зер…» */
+@media (max-width: 520px) {
+  .receipt-line.two { grid-template-columns: minmax(0, 1fr) 4.3rem auto; gap: 6px; }
+  .wo-pos { padding: 10px 8px; }
+  .wo-pos .input { padding-left: 10px; padding-right: 8px; }
+}
 .chip.low { background: #fdecec; color: var(--danger); }
 [data-theme="dark"] .chip.low { background: rgba(220, 38, 38, 0.16); color: #f0a0a0; }
 
