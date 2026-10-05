@@ -300,6 +300,25 @@ class NoAcquirer(BaseAcquirer):
         raise AcquiringError("Онлайн-оплата у заведения не подключена")
 
 
+#: Системы налогообложения в чеке Т-Банка (Receipt.Taxation).
+TBANK_TAXATION = (
+    ("usn_income", "УСН «доходы»"),
+    ("usn_income_outcome", "УСН «доходы минус расходы»"),
+    ("osn", "ОСН"),
+    ("patent", "Патент"),
+    ("esn", "ЕСХН"),
+)
+
+#: Ставки НДС в чеке Т-Банка (Items.Tax). С 2026 года основная — 22 %.
+TBANK_VAT = (
+    ("none", "Без НДС"),
+    ("vat0", "НДС 0 %"),
+    ("vat5", "НДС 5 %"),
+    ("vat7", "НДС 7 %"),
+    ("vat10", "НДС 10 %"),
+    ("vat22", "НДС 22 %"),
+)
+
 #: Корневой сертификат Минцифры. Т-Банк перевёл securepay на сертификаты
 #: Russian Trusted CA, а их нет ни в certifi, ни в образе python:slim —
 #: без этого файла любой запрос к банку падал бы на проверке TLS, и гость
@@ -345,6 +364,20 @@ class TBankAcquirer(BaseAcquirer):
                    "Для проверки — тестовый терминал, его ключ оканчивается на DEMO",
               secret=False),
         Field("password", "Пароль терминала", env="TBANK_PASSWORD"),
+        # Т-Банк, в отличие от ЮKassa, не говорит по API, подключена ли к
+        # терминалу онлайн-касса, — владелец отмечает это сам. С кассой
+        # платёж без чека банк не примет.
+        Field("receipt", "Онлайн-касса подключена", env="TBANK_RECEIPT", secret=False,
+              # «0», а не пусто: пустое поле в форме значит «не менял», и
+              # выключить чек обратно было бы нельзя.
+              required=False, choices=(("0", "Нет — чек не передаём"),
+                                       ("1", "Да — передаём чек")), default="0",
+              hint="Кабинет Т-Бизнеса → Онлайн-касса: подключена ли она к этому терминалу"),
+        Field("taxation", "Система налогообложения", env="TBANK_TAXATION", secret=False,
+              required=False, choices=TBANK_TAXATION, default="usn_income",
+              hint="Нужна в каждом чеке — как в настройках онлайн-кассы"),
+        Field("vat", "Ставка НДС в чеке", env="TBANK_VAT", secret=False,
+              required=False, choices=TBANK_VAT, default="none"),
     )
 
     #: Конечные статусы, при которых денег нет и не будет. Всё остальное —
@@ -421,6 +454,9 @@ class TBankAcquirer(BaseAcquirer):
             # гостя, — по нему уведомление и находит заведение.
             "NotificationURL": _callback_url(return_url, self.name),
         }
+        if self.receipt_required():
+            body["Receipt"] = self._receipt(payment)
+        # Receipt вложенный — в подпись не входит (см. _token).
         body["Token"] = self._token(body)
 
         data = self._post("Init", body)
@@ -430,6 +466,52 @@ class TBankAcquirer(BaseAcquirer):
         payment.external_id = str(data["PaymentId"])
         payment.save(update_fields=["external_id", "updated_at"])
         return data["PaymentURL"]
+
+    def receipt_required(self) -> bool:
+        return self.value("receipt") == "1"
+
+    def _receipt(self, payment) -> dict:
+        """Чек по 54-ФЗ: позиции заказа, СНО, НДС и контакт гостя.
+
+        Позиции и контакт — из payments.receipt, как у ЮKassa. Свои у
+        Т-Банка: суммы в копейках, телефон с «+», обязательная система
+        налогообложения и единица измерения (её требует ФФД 1.2). Возврат
+        чека не требует: при полном Cancel чек возврата банк делает сам.
+        """
+        from . import receipt
+
+        order = payment.order
+        contact = receipt.contact_of(order) if order else ""
+        if not contact:
+            raise AcquiringError("Для чека нужен телефон или почта гостя")
+        try:
+            lines = receipt.lines(order, payment.amount)
+        except ValueError as e:
+            raise AcquiringError(f"Чек не собрался: {e}") from e
+        tax = self.value("vat") or "none"
+        body = {
+            "Taxation": self.value("taxation") or "usn_income",
+            "Items": [
+                {
+                    "Name": line.name,
+                    "Price": _kopecks(line.price),
+                    "Quantity": line.quantity,
+                    "Amount": _kopecks(line.total),
+                    "Tax": tax,
+                    # Полный расчёт и товар: гость платит за то, что получит
+                    # здесь же через несколько минут.
+                    "PaymentMethod": "full_payment",
+                    "PaymentObject": "commodity",
+                    "MeasurementUnit": "шт",
+                }
+                for line in lines
+            ],
+        }
+        if receipt.is_email(contact):
+            body["Email"] = contact
+        else:
+            body["Phone"] = "+" + contact
+        return body
 
     def read_callback(self, payload: dict, headers: dict) -> Result | None:
         got = str(payload.get("Token", ""))

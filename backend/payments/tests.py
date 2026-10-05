@@ -1527,3 +1527,62 @@ class ReceiptLinesTests(TestCase):
         self.assertEqual(parse_contact(" Guest@Example.com "), "guest@example.com")
         self.assertEqual(parse_contact("12345"), "")
         self.assertEqual(parse_contact("a@b"), "")
+
+
+class TBankReceiptTests(APITestCase):
+    """Чек Т-Банку: тест 7 в кабинете Т-Бизнеса («Формирование чека»)."""
+
+    def setUp(self):
+        cat = Category.objects.create(name="Кофе", station="bar")
+        cocoa = Product.objects.create(category=cat, name="Какао")
+        variant = ProductVariant.objects.create(product=cocoa, price=Decimal("270"))
+        self.order = Order.objects.create(
+            status=Order.Status.UNPAID, total=Decimal("270"), public_token=uuid.uuid4()
+        )
+        self.order.items.create(variant=variant, quantity=1, unit_price=Decimal("270"))
+        site = SiteSettings.load()
+        site.acquiring = SiteSettings.Acquiring.TBANK
+        site.online_payment_on = True
+        site.save()
+
+    def keys(self, **extra):
+        env = {"TBANK_TERMINAL_KEY": "t-DEMO", "TBANK_PASSWORD": "p", **extra}
+        patcher = mock.patch.dict("os.environ", env)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def pay(self, contact=None):
+        body = {"token": str(self.order.public_token)}
+        if contact:
+            body["contact"] = contact
+        answer = {"Success": True, "PaymentId": "777", "PaymentURL": "https://pay.example/777"}
+        with mock.patch.object(TBankAcquirer, "_post", return_value=answer) as post:
+            response = self.client.post("/api/orders/pay_online/", body, format="json")
+        return response, post
+
+    def test_receipt_with_kassa(self):
+        self.keys(TBANK_RECEIPT="1", TBANK_TAXATION="usn_income")
+        response, post = self.pay("8 999 123-45-67")
+        self.assertEqual(response.status_code, 200, response.data)
+        method, body = post.call_args.args
+        receipt = body["Receipt"]
+        self.assertEqual(receipt["Taxation"], "usn_income")
+        self.assertEqual(receipt["Phone"], "+79991234567")
+        [item] = receipt["Items"]
+        self.assertEqual((item["Price"], item["Quantity"], item["Amount"]), (27000, 1, 27000))
+        self.assertEqual(item["Tax"], "none")
+        self.assertEqual(sum(i["Amount"] for i in receipt["Items"]), body["Amount"])
+        # Вложенный Receipt в подпись не входит — подпись та же, что без него.
+        self.assertEqual(body["Token"], TBankAcquirer()._token(body))
+
+    def test_guest_asked_for_contact(self):
+        self.keys(TBANK_RECEIPT="1")
+        response, post = self.pay()
+        self.assertTrue(response.data["need_contact"])
+        post.assert_not_called()
+
+    def test_no_receipt_without_kassa(self):
+        self.keys(TBANK_RECEIPT="0")
+        response, post = self.pay()
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertNotIn("Receipt", post.call_args.args[1])
