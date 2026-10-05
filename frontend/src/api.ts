@@ -23,9 +23,12 @@ function getRefresh(): string | null {
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** Тело ответа целиком — для ответов с флагами (need_contact и т.п.). */
+  body: Record<string, unknown>;
+  constructor(status: number, message: string, body: Record<string, unknown> = {}) {
     super(message);
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -78,13 +81,14 @@ async function request<T>(path: string, options: RequestInit, retry: boolean): P
 
   if (!res.ok) {
     let detail = `Ошибка ${res.status}`;
+    let body: Record<string, unknown> = {};
     try {
-      const body = await res.json();
-      detail = body.detail || JSON.stringify(body);
+      body = await res.json();
+      detail = (body.detail as string) || JSON.stringify(body);
     } catch {
       /* тело не JSON */
     }
-    throw new ApiError(res.status, detail);
+    throw new ApiError(res.status, detail, body);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;

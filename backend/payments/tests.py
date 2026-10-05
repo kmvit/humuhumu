@@ -612,7 +612,7 @@ class AcquiringSettingsApiTests(APITestCase):
         self.save(provider="yookassa", values={"shop_id": "100500", "secret_key": SECRET})
         data = self.client.get("/api/acquiring/").data
         self.assertNotIn(SECRET, str(data))
-        self.assertEqual(data["filled"], {"shop_id": True, "secret_key": True})
+        self.assertEqual(data["filled"], {"shop_id": True, "secret_key": True, "vat": False})
 
     def test_blank_field_keeps_the_old_value(self):
         """Форма не знает секрета, поэтому пустое поле значит «не менял»."""
@@ -645,7 +645,7 @@ class AcquiringSettingsApiTests(APITestCase):
         self.save(provider="yookassa", values={"shop_id": "100500", "secret_key": SECRET})
         data = self.client.delete("/api/acquiring/").data
         self.assertFalse(data["ready"])
-        self.assertEqual(data["filled"], {"shop_id": False, "secret_key": False})
+        self.assertEqual(data["filled"], {"shop_id": False, "secret_key": False, "vat": False})
 
     def test_unknown_bank_is_refused(self):
         self.assertEqual(self.save(provider="sberbank-ru", values={}).status_code, 400)
@@ -1352,3 +1352,165 @@ class RefundWithoutOwnNumberTests(APITestCase):
             response = self.client.post(f"/api/orders/{self.order.pk}/refund/", {}, format="json")
         self.assertEqual(response.status_code, 200, response.content[:300])
         self.assert_refunded(payment)
+
+
+class ReceiptTests(APITestCase):
+    """Чек по 54-ФЗ для ЮKassa с подключённой кассой.
+
+    У Монти к ЮKassa подключена касса Бизнес.Ру, и банк отклонял каждый
+    платёж без блока receipt («Receipt is missing or illegal») — онлайн-
+    оплата не прошла ни разу (нашли 04.10.2026).
+    """
+
+    def setUp(self):
+        from django.core.cache import cache
+
+        cache.clear()
+        self.addCleanup(cache.clear)
+        cat = Category.objects.create(name="Кофе", station="bar")
+        latte = Product.objects.create(category=cat, name="Латте")
+        self.latte = ProductVariant.objects.create(product=latte, price=Decimal("250"))
+        cookie = Product.objects.create(category=cat, name="Печенье")
+        self.cookie = ProductVariant.objects.create(product=cookie, price=Decimal("90"))
+        self.order = Order.objects.create(
+            status=Order.Status.UNPAID, total=Decimal("590"), public_token=uuid.uuid4()
+        )
+        self.order.items.create(variant=self.latte, quantity=2, unit_price=Decimal("250"))
+        self.order.items.create(variant=self.cookie, quantity=1, unit_price=Decimal("90"))
+        site = SiteSettings.load()
+        site.acquiring = SiteSettings.Acquiring.YOOKASSA
+        site.online_payment_on = True
+        site.save()
+        env = mock.patch.dict(
+            "os.environ", {"YOOKASSA_SHOP_ID": "100500", "YOOKASSA_SECRET_KEY": SECRET}
+        )
+        env.start()
+        self.addCleanup(env.stop)
+
+    def bank(self, fiscal=True):
+        """ЮKassa: /me говорит, подключена ли касса; платёж создаётся."""
+        me = mock.patch.object(
+            YooKassaAcquirer, "_get",
+            return_value={"fiscalization_enabled": fiscal,
+                          "fiscalization": {"enabled": fiscal, "provider": "business_ru"}},
+        )
+        # Каждый платёж у банка — со своим номером, как в жизни.
+        numbers = iter(range(1, 100))
+
+        def answer(*args, **kwargs):
+            n = next(numbers)
+            return {"id": f"p-{n}", "confirmation": {"confirmation_url": f"https://pay.example/{n}"}}
+
+        post = mock.patch.object(YooKassaAcquirer, "_post", side_effect=answer)
+        me.start(); self.addCleanup(me.stop)
+        return post.start(), post
+
+    def pay(self, contact=None):
+        body = {"token": str(self.order.public_token)}
+        if contact is not None:
+            body["contact"] = contact
+        return self.client.post("/api/orders/pay_online/", body, format="json")
+
+    def test_guest_is_asked_where_to_send_the_receipt(self):
+        post, patcher = self.bank()
+        response = self.pay()
+        patcher.stop()
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(response.data["need_contact"])
+        post.assert_not_called()
+
+    def test_receipt_goes_to_the_bank_and_sums_match(self):
+        post, patcher = self.bank()
+        response = self.pay("+7 (999) 123-45-67")
+        patcher.stop()
+        self.assertEqual(response.status_code, 200, response.data)
+        body = post.call_args.args[1]
+        receipt = body["receipt"]
+        self.assertEqual(receipt["customer"], {"phone": "79991234567"})
+        total = sum(
+            Decimal(i["amount"]["value"]) * Decimal(i["quantity"]) for i in receipt["items"]
+        )
+        self.assertEqual(str(total.quantize(Decimal("0.01"))), body["amount"]["value"])
+        self.assertEqual({i["vat_code"] for i in receipt["items"]}, {1})
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.receipt_contact, "79991234567")
+
+    def test_contact_is_remembered_for_the_next_try(self):
+        post, patcher = self.bank()
+        self.pay("guest@example.com")
+        response = self.pay()
+        patcher.stop()
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            post.call_args.args[1]["receipt"]["customer"], {"email": "guest@example.com"}
+        )
+
+    def test_member_phone_is_used_without_asking(self):
+        guest = User.objects.create_user("g", password="x", role=User.Role.CLIENT, phone="89990001122")
+        Order.objects.filter(pk=self.order.pk).update(client=guest)
+        post, patcher = self.bank()
+        response = self.pay()
+        patcher.stop()
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(post.call_args.args[1]["receipt"]["customer"], {"phone": "79990001122"})
+
+    def test_garbage_contact_is_refused(self):
+        post, patcher = self.bank()
+        response = self.pay("позвоните мне")
+        patcher.stop()
+        self.assertTrue(response.data["need_contact"])
+        post.assert_not_called()
+
+    def test_no_receipt_without_online_kassa(self):
+        """Касса к ЮKassa не подключена — ни чека, ни вопроса гостю."""
+        post, patcher = self.bank(fiscal=False)
+        response = self.pay()
+        patcher.stop()
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertNotIn("receipt", post.call_args.args[1])
+
+
+class ReceiptLinesTests(TestCase):
+    """Бонусы раскладываются по позициям так, что чек сходится до копейки."""
+
+    def order(self, *lines, bonus="0"):
+        cat = Category.objects.create(name="Кухня", station="kitchen")
+        order = Order.objects.create(status=Order.Status.OPEN, total=Decimal("0"))
+        for name, price, qty in lines:
+            product = Product.objects.create(category=cat, name=name)
+            variant = ProductVariant.objects.create(product=product, price=Decimal(price))
+            order.items.create(variant=variant, quantity=qty, unit_price=Decimal(price))
+        order.recalc_total()
+        order.bonus_spent = Decimal(bonus)
+        order.save()
+        return order
+
+    def check(self, order):
+        from .receipt import lines
+
+        result = lines(order, order.payable)
+        self.assertEqual(sum(l.total for l in result), order.payable)
+        self.assertTrue(all(l.price > 0 and l.quantity > 0 for l in result))
+        return result
+
+    def test_without_bonuses_lines_are_the_order(self):
+        result = self.check(self.order(("Латте", "250", 2), ("Печенье", "90", 1)))
+        self.assertEqual([(l.quantity, l.price) for l in result],
+                         [(2, Decimal("250")), (1, Decimal("90"))])
+
+    def test_bonuses_spread_to_the_kopeck(self):
+        self.check(self.order(("Латте", "250", 3), ("Печенье", "90", 1), bonus="100"))
+
+    def test_awkward_split_breaks_a_line_in_two(self):
+        """333 ₽ скидки на 3 позиции × 7 шт. не делятся на копейки — строка делится."""
+        result = self.check(self.order(("Сырник", "100", 7), bonus="3.33"))
+        self.assertGreaterEqual(len(result), 1)
+
+    def test_parse_contact(self):
+        from .receipt import parse_contact
+
+        self.assertEqual(parse_contact("8 (999) 123-45-67"), "79991234567")
+        self.assertEqual(parse_contact("9991234567"), "79991234567")
+        self.assertEqual(parse_contact(" Guest@Example.com "), "guest@example.com")
+        self.assertEqual(parse_contact("12345"), "")
+        self.assertEqual(parse_contact("a@b"), "")

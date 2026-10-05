@@ -166,6 +166,12 @@ class AcquiringSettingsView(APIView):
             "ready": acquirer.configured(),
             "online_payment_on": site.online_payment_on,
             "filled": acquirer.filled(),
+            # Несекретные поля (ставка НДС) — значениями: иначе форма не
+            # покажет, что выбрано сейчас.
+            "values": {f.key: acquirer.value(f.key) for f in acquirer.fields if not f.secret},
+            # Подключена ли к банку онлайн-касса: тогда гостя спросят
+            # телефон или почту для чека. null — банк не выбран или не настроен.
+            "receipts": acquirer.receipt_required() if acquirer.configured() else None,
             # Адрес уведомлений владелец вписывает в кабинете банка сам —
             # взять его больше неоткуда, а без него банк молчит об оплате.
             # Домен берём из запроса: у каждого заведения он свой, по нему
@@ -196,6 +202,8 @@ class AcquiringSettingsView(APIView):
                             "hint": f.hint,
                             "secret": f.secret,
                             "required": f.required,
+                            "choices": [{"value": v, "label": l} for v, l in f.choices],
+                            "default": f.default,
                         }
                         for f in cls.fields
                     ],

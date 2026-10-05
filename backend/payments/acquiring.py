@@ -232,6 +232,15 @@ class BaseAcquirer:
             "верните платёж в личном кабинете банка."
         )
 
+    def receipt_required(self) -> bool:
+        """Ждёт ли банк в платеже данные для чека (54-ФЗ).
+
+        Да — если к магазину в кабинете банка подключена онлайн-касса: без
+        позиций и контакта гостя такой банк платёж отклонит. Тогда сервис
+        до создания платежа добудет у гостя телефон или почту.
+        """
+        return False
+
     def check(self) -> None:
         """Проверить доступы у банка. Молча — значит приняты.
 
@@ -252,6 +261,8 @@ class BaseAcquirer:
         """
         for f in self.fields:
             value = self.value(f.key)
+            if value and f.choices and value not in {v for v, _ in f.choices}:
+                raise AcquiringError(f"{self.title}: в поле «{f.label}» нет такого значения.")
             if not value or not f.pattern:
                 continue
             if not re.fullmatch(f.pattern, value):
@@ -603,6 +614,17 @@ class SberAcquirer(BaseAcquirer):
             raise AcquiringError(f"Сбербанк недоступен: {e}") from e
 
 
+#: Ставки НДС в чеке ЮKassa (vat_code). С 2026 года основная — 22 %.
+YOOKASSA_VAT = (
+    ("1", "Без НДС"),
+    ("2", "НДС 0 %"),
+    ("7", "НДС 5 %"),
+    ("8", "НДС 7 %"),
+    ("3", "НДС 10 %"),
+    ("11", "НДС 22 %"),
+)
+
+
 class YooKassaAcquirer(BaseAcquirer):
     """ЮKassa (принадлежит Сберу; для мелкого бизнеса он ведёт именно сюда).
 
@@ -619,10 +641,14 @@ class YooKassaAcquirer(BaseAcquirer):
     Поэтому поступаем как со Сбером: из уведомления берём только номер
     платежа, а статус спрашиваем у банка сами.
 
-    Чек по 54-ФЗ здесь НЕ формируется: для него нужен блок receipt с
-    позициями, ставкой НДС, системой налогообложения и контактом гостя —
-    ничего этого мы пока не храним. Если в кабинете ЮKassa включены чеки,
-    платёж без receipt банк отклонит: сначала заводим эти данные.
+    Чек по 54-ФЗ. Если к магазину подключена онлайн-касса (у Монти —
+    Бизнес.Ру), ЮKassa без блока receipt платёж отклоняет («Receipt is
+    missing or illegal») — так у Монти и не проходила ни одна онлайн-оплата.
+    Подключена ли касса, спрашиваем у самой ЮKassa (/me): владелец мог
+    включить её в кабинете в любой момент, и запомненный при вводе ключей
+    ответ устарел бы. Систему налогообложения не передаём — она задана в
+    самой кассе; полный возврат чека не требует, ЮKassa передаст кассе чек
+    возврата сама.
     """
 
     name = "yookassa"
@@ -640,7 +666,14 @@ class YooKassaAcquirer(BaseAcquirer):
               pattern=r"(live|test)_[A-Za-z0-9_\-]{10,}",
               error="Ключ ЮKassa начинается с live_ (или test_ для проверок) "
                     "и выдаётся один раз при выпуске."),
+        Field("vat", "Ставка НДС в чеке", env="YOOKASSA_VAT", secret=False,
+              required=False, choices=YOOKASSA_VAT, default="1",
+              hint="Нужна, если к ЮKassa подключена онлайн-касса"),
     )
+
+    #: Сколько помним ответ «касса подключена»: чтобы не спрашивать ЮKassa
+    #: на каждый платёж, но и подхватить включение чеков в кабинете.
+    RECEIPT_CACHE_SECONDS = 600
 
     @property
     def shop_id(self) -> str:
@@ -654,10 +687,62 @@ class YooKassaAcquirer(BaseAcquirer):
         """Ключ идемпотентности: один и тот же для повторов одного платежа."""
         return str(uuid.uuid5(uuid.NAMESPACE_URL, f"https://padacha.ru/payments/{payment.pk}"))
 
+    def receipt_required(self) -> bool:
+        from django.core.cache import cache
+
+        key = f"yookassa-fiscal:{self.shop_id}"
+        known = cache.get(key)
+        if known is not None:
+            return known
+        try:
+            me = self._get(f"{self.api}/me")
+        except AcquiringError as e:
+            # Не узнали — платим без чека. Если касса всё-таки подключена,
+            # банк откажет, и причина дойдёт до владельца, а не до гостя.
+            logger.warning("ЮKassa: не узнали, подключена ли касса (%s)", e)
+            return False
+        fiscal = me.get("fiscalization") or {}
+        required = bool(me.get("fiscalization_enabled") or fiscal.get("enabled"))
+        cache.set(key, required, self.RECEIPT_CACHE_SECONDS)
+        return required
+
+    def _receipt(self, payment) -> dict:
+        """Блок receipt: позиции заказа и контакт гостя (см. payments.receipt)."""
+        from . import receipt
+
+        order = payment.order
+        contact = receipt.contact_of(order) if order else ""
+        if not contact:
+            # Сервис спрашивает контакт до создания платежа; сюда без него
+            # попасть можно только в обход — честнее отказать, чем получить
+            # отказ банка на чужом языке.
+            raise AcquiringError("Для чека нужен телефон или почта гостя")
+        try:
+            lines = receipt.lines(order, payment.amount)
+        except ValueError as e:
+            raise AcquiringError(f"Чек не собрался: {e}") from e
+        vat = int(self.value("vat") or 1)
+        return {
+            "customer": {"email": contact} if receipt.is_email(contact) else {"phone": contact},
+            "items": [
+                {
+                    "description": line.name,
+                    "quantity": f"{line.quantity}.00",
+                    "amount": {"value": _rubles(line.price), "currency": "RUB"},
+                    "vat_code": vat,
+                    # Полный расчёт и товар: гость платит за то, что получит
+                    # здесь же через несколько минут.
+                    "payment_mode": "full_payment",
+                    "payment_subject": "commodity",
+                }
+                for line in lines
+            ],
+        }
+
     def create(self, payment, *, return_url: str) -> str:
         self.require_configured()
 
-        data = self._post(f"{self.api}/payments", {
+        body = {
             "amount": {"value": _rubles(payment.amount), "currency": "RUB"},
             # capture — списываем сразу, без холда: заказ уже собран,
             # держать деньги и подтверждать вторым запросом незачем.
@@ -667,7 +752,10 @@ class YooKassaAcquirer(BaseAcquirer):
             # Чтобы платёж в кабинете банка можно было сопоставить с нашим
             # реестром при сверке.
             "metadata": {"payment_id": str(payment.pk)},
-        }, idempotence_key=self._key(payment))
+        }
+        if self.receipt_required():
+            body["receipt"] = self._receipt(payment)
+        data = self._post(f"{self.api}/payments", body, idempotence_key=self._key(payment))
 
         confirmation = data.get("confirmation") or {}
         url = confirmation.get("confirmation_url")

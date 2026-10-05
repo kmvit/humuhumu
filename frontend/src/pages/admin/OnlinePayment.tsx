@@ -24,6 +24,9 @@ type BankField = {
   hint: string;
   secret: boolean;
   required: boolean;
+  /** Выбор из списка вместо ввода (ставка НДС). */
+  choices: { value: string; label: string }[];
+  default: string;
 };
 
 type Bank = { name: string; title: string; fields: BankField[] };
@@ -33,6 +36,10 @@ type State = {
   ready: boolean;
   online_payment_on: boolean;
   filled: Record<string, boolean>;
+  /** Значения несекретных полей — чтобы список показал, что выбрано. */
+  values: Record<string, string>;
+  /** Подключена ли к банку онлайн-касса (чек по 54-ФЗ); null — неизвестно. */
+  receipts: boolean | null;
   /** Адрес, который владелец вписывает в кабинете банка (пусто — банка нет). */
   callback_url: string;
   /** Банк получает адрес с каждым платежом — в кабинет вписывать не нужно. */
@@ -247,7 +254,21 @@ export default function OnlinePayment() {
                 {f.label}
                 {!f.required && <span className="muted"> — необязательно</span>}
               </span>
-              <input
+{f.choices.length ? (
+                <select
+                  className="input"
+                  value={
+                    values[f.key] ??
+                    ((provider === state.provider && state.values[f.key]) || f.default)
+                  }
+                  onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
+                >
+                  {f.choices.map((c) => (
+                    <option key={c.value} value={c.value}>{c.label}</option>
+                  ))}
+                </select>
+              ) : (
+                            <input
                 className="input"
                 type={f.secret ? "password" : "text"}
                 autoComplete="off"
@@ -256,6 +277,7 @@ export default function OnlinePayment() {
                 onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
                 placeholder={filled[f.key] ? "Задан — оставьте пустым, чтобы не менять" : f.hint}
               />
+              )}
             </label>
           ))}
 
@@ -314,6 +336,16 @@ export default function OnlinePayment() {
                 </button>
               </div>
             </div>
+          )}
+
+          {/* Касса у банка — значит, банк не примет платёж без чека: гостя
+              спросят телефон или почту, а позиции и НДС уйдут в чек сами. */}
+          {state.ready && state.receipts !== null && provider === state.provider && (
+            <p className="muted sm mt-3 m-0">
+              {state.receipts
+                ? "К банку подключена онлайн-касса: чек пробивается сам. Перед оплатой гостя спросим телефон или почту — туда придёт чек."
+                : "Онлайн-касса к банку не подключена — чек по онлайн-оплате нужно пробивать самим."}
+            </p>
           )}
 
           <p className="muted sm mt-3 m-0">

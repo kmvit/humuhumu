@@ -7,6 +7,9 @@ import { minutesBetween } from "../../time";
 import type { Order } from "../../types";
 import GuestBonus from "./GuestBonus";
 
+/** Последний телефон или почта для чека — подставим в следующий раз. */
+const CONTACT_KEY = "receipt_contact";
+
 /** Экран «Ваш заказ»: статус, номер выдачи, состав, оплата и отмена.
 
     Общий для обоих меню — обычного и ленты. Для гостя это главный экран
@@ -36,6 +39,16 @@ export default function OrderStatus({
   const canPayKassa = counter && site?.kassa_payment === true;
   const notify = useToast();
   const [paying, setPaying] = useState(false);
+  // Банку нужен чек (54-ФЗ), а куда его прислать, мы не знаем: спрашиваем
+  // телефон или почту. Прошлый ввод подставляем — гость платит не впервые.
+  const [askContact, setAskContact] = useState(false);
+  const [contact, setContact] = useState(() => {
+    try {
+      return localStorage.getItem(CONTACT_KEY) || "";
+    } catch {
+      return "";
+    }
+  });
   const [cancelling, setCancelling] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
 
@@ -74,11 +87,24 @@ export default function OrderStatus({
     try {
       const { payment_url } = await post<{ payment_url: string }>(
         "/orders/pay_online/",
-        { token },
+        askContact ? { token, contact } : { token },
       );
+      if (askContact) {
+        try {
+          localStorage.setItem(CONTACT_KEY, contact.trim());
+        } catch {
+          /* приватный режим — просто не запомним */
+        }
+      }
       window.location.href = payment_url;
     } catch (e) {
-      notify(e instanceof ApiError ? e.message : "Не удалось начать оплату", "bad");
+      if (e instanceof ApiError && e.body.need_contact) {
+        // Не ошибка гостя, а вопрос: показываем поле, а не красный тост.
+        if (askContact) notify(e.message, "bad");
+        setAskContact(true);
+      } else {
+        notify(e instanceof ApiError ? e.message : "Не удалось начать оплату", "bad");
+      }
       setPaying(false);
     }
   }
@@ -189,8 +215,27 @@ export default function OrderStatus({
               предоплате деньги уже взяты, а статус ещё «открыт» — гость
               заплатил бы второй раз. «Онлайн», а не «картой»: на кассе картой
               тоже можно, и гость путался, чем эти две кнопки отличаются. */}
+          {canPayOnline && askContact && !order.paid_at && st !== "paid" && st !== "cancelled" && (
+            <label className="field mt-4">
+              <span className="label">Куда прислать чек</span>
+              <input
+                className="input"
+                autoComplete="email"
+                autoCapitalize="none"
+                placeholder="Телефон или почта"
+                value={contact}
+                onChange={(e) => setContact(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && contact.trim() && payOnline()}
+                autoFocus
+              />
+            </label>
+          )}
           {canPayOnline && !order.paid_at && st !== "paid" && st !== "cancelled" && (
-            <button className="btn block mt-4" disabled={paying} onClick={payOnline}>
+            <button
+              className={"btn block " + (askContact ? "mt-2" : "mt-4")}
+              disabled={paying || (askContact && !contact.trim())}
+              onClick={payOnline}
+            >
               <Icon name="card" size={18} /> Оплатить онлайн ·{" "}
               {Number(order.payable).toLocaleString("ru")} ₽
             </button>

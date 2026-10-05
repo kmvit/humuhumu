@@ -32,6 +32,7 @@ from .services import (
 from payments.models import Payment
 from payments.services import (
     GUEST_KASSA_FAILED,
+    NeedContact,
     PaymentError,
     ProviderRefused,
     apply_payment_result,
@@ -407,7 +408,16 @@ class OrderViewSet(viewsets.ModelViewSet):
         # Куда банк вернёт гостя после оплаты: на его же страницу заказа.
         return_url = request.build_absolute_uri(f"/?token={order.public_token}")
         try:
-            _, url = start_online_payment(order, return_url=return_url)
+            _, url = start_online_payment(
+                order, return_url=return_url, contact=str(request.data.get("contact") or "")
+            )
+        except NeedContact as e:
+            # Банку нужен чек, а контакта у заказа нет: страница заказа по
+            # need_contact покажет поле «Куда прислать чек».
+            return Response(
+                {"detail": str(e), "need_contact": True},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         except PaymentError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response({"payment_url": url})

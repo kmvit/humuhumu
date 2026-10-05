@@ -577,6 +577,14 @@ def settle_kassa(order: Order) -> None:
             logger.exception("Не удалось довести платёж %s", payment.pk)
 
 
+#: Статусы, в которых заказ можно оплатить онлайн.
+ONLINE_PAYABLE = (Order.Status.OPEN, Order.Status.REQUESTED, Order.Status.UNPAID)
+
+
+class NeedContact(PaymentError):
+    """Банку нужен контакт для чека, а у заказа его нет — спросить гостя."""
+
+
 class ProviderRefused(PaymentError):
     """Банк или касса не дали перейти к оплате.
 
@@ -589,12 +597,33 @@ class ProviderRefused(PaymentError):
         self.provider = provider
 
 
-def start_online_payment(order: Order, *, return_url: str) -> tuple[Payment, str]:
+def start_online_payment(
+    order: Order, *, return_url: str, contact: str = ""
+) -> tuple[Payment, str]:
     """Оплата картой онлайн для гостя — с ошибками, понятными гостю.
+
+    contact — телефон или почта для чека, если гость их ввёл. Нужны они,
+    только когда к банку подключена онлайн-касса (receipt_required); тогда
+    без контакта бросаем NeedContact, и страница заказа спросит его.
 
     Отказ банка запоминается для владельца уже ПОСЛЕ отката транзакции:
     внутри неё запись откатилась бы вместе с платежом.
     """
+    # Контакт для чека — до транзакции: отказ банка откатил бы его, и гостя
+    # спросили бы снова. И запрос к банку «нужен ли чек» держать открытую
+    # транзакцию не должен.
+    # Спрашиваем, только если платить вообще можно: иначе гость с закрытым
+    # заказом сначала вводил бы почту, а потом узнавал, что платить нечего.
+    from core.models import SiteSettings
+
+    acquirer = get_acquirer()
+    if (
+        order.status in ONLINE_PAYABLE
+        and SiteSettings.load().online_payment_on
+        and acquirer.configured()
+        and acquirer.receipt_required()
+    ):
+        _remember_receipt_contact(order, contact)
     try:
         return _start_online_payment(order, return_url=return_url)
     except ProviderRefused as e:
@@ -618,7 +647,7 @@ def _start_online_payment(order: Order, *, return_url: str) -> tuple[Payment, st
     зависший в «к оплате», официант закрыть не сможет. Статус меняется
     только по факту оплаты — в apply_payment_result.
     """
-    if order.status not in (Order.Status.OPEN, Order.Status.REQUESTED, Order.Status.UNPAID):
+    if order.status not in ONLINE_PAYABLE:
         raise PaymentError("Оплатить можно только незакрытый заказ")
 
     # Выключатель владельца проверяем и здесь, а не только прячем кнопку:
@@ -653,6 +682,23 @@ def _start_online_payment(order: Order, *, return_url: str) -> tuple[Payment, st
         raise ProviderRefused(acquirer.name, str(e)) from e
     note_payment_ok(acquirer.name)
     return payment, url
+
+
+def _remember_receipt_contact(order: Order, raw: str) -> None:
+    """Контакт для чека: введённый сейчас, введённый раньше или из профиля."""
+    from . import receipt
+
+    if raw:
+        contact = receipt.parse_contact(raw)
+        if not contact:
+            raise NeedContact("Не похоже на телефон или почту — проверьте, пожалуйста")
+    else:
+        contact = receipt.contact_of(order)
+    if not contact:
+        raise NeedContact("Куда прислать чек? Укажите телефон или почту")
+    if order.receipt_contact != contact:
+        order.receipt_contact = contact
+        order.save(update_fields=["receipt_contact"])
 
 
 #: Что видит гость, если банк не дал перейти к оплате.

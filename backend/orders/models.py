@@ -129,6 +129,12 @@ class Order(TenantModel):
     bonus_spent = models.DecimalField(
         "Списано бонусами", max_digits=12, decimal_places=2, default=0
     )
+    # Куда банк пришлёт гостю чек онлайн-оплаты (54-ФЗ): телефон «79…» или
+    # почта. Без контакта банк с подключённой онлайн-кассой платёж не
+    # примет. Запоминаем, чтобы при повторной попытке не спрашивать снова.
+    receipt_contact = models.CharField(
+        "Контакт для чека", max_length=120, blank=True, default=""
+    )
     # номер/признак фискального чека (заполняется при оплате через кассу-терминал)
     fiscal_receipt = models.CharField("Фискальный чек", max_length=64, blank=True, default="")
     created_at = models.DateTimeField("Создан", auto_now_add=True)
