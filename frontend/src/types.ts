@@ -812,6 +812,29 @@ export interface LoyaltyMember {
   created_at: string;
 }
 
+/** Разбор файла с гостями из прежней системы — что сделает перенос. */
+export interface MemberImport {
+  /** Какие колонки файла взяли: поле → название колонки. */
+  columns: Partial<Record<"phone" | "name" | "birth_date" | "balance", string>>;
+  total: number;
+  to_import: {
+    row: number;
+    name: string;
+    phone: string;
+    birth_date: string | null;
+    /** Зачислим (целыми). */
+    balance: string;
+    /** Как было в файле — может быть с копейками. */
+    balance_in_file: string;
+  }[];
+  skipped: { row: number; name: string; phone: string; reason: string }[];
+  invalid: { row: number; name: string; reason: string }[];
+  notes: { row: number; name: string; note: string }[];
+  balance_total: string;
+  /** Сколько перенесено; 0 — это был только разбор. */
+  imported: number;
+}
+
 // ——— фото блюд нейросетью ———
 
 /** Образец посуды: в нём нейросеть рисует блюда заведения. */

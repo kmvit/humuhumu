@@ -786,3 +786,164 @@ class PlanGateTests(LoyaltyBase):
         self.assertEqual(res.data["welcome"], 200)
         self.assertTrue(res.data["redeem_waiter"])
         self.assertFalse(res.data["redeem_guest"])
+
+
+class MemberImportTests(LoyaltyBase):
+    """Перенос гостей из файла прежней системы: разбор, перенос, повтор."""
+
+    #: заголовок как в выгрузке a1-systems у Монти — с колонкой «Бонус»,
+    #: где лежит процент начисления, а не остаток
+    A1 = ["Номер карты", "Имя", "Фамилия", "Email", "Телефон", "День рождения",
+          "Пол", "Скидка", "Бонус", "Текущ. баланс", "Потраченная сумма"]
+
+    def setUp(self):
+        super().setUp()
+        self.admin = User.objects.create_user(
+            username="owner", password="demo12345", role=User.Role.ADMIN
+        )
+        self.auth(self.admin)
+
+    def xlsx(self, rows, header=None):
+        import io
+
+        import openpyxl
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(header or self.A1)
+        for r in rows:
+            ws.append(r)
+        buf = io.BytesIO()
+        wb.save(buf)
+        return SimpleUploadedFile("export.xlsx", buf.getvalue())
+
+    def a1(self, name, phone, birth="20.10.1995", balance=0):
+        return ["1", name, None, None, phone, birth, None, 0, 3, balance, 0]
+
+    def post(self, upload, commit=False, consent=True):
+        data = {"file": upload}
+        if commit:
+            data["commit"] = "1"
+            if consent:
+                data["consent"] = "1"
+        return self.client.post("/api/loyalty/members/import/", data, format="multipart")
+
+    def test_preview_reads_a1_export_and_writes_nothing(self):
+        res = self.post(self.xlsx([
+            self.a1("Анна", "79181112233", balance=8.6),
+            self.a1("Борис", "89181112234", birth="01.02.1980", balance=120),
+        ]))
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(res.data["columns"]["balance"], "Текущ. баланс")  # не «Бонус»
+        self.assertEqual(res.data["total"], 2)
+        self.assertEqual(
+            [(g["phone"], g["balance"], g["birth_date"]) for g in res.data["to_import"]],
+            [("+79181112233", "8", "1995-10-20"), ("+79181112234", "120", "1980-02-01")],
+        )
+        self.assertEqual(res.data["balance_total"], "128")
+        self.assertEqual(res.data["imported"], 0)
+        self.assertFalse(LoyaltyMember.objects.exists())
+
+    def test_commit_transfers_without_welcome(self):
+        res = self.post(self.xlsx([self.a1("Анна", "79181112233", balance=8.6)]), commit=True)
+        self.assertEqual(res.status_code, 201, res.data)
+        self.assertEqual(res.data["imported"], 1)
+        m = LoyaltyMember.objects.get(user__phone="+79181112233")
+        self.assertEqual(m.name, "Анна")
+        self.assertEqual(m.balance, Decimal("8"))
+        self.assertEqual(m.source, LoyaltyMember.Source.IMPORT)
+        self.assertIsNotNone(m.consent_at)
+        self.assertEqual(str(m.birth_date), "1995-10-20")
+        self.assertEqual(
+            list(m.transactions.values_list("type", "amount")),
+            [(BonusTransaction.Type.IMPORT, Decimal("8"))],  # без приветственных
+        )
+
+    def test_reupload_does_not_double(self):
+        f = [self.a1("Анна", "79181112233", balance=100)]
+        self.post(self.xlsx(f), commit=True)
+        again = self.post(self.xlsx(f), commit=True)
+        self.assertEqual(again.data["imported"], 0)
+        self.assertEqual(len(again.data["skipped"]), 1)
+        self.assertEqual(LoyaltyMember.objects.get().balance, Decimal("100"))
+
+    def test_existing_guest_is_skipped_and_kept(self):
+        self.guest(phone="+79181112233", name="Анна у нас")  # 200 приветственных
+        res = self.post(self.xlsx([
+            self.a1("Анна", "79181112233", balance=999),
+            self.a1("Борис", "79181112234", balance=5),
+        ]), commit=True)
+        self.assertEqual(res.data["imported"], 1)
+        self.assertIn("уже в программе", res.data["skipped"][0]["reason"])
+        self.assertEqual(
+            LoyaltyMember.objects.get(user__phone="+79181112233").balance, Decimal("200")
+        )
+
+    def test_bad_rows_are_reported_others_go_through(self):
+        res = self.post(self.xlsx([
+            self.a1("Анна", "12345", balance=5),
+            self.a1("Борис", "79181112234", balance="много"),
+            self.a1("Вера", "79181112235", birth="31.02.1990", balance=7),
+            self.a1("Вера ещё раз", "+7 918 111-22-35", balance=9),
+        ]), commit=True)
+        self.assertEqual(res.status_code, 201, res.data)
+        self.assertEqual([i["row"] for i in res.data["invalid"]], [2, 3])
+        self.assertEqual(res.data["notes"][0]["row"], 4)  # дата рождения кривая
+        self.assertIn("повтор строки 4", res.data["skipped"][0]["reason"])
+        m = LoyaltyMember.objects.get()
+        self.assertEqual((m.name, m.balance, m.birth_date), ("Вера", Decimal("7"), None))
+
+    def test_csv_in_windows_encoding(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        body = "ФИО;Мобильный телефон;Дата рождения;Баланс бонусов\n" \
+               "Иванов Пётр;8 (918) 111-22-33;1990-05-04;150,50\n"
+        res = self.post(SimpleUploadedFile("guests.csv", body.encode("cp1251")))
+        self.assertEqual(res.status_code, 200, res.data)
+        g = res.data["to_import"][0]
+        self.assertEqual((g["name"], g["phone"], g["balance"], g["birth_date"]),
+                         ("Иванов Пётр", "+79181112233", "150", "1990-05-04"))
+
+    def test_file_without_phone_column_is_refused(self):
+        res = self.post(self.xlsx([["Анна", 5]], header=["Имя", "Баланс"]))
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("Телефон", res.data["detail"])
+
+    def test_commit_needs_consent(self):
+        res = self.post(self.xlsx([self.a1("Анна", "79181112233")]), commit=True, consent=False)
+        self.assertEqual(res.status_code, 400)
+        self.assertFalse(LoyaltyMember.objects.exists())
+
+    def test_all_or_nothing(self):
+        """Сбой на втором госте — первого тоже нет: полбазы хуже, чем ноль."""
+        from unittest import mock
+
+        from . import services
+
+        real = services.transfer_member
+        calls = []
+
+        def flaky(*a, **kw):
+            calls.append(a[0])
+            if len(calls) == 2:
+                raise LoyaltyError("Гость с этим телефоном уже в программе")
+            return real(*a, **kw)
+
+        with mock.patch.object(services, "transfer_member", side_effect=flaky):
+            res = self.post(self.xlsx([
+                self.a1("Анна", "79181112233", balance=5),
+                self.a1("Борис", "79181112234", balance=5),
+            ]), commit=True)
+        self.assertEqual(res.status_code, 409)
+        self.assertFalse(LoyaltyMember.objects.exists())
+
+    def test_program_off_or_not_owner(self):
+        site = SiteSettings.load()
+        site.bonus_enabled = False
+        site.save()
+        self.assertEqual(self.post(self.xlsx([])).status_code, 400)
+        site.bonus_enabled = True
+        site.save()
+        self.auth(self.waiter)
+        self.assertEqual(self.post(self.xlsx([])).status_code, 403)

@@ -12,3 +12,5 @@ openai==2.14.0
 httpx[socks]==0.28.1
 # Шифрование доступов к банку в базе (payments/secrets.py)
 cryptography==45.0.7
+# Перенос гостей бонусной программы из Excel прежней системы (loyalty/importer.py)
+openpyxl==3.1.5

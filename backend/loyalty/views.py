@@ -146,3 +146,50 @@ def members(request):
     return Response(
         {"count": qs.count(), "results": MemberSerializer(qs[:limit], many=True).data}
     )
+
+
+@api_view(["POST"])
+@permission_classes([IsAdminRole, RequiresLoyalty])
+def import_members(request):
+    """POST /api/loyalty/members/import/ — перенос гостей из файла прежней системы.
+
+    Без commit — только разбор: кто перенесётся, кого пропустим и почему.
+    С commit=1 — перенос тех же строк. Файл присылается оба раза: держать
+    чужую базу гостей на сервере между шагами незачем.
+    """
+    from .importer import ImportFileError, plan_import, run_import
+
+    if not SiteSettings.load().bonus_enabled:
+        return Response(
+            {"detail": "Сначала включите бонусную программу"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    upload = request.FILES.get("file")
+    if upload is None:
+        return Response({"detail": "Выберите файл"}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        plan = plan_import(upload)
+    except ImportFileError as e:
+        return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    if request.data.get("commit") not in ("1", "true", True):
+        return Response({**plan.as_dict(), "imported": 0})
+
+    # Гостей переносит владелец, а согласие на обработку они давали прежней
+    # программе — подтверждает это он, как сотрудник при записи на кассе.
+    if request.data.get("consent") not in ("1", "true", True):
+        return Response(
+            {"consent": "Подтвердите, что гости давали согласие на обработку данных"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    try:
+        members = run_import(plan, consent=True)
+    except LoyaltyError as e:
+        # кто-то из гостей появился между разбором и переносом — ничего
+        # не записано, свежий разбор его просто пропустит
+        return Response(
+            {"detail": f"{e}. Ничего не перенесено — загрузите файл ещё раз."},
+            status=status.HTTP_409_CONFLICT,
+        )
+    return Response({**plan.as_dict(), "imported": len(members)}, status=status.HTTP_201_CREATED)
+

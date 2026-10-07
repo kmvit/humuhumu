@@ -3,6 +3,7 @@ import { get, post, ApiError } from "../../api";
 import Icon from "../../components/Icon";
 import { useToast } from "../../components/ui/Toast";
 import type { LoyaltyMember } from "../../types";
+import BonusImport from "./BonusImport";
 
 const SOURCE: Record<string, string> = {
   guest: "сам",
@@ -29,6 +30,7 @@ export default function BonusGuests({ welcome }: { welcome: number }) {
   const [data, setData] = useState<{ count: number; results: LoyaltyMember[] } | null>(null);
   const [total, setTotal] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [busy, setBusy] = useState(false);
   const EMPTY = { name: "", phone: "", birth: "", transfer: false, balance: "", consent: false };
   const [form, setForm] = useState(EMPTY);
@@ -101,12 +103,27 @@ export default function BonusGuests({ welcome }: { welcome: number }) {
             {total == null ? "Загружаем…" : `Всего ${total.toLocaleString("ru")}`}
           </p>
         </div>
-        {!adding && (
-          <button className="btn sm" onClick={() => setAdding(true)}>
-            <Icon name="plus" size={15} /> Добавить гостя
-          </button>
+        {!adding && !importing && (
+          <div className="wrap">
+            <button className="btn sm ghost" onClick={() => setImporting(true)}>
+              <Icon name="download" size={15} /> Из файла
+            </button>
+            <button className="btn sm" onClick={() => setAdding(true)}>
+              <Icon name="plus" size={15} /> Добавить гостя
+            </button>
+          </div>
         )}
       </div>
+
+      {importing && (
+        <BonusImport
+          onClose={() => setImporting(false)}
+          onDone={(imported) => {
+            setImporting(false);
+            setTotal((t) => (t ?? 0) + imported);
+          }}
+        />
+      )}
 
       {adding && (
         <form className="rule-top mt-3" onSubmit={submit}>
