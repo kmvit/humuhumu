@@ -180,6 +180,22 @@ class ReceiptDeleteTests(APITestCase):
         )
         self.assertTrue(Receipt.objects.filter(id=receipt.id).exists())
 
+    def test_list_by_month_and_whole_without_param(self):
+        self._receipt(qty="100")
+        self._receipt(qty="200")
+        old = Receipt.objects.order_by("id").first()
+        Receipt.objects.filter(pk=old.pk).update(
+            created_at=timezone.now() - timedelta(days=62)
+        )
+        month = timezone.localdate().strftime("%Y-%m")
+        res = self.client.get(f"/api/inventory/receipts/?month={month}")
+        self.assertEqual(len(res.data), 1)
+        old_month = timezone.localtime(Receipt.objects.get(pk=old.pk).created_at).strftime("%Y-%m")
+        res = self.client.get(f"/api/inventory/receipts/?month={old_month}")
+        self.assertEqual([r["id"] for r in res.data], [old.pk])
+        # старый планшет без параметра получает всё, как раньше
+        self.assertEqual(len(self.client.get("/api/inventory/receipts/").data), 2)
+
     def test_item_list_has_last_unit_cost(self):
         """Форма прихода подставляет сумму по цене из последнего прихода."""
         def cost():

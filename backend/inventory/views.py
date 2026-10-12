@@ -56,6 +56,18 @@ from .services import (
 from .tasks import process_receipt_scan
 
 
+def month_param(request) -> tuple[int, int]:
+    """(год, месяц) из ?month=ГГГГ-ММ; кривое или пустое — текущий месяц."""
+    raw = request.query_params.get("month", "")
+    try:
+        year, month = (int(x) for x in raw.split("-"))
+        date_cls(year, month, 1)
+        return year, month
+    except ValueError:
+        today = timezone.localdate()
+        return today.year, today.month
+
+
 class StockCategoryViewSet(viewsets.ModelViewSet):
     """Категории склада (назначение). Заводит кладовщик/админ прямо в интерфейсе."""
 
@@ -172,9 +184,16 @@ class ReceiptViewSet(viewsets.ModelViewSet):
         # get_queryset, а не queryset на классе: запрос с фильтром по
         # заведению вычислился бы один раз при импорте и обслуживал бы
         # всех тенантов данными первого. См. core/tenancy.py.
-        return Receipt.objects.prefetch_related("items__item").select_related(
+        qs = Receipt.objects.prefetch_related("items__item").select_related(
             "received_by"
         )
+        # ?month=ГГГГ-ММ — приходы месяца: за полгода их сотни, и лента
+        # целиком не листается. Без параметра — все, как раньше: старый
+        # бандл с планшета, который ещё не обновился, ждёт полный список.
+        if self.action == "list" and self.request.query_params.get("month"):
+            year, month = month_param(self.request)
+            qs = qs.filter(created_at__year=year, created_at__month=month)
+        return qs
     permission_classes = [IsWarehouseOrAdmin, RequiresInventory]
     http_method_names = ["get", "post", "delete", "head", "options"]
 
@@ -209,19 +228,10 @@ class WriteOffViewSet(viewsets.ModelViewSet):
             "created_by"
         )
         if self.action == "list":
-            year, month = self._month()
+            year, month = month_param(self.request)
             qs = qs.filter(created_at__year=year, created_at__month=month)
         return qs
 
-    def _month(self) -> tuple[int, int]:
-        raw = self.request.query_params.get("month", "")
-        try:
-            year, month = (int(x) for x in raw.split("-"))
-            date_cls(year, month, 1)
-            return year, month
-        except ValueError:
-            today = timezone.localdate()
-            return today.year, today.month
 
     def get_serializer_class(self):
         if self.action == "create":

@@ -4,7 +4,8 @@ import { decimalInput } from "../../decimal";
 import type { Recipe, StockItem, WriteOff } from "../../types";
 import Icon from "../../components/Icon";
 import { useToast } from "../../components/ui/Toast";
-import { fmtDateTime } from "../../time";
+import { fmtClock } from "../../time";
+import { DayGroup, MonthNav, groupByDay, monthKey, monthTitle, plural } from "./journal";
 
 type Line = { item: number | ""; quantity: string };
 
@@ -46,24 +47,6 @@ function fmtMoney(n: number): string {
   return n.toLocaleString("ru", { maximumFractionDigits: 2 });
 }
 
-/** «2026-10» для запроса. */
-function monthKey(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
-
-function monthTitle(key: string): string {
-  const [y, m] = key.split("-").map(Number);
-  return new Date(y, m - 1, 1).toLocaleDateString("ru", {
-    month: "long",
-    year: "numeric",
-  });
-}
-
-function shiftMonth(key: string, delta: number): string {
-  const [y, m] = key.split("-").map(Number);
-  return monthKey(new Date(y, m - 1 + delta, 1));
-}
-
 type Props = {
   items: StockItem[];
   /** Остатки изменились — перечитать их на складе. */
@@ -74,6 +57,8 @@ export default function WriteOffs({ items, onChange }: Props) {
   const notify = useToast();
   const thisMonth = useMemo(() => monthKey(new Date()), []);
   const [month, setMonth] = useState(thisMonth);
+  // какие дни раскрыты; null — по умолчанию, раскрыт только последний
+  const [openDays, setOpenDays] = useState<Set<string> | null>(null);
   const [list, setList] = useState<WriteOff[]>([]);
   const [loading, setLoading] = useState(true);
   const [delId, setDelId] = useState<number | null>(null);
@@ -99,6 +84,7 @@ export default function WriteOffs({ items, onChange }: Props) {
 
   useEffect(() => {
     setLoading(true);
+    setOpenDays(null);
     get<WriteOff[]>(`/inventory/write-offs/?month=${month}`)
       .then(setList)
       .catch((e) =>
@@ -114,6 +100,17 @@ export default function WriteOffs({ items, onChange }: Props) {
   }, [open]);
 
   const monthTotal = list.reduce((s, w) => s + Number(w.total_cost), 0);
+  const days = useMemo(() => groupByDay(list), [list]);
+
+  function toggleDay(day: string) {
+    setOpenDays((cur) => {
+      // первое касание: «по умолчанию» превращаем в явный набор
+      const next = new Set(cur ?? (days[0] ? [days[0][0]] : []));
+      if (next.has(day)) next.delete(day);
+      else next.add(day);
+      return next;
+    });
+  }
 
   /** Строки только по товарам, которые есть на складе.
    *
@@ -239,6 +236,7 @@ export default function WriteOffs({ items, onChange }: Props) {
       if (month === thisMonth) setList((ws) => [...[...created].reverse(), ...ws]);
       else setMonth(thisMonth);
       setOpen(false);
+      setOpenDays(null); // раскрыть сегодняшний день, где новые записи
       onChange();
       notify(created.length > 1 ? `Списано позиций: ${created.length}` : "Списано", "ok");
     } catch (e) {
@@ -263,36 +261,18 @@ export default function WriteOffs({ items, onChange }: Props) {
   return (
     <div className="stack loose mt-4">
       {/* ——— месяц и итог ——— */}
-      <div className="card">
-        <div className="cal-head">
-          <button
-            className="icon-btn"
-            aria-label="Предыдущий месяц"
-            onClick={() => setMonth(shiftMonth(month, -1))}
-          >
-            <Icon name="chevronLeft" size={16} />
-          </button>
-          <span className="cal-month">{monthTitle(month)}</span>
-          <button
-            className="icon-btn"
-            aria-label="Следующий месяц"
-            disabled={month >= thisMonth}
-            onClick={() => setMonth(shiftMonth(month, 1))}
-          >
-            <Icon name="chevronRight" size={16} />
-          </button>
-        </div>
+      <MonthNav month={month} onChange={setMonth}>
         <div className="between mt-3">
           <span className="muted">
             {list.length
-              ? `Списаний: ${list.length}`
+              ? plural(list.length, ["списание", "списания", "списаний"])
               : loading
                 ? "Загружаю…"
                 : "Списаний нет"}
           </span>
           <strong className="num">{fmtMoney(monthTotal)} ₽</strong>
         </div>
-      </div>
+      </MonthNav>
 
       {!open && (
         <button className="btn self-start" onClick={() => openForm()} disabled={!items.length}>
@@ -479,61 +459,73 @@ export default function WriteOffs({ items, onChange }: Props) {
         </div>
       )}
 
-      {list.map((w) => (
-        <div className="card" key={w.id}>
-          <div className="between">
-            <strong className="title">{w.title}</strong>
-            {Number(w.total_cost) > 0 && (
-              <strong className="num">{fmtMoney(Number(w.total_cost))} ₽</strong>
-            )}
-          </div>
-          <span className="muted sm">
-            {fmtDateTime(w.created_at)}
-            {w.created_by_name ? ` · ${w.created_by_name}` : ""} · {w.reason}
-          </span>
-          <ul className="stack tight list mt-3">
-            {w.items.map((li) => (
-              <li key={li.id} className="between">
-                <span>{li.item_name}</span>
-                <span className="num muted">
-                  −{fmtQty(li.quantity)} {li.unit_display}
-                  {li.unit_cost === null
-                    ? " · нет цены закупа"
-                    : li.subtotal
-                      ? ` · ${fmtMoney(Number(li.subtotal))} ₽`
-                      : ""}
-                </span>
-              </li>
-            ))}
-          </ul>
+      {days.map(([day, rows], n) => (
+        <DayGroup
+          key={day}
+          day={day}
+          meta={`${plural(rows.length, ["списание", "списания", "списаний"])} · ${fmtMoney(
+            rows.reduce((s, w) => s + Number(w.total_cost), 0)
+          )} ₽`}
+          open={openDays ? openDays.has(day) : n === 0}
+          onToggle={() => toggleDay(day)}
+        >
+          {rows.map((w) => (
+            <div className="card" key={w.id}>
+              <div className="between">
+                <strong className="title">{w.title}</strong>
+                {Number(w.total_cost) > 0 && (
+                  <strong className="num">{fmtMoney(Number(w.total_cost))} ₽</strong>
+                )}
+              </div>
+              <span className="muted sm">
+                {fmtClock(w.created_at)}
+                {w.created_by_name ? ` · ${w.created_by_name}` : ""} · {w.reason}
+              </span>
+              <ul className="stack tight list mt-3">
+                {w.items.map((li) => (
+                  <li key={li.id} className="between">
+                    <span>{li.item_name}</span>
+                    <span className="num muted">
+                      −{fmtQty(li.quantity)} {li.unit_display}
+                      {li.unit_cost === null
+                        ? " · нет цены закупа"
+                        : li.subtotal
+                          ? ` · ${fmtMoney(Number(li.subtotal))} ₽`
+                          : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
 
-          {delId === w.id ? (
-            <div className="between mt-3">
-              <span className="muted" style={{ minWidth: 0 }}>
-                Удалить и вернуть товары в остатки?
-              </span>
-              <span className="wrap">
-                <button className="btn sm ghost" onClick={() => setDelId(null)}>
-                  Отмена
-                </button>
-                <button className="btn sm danger" onClick={() => remove(w.id)}>
-                  <Icon name="trash" size={15} /> Удалить
-                </button>
-              </span>
+              {delId === w.id ? (
+                <div className="between mt-3">
+                  <span className="muted" style={{ minWidth: 0 }}>
+                    Удалить и вернуть товары в остатки?
+                  </span>
+                  <span className="wrap">
+                    <button className="btn sm ghost" onClick={() => setDelId(null)}>
+                      Отмена
+                    </button>
+                    <button className="btn sm danger" onClick={() => remove(w.id)}>
+                      <Icon name="trash" size={15} /> Удалить
+                    </button>
+                  </span>
+                </div>
+              ) : (
+                <div className="wrap mt-3" style={{ justifyContent: "flex-end" }}>
+                  {/* Сливочную шапку списывают почти каждый день — повтор
+                      избавляет от того, чтобы расписывать её заново. */}
+                  <button className="btn sm ghost" onClick={() => openForm(w)}>
+                    <Icon name="copy" size={15} /> Повторить
+                  </button>
+                  <button className="btn sm ghost" onClick={() => setDelId(w.id)}>
+                    <Icon name="trash" size={15} /> Удалить
+                  </button>
+                </div>
+              )}
             </div>
-          ) : (
-            <div className="wrap mt-3" style={{ justifyContent: "flex-end" }}>
-              {/* Сливочную шапку списывают почти каждый день — повтор
-                  избавляет от того, чтобы расписывать её заново. */}
-              <button className="btn sm ghost" onClick={() => openForm(w)}>
-                <Icon name="copy" size={15} /> Повторить
-              </button>
-              <button className="btn sm ghost" onClick={() => setDelId(w.id)}>
-                <Icon name="trash" size={15} /> Удалить
-              </button>
-            </div>
-          )}
-        </div>
+          ))}
+        </DayGroup>
       ))}
     </div>
   );

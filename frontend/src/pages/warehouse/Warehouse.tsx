@@ -12,7 +12,8 @@ import type {
 } from "../../types";
 import Icon from "../../components/Icon";
 import { useToast } from "../../components/ui/Toast";
-import { fmtDateTime } from "../../time";
+import { fmtClock } from "../../time";
+import { DayGroup, MonthNav, groupByDay, monthKey, monthTitle, plural } from "./journal";
 import Purchase from "./Purchase";
 import Recipes from "./Recipes";
 import WriteOffs from "./WriteOffs";
@@ -50,6 +51,10 @@ export default function Warehouse() {
   const [cats, setCats] = useState<StockCategory[]>([]);
   const [items, setItems] = useState<StockItem[]>([]);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
+  // приходы — за месяц, по дням; null — раскрыт только последний день
+  const thisMonth = useMemo(() => monthKey(new Date()), []);
+  const [receiptsMonth, setReceiptsMonth] = useState(thisMonth);
+  const [receiptDays, setReceiptDays] = useState<Set<string> | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<
     "stock" | "purchase" | "receipts" | "writeoffs" | "recipes"
@@ -107,12 +112,38 @@ export default function Warehouse() {
     const [c, i, r] = await Promise.all([
       get<StockCategory[]>("/inventory/categories/"),
       get<StockItem[]>("/inventory/items/"),
-      get<Receipt[]>("/inventory/receipts/"),
+      get<Receipt[]>(`/inventory/receipts/?month=${receiptsMonth}`),
     ]);
     setCats(c);
     setItems(i.filter((x) => x.is_active));
     setReceipts(r);
     loadScanQuota();
+  }
+
+  // сменили месяц — перечитываем только приходы
+  const firstRender = useRef(true);
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return; // первый раз их грузит load()
+    }
+    setReceiptDays(null);
+    get<Receipt[]>(`/inventory/receipts/?month=${receiptsMonth}`)
+      .then(setReceipts)
+      .catch((e) => notify(e instanceof ApiError ? e.message : "Не удалось загрузить приходы", "bad"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [receiptsMonth]);
+
+  const receiptGroups = useMemo(() => groupByDay(receipts), [receipts]);
+  const receiptsTotal = receipts.reduce((s, r) => s + Number(r.total_cost), 0);
+
+  function toggleReceiptDay(day: string) {
+    setReceiptDays((cur) => {
+      const next = new Set(cur ?? (receiptGroups[0] ? [receiptGroups[0][0]] : []));
+      if (next.has(day)) next.delete(day);
+      else next.add(day);
+      return next;
+    });
   }
 
   function loadScanQuota() {
@@ -293,6 +324,9 @@ export default function Warehouse() {
         }
       }
       await load();
+      // новый приход — сегодняшний: показываем текущий месяц и раскрытый день
+      setReceiptDays(null);
+      setReceiptsMonth(thisMonth);
       setReceiptOpen(false);
       setScanId(null);
       setEditReceiptId(null);
@@ -1031,67 +1065,91 @@ export default function Warehouse() {
       {/* ——— ПРИХОДЫ ——— */}
       {tab === "receipts" && (
         <div className="stack loose mt-4">
+          <MonthNav month={receiptsMonth} onChange={setReceiptsMonth}>
+            <div className="between mt-3">
+              <span className="muted">
+                {receipts.length
+                  ? plural(receipts.length, ["приход", "прихода", "приходов"])
+                  : "Приходов нет"}
+              </span>
+              <strong className="num">
+                {receiptsTotal.toLocaleString("ru", { maximumFractionDigits: 2 })} ₽
+              </strong>
+            </div>
+          </MonthNav>
           {receipts.length === 0 && (
             <div className="card center">
-              <p className="muted m-0">Приходов пока нет.</p>
+              <p className="muted m-0">За {monthTitle(receiptsMonth)} приходов нет.</p>
             </div>
           )}
-          {receipts.map((r) => (
-            <div className="card" key={r.id}>
-              <div className="between">
-                <strong className="title">
-                  Приход №{r.id}{r.supplier ? ` · ${r.supplier}` : ""}
-                </strong>
-                {Number(r.total_cost) > 0 && (
-                  <strong className="num text-brand">
-                    {Number(r.total_cost).toLocaleString("ru")} ₽
-                  </strong>
-                )}
-              </div>
-              <span className="muted sm">
-                {fmtDateTime(r.created_at)}{r.received_by_name ? ` · ${r.received_by_name}` : ""}
-                {r.comment ? ` · ${r.comment}` : ""}
-              </span>
-              <ul className="stack tight list mt-3">
-                {r.items.map((li) => (
-                  <li key={li.id} className="between">
-                    <span>{li.item_name}</span>
-                    <span className="num muted">
-                      +{fmtQty(li.quantity)} {li.unit_display}
-                      {li.subtotal ? ` · ${Number(li.subtotal).toLocaleString("ru")} ₽` : ""}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+          {receiptGroups.map(([day, rows], n) => (
+            <DayGroup
+              key={day}
+              day={day}
+              meta={`${plural(rows.length, ["приход", "прихода", "приходов"])} · ${rows
+                .reduce((s, r) => s + Number(r.total_cost), 0)
+                .toLocaleString("ru", { maximumFractionDigits: 2 })} ₽`}
+              open={receiptDays ? receiptDays.has(day) : n === 0}
+              onToggle={() => toggleReceiptDay(day)}
+            >
+              {rows.map((r) => (
+                <div className="card" key={r.id}>
+                  <div className="between">
+                    <strong className="title">
+                      Приход №{r.id}{r.supplier ? ` · ${r.supplier}` : ""}
+                    </strong>
+                    {Number(r.total_cost) > 0 && (
+                      <strong className="num text-brand">
+                        {Number(r.total_cost).toLocaleString("ru")} ₽
+                      </strong>
+                    )}
+                  </div>
+                  <span className="muted sm">
+                    {fmtClock(r.created_at)}{r.received_by_name ? ` · ${r.received_by_name}` : ""}
+                    {r.comment ? ` · ${r.comment}` : ""}
+                  </span>
+                  <ul className="stack tight list mt-3">
+                    {r.items.map((li) => (
+                      <li key={li.id} className="between">
+                        <span>{li.item_name}</span>
+                        <span className="num muted">
+                          +{fmtQty(li.quantity)} {li.unit_display}
+                          {li.subtotal ? ` · ${Number(li.subtotal).toLocaleString("ru")} ₽` : ""}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
 
-              {delReceiptId === r.id ? (
-                <div className="between mt-3">
-                  <span className="muted" style={{ minWidth: 0 }}>
-                    Удалить приход и откатить остатки?
-                  </span>
-                  <span className="wrap">
-                    <button className="btn sm ghost" onClick={() => setDelReceiptId(null)}>
-                      Отмена
-                    </button>
-                    <button
-                      className="btn sm danger"
-                      onClick={() => deleteReceipt(r.id)}
-                    >
-                      <Icon name="trash" size={15} /> Удалить
-                    </button>
-                  </span>
+                  {delReceiptId === r.id ? (
+                    <div className="between mt-3">
+                      <span className="muted" style={{ minWidth: 0 }}>
+                        Удалить приход и откатить остатки?
+                      </span>
+                      <span className="wrap">
+                        <button className="btn sm ghost" onClick={() => setDelReceiptId(null)}>
+                          Отмена
+                        </button>
+                        <button
+                          className="btn sm danger"
+                          onClick={() => deleteReceipt(r.id)}
+                        >
+                          <Icon name="trash" size={15} /> Удалить
+                        </button>
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="wrap mt-3" style={{ justifyContent: "flex-end" }}>
+                      <button className="btn sm ghost" onClick={() => editReceipt(r)}>
+                        <Icon name="edit" size={15} /> Изменить
+                      </button>
+                      <button className="btn sm ghost" onClick={() => setDelReceiptId(r.id)}>
+                        <Icon name="trash" size={15} /> Удалить
+                      </button>
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div className="wrap mt-3" style={{ justifyContent: "flex-end" }}>
-                  <button className="btn sm ghost" onClick={() => editReceipt(r)}>
-                    <Icon name="edit" size={15} /> Изменить
-                  </button>
-                  <button className="btn sm ghost" onClick={() => setDelReceiptId(r.id)}>
-                    <Icon name="trash" size={15} /> Удалить
-                  </button>
-                </div>
-              )}
-            </div>
+              ))}
+            </DayGroup>
           ))}
         </div>
       )}
