@@ -947,3 +947,152 @@ class MemberImportTests(LoyaltyBase):
         site.save()
         self.auth(self.waiter)
         self.assertEqual(self.post(self.xlsx([])).status_code, 403)
+
+
+class MemberCardTests(EarnTests):
+    """Карточка гостя у владельца: личный процент, правка, корректировка."""
+
+    def setUp(self):
+        super().setUp()
+        self.admin = User.objects.create_user(
+            username="owner", password="demo12345", role=User.Role.ADMIN
+        )
+        self.member = self.guest(phone="+79990001122", name="Ира")  # 200 приветственных
+
+    def url(self, suffix=""):
+        return f"/api/loyalty/members/{self.member.pk}/{suffix}"
+
+    def as_owner(self):
+        self.auth(self.admin)
+
+    # ——— личный процент ———
+
+    def test_personal_percent_is_used_for_earning(self):
+        self.member.earn_percent = Decimal("10")
+        self.member.save()
+        order = self.make_order(qty=5)  # 1200 ₽
+        self.attach(order, self.member)
+        self.pay(order)
+        self.member.refresh_from_db()
+        self.assertEqual(self.member.balance, Decimal("320"))  # 200 + 10% от 1200
+
+    def test_zero_percent_means_no_earning(self):
+        self.member.earn_percent = Decimal("0")
+        self.member.save()
+        order = self.make_order(qty=5)
+        self.attach(order, self.member)
+        self.pay(order)
+        self.member.refresh_from_db()
+        self.assertEqual(self.member.balance, Decimal("200"))
+
+    def test_empty_percent_falls_back_to_program(self):
+        self.as_owner()
+        self.client.patch(self.url(), {"earn_percent": "12"}, format="json")
+        res = self.client.patch(self.url(), {"earn_percent": None}, format="json")
+        self.assertIsNone(res.data["earn_percent"])
+        self.assertEqual(Decimal(res.data["effective_percent"]), Decimal("5"))
+
+    # ——— правка ———
+
+    def test_owner_edits_name_birthday_percent(self):
+        self.as_owner()
+        res = self.client.patch(
+            self.url(),
+            {"name": "Ирина", "birth_date": "1991-03-08", "earn_percent": "7.5"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200, res.data)
+        self.member.refresh_from_db()
+        self.member.user.refresh_from_db()
+        self.assertEqual(self.member.name, "Ирина")
+        self.assertEqual(str(self.member.birth_date), "1991-03-08")
+        self.assertEqual(self.member.earn_percent, Decimal("7.5"))
+        self.assertEqual(self.member.user.phone, "+79990001122")  # телефон не тронут
+
+    def test_bad_edits_are_refused(self):
+        self.as_owner()
+        self.assertEqual(
+            self.client.patch(self.url(), {"earn_percent": "60"}, format="json").status_code, 400
+        )
+        self.assertEqual(
+            self.client.patch(self.url(), {"name": "  "}, format="json").status_code, 400
+        )
+
+    # ——— корректировка ———
+
+    def test_adjust_adds_and_takes_with_author(self):
+        self.as_owner()
+        res = self.client.post(
+            self.url("adjust/"), {"amount": 500, "comment": "подарок на ДР"}, format="json"
+        )
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(Decimal(res.data["balance"]), Decimal("700"))
+        last = res.data["transactions"][0]
+        self.assertEqual(
+            (last["type"], Decimal(last["amount"]), last["comment"], last["created_by_name"]),
+            ("adjust", Decimal("500"), "подарок на ДР", "owner"),
+        )
+        res = self.client.post(
+            self.url("adjust/"), {"amount": -100, "comment": "ошибка кассира"}, format="json"
+        )
+        self.assertEqual(Decimal(res.data["balance"]), Decimal("600"))
+
+    def test_adjust_cannot_go_negative_or_skip_reason(self):
+        self.as_owner()
+        too_much = self.client.post(
+            self.url("adjust/"), {"amount": -201, "comment": "списать"}, format="json"
+        )
+        self.assertEqual(too_much.status_code, 400)
+        no_reason = self.client.post(
+            self.url("adjust/"), {"amount": 10, "comment": " "}, format="json"
+        )
+        self.assertEqual(no_reason.status_code, 400)
+        zero = self.client.post(self.url("adjust/"), {"amount": 0, "comment": "x"}, format="json")
+        self.assertEqual(zero.status_code, 400)
+        fraction = self.client.post(
+            self.url("adjust/"), {"amount": "1.5", "comment": "x"}, format="json"
+        )
+        self.assertEqual(fraction.status_code, 400)
+        self.member.refresh_from_db()
+        self.assertEqual(self.member.balance, Decimal("200"))
+
+    def test_card_shows_totals_and_history(self):
+        order = self.make_order(qty=5)  # 1200 ₽
+        self.attach(order, self.member)
+        redeem(self.member.pk, Decimal("100"), order)
+        order.refresh_from_db()
+        self.pay(order)  # 5% от 1100 = 55
+        self.as_owner()
+        res = self.client.get(self.url())
+        self.assertEqual(res.data["earned_total"], "55.00")
+        self.assertEqual(Decimal(res.data["spent_total"]), Decimal("100"))
+        self.assertEqual(res.data["visits"], 1)
+        self.assertIsNotNone(res.data["last_visit"])
+        self.assertEqual(
+            [t["type"] for t in res.data["transactions"]], ["earn", "redeem", "welcome"]
+        )
+
+    # ——— список ———
+
+    def test_list_sorts_and_pages(self):
+        for i in range(55):
+            self.guest(phone=f"+7999100{i:04d}", name=f"Гость {i:02d}")
+        LoyaltyMember.objects.filter(pk=self.member.pk).update(balance=Decimal("9999"))
+        self.as_owner()
+        by_balance = self.client.get("/api/loyalty/members/?sort=balance").data
+        self.assertEqual(by_balance["results"][0]["name"], "Ира")
+        self.assertEqual(by_balance["count"], 56)
+        second = self.client.get("/api/loyalty/members/?sort=name&offset=50").data
+        self.assertEqual(len(second["results"]), 6)
+
+    def test_staff_cannot_open_or_edit_cards(self):
+        self.auth(self.waiter)
+        self.assertEqual(self.client.get(self.url()).status_code, 403)
+        self.assertEqual(
+            self.client.patch(self.url(), {"earn_percent": "50"}, format="json").status_code, 403
+        )
+        self.assertEqual(
+            self.client.post(self.url("adjust/"), {"amount": 999, "comment": "себе"},
+                             format="json").status_code,
+            403,
+        )

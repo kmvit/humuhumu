@@ -809,7 +809,34 @@ export interface LoyaltyMember {
   birth_date: string | null;
   balance: string;
   source?: "guest" | "staff" | "import";
+  /** Личный процент начисления; null — общий процент программы. */
+  earn_percent?: string | null;
   created_at: string;
+}
+
+export interface BonusTransaction {
+  id: number;
+  type: "welcome" | "earn" | "redeem" | "return" | "adjust" | "import";
+  type_display: string;
+  amount: string;
+  balance_after: string;
+  order: number | null;
+  comment: string;
+  /** Кто провёл руками; у начислений за заказ пусто. */
+  created_by_name: string;
+  created_at: string;
+}
+
+/** Карточка гостя у владельца: данные, итоги, история. */
+export interface MemberCard extends LoyaltyMember {
+  /** Сколько начисляется сейчас — личный или общий процент. */
+  effective_percent: string;
+  earned_total: string;
+  spent_total: string;
+  /** Оплаченных заказов с начислением. */
+  visits: number;
+  last_visit: string | null;
+  transactions: BonusTransaction[];
 }
 
 /** Разбор файла с гостями из прежней системы — что сделает перенос. */

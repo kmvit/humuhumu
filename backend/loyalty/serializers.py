@@ -25,18 +25,64 @@ class MemberSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = LoyaltyMember
-        fields = ("id", "name", "phone", "birth_date", "balance", "source", "created_at")
+        fields = (
+            "id", "name", "phone", "birth_date", "balance", "source",
+            "earn_percent", "created_at",
+        )
 
 
 class BonusTransactionSerializer(serializers.ModelSerializer):
     type_display = serializers.CharField(source="get_type_display", read_only=True)
+    created_by_name = serializers.CharField(
+        source="created_by.username", read_only=True, default=""
+    )
 
     class Meta:
         model = BonusTransaction
         fields = (
             "id", "type", "type_display", "amount",
-            "balance_after", "order", "comment", "created_at",
+            "balance_after", "order", "comment", "created_by_name", "created_at",
         )
+
+
+class MemberUpdateSerializer(serializers.Serializer):
+    """Правка гостя владельцем: имя, день рождения, личный процент.
+
+    Телефон не правим: по нему гостя находят на кассе, а у вошедших в
+    приложение он ещё и логин — смена требует отдельной аккуратности.
+    """
+
+    name = serializers.CharField(max_length=150, required=False)
+    birth_date = serializers.DateField(required=False, allow_null=True)
+    # null — вернуть гостю общий процент программы
+    earn_percent = serializers.DecimalField(
+        max_digits=5, decimal_places=2, required=False, allow_null=True,
+        min_value=Decimal("0"), max_value=Decimal("50"),
+    )
+
+    def validate_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Имя не может быть пустым")
+        return value
+
+    def update(self, member, data):
+        if "name" in data:
+            member.user.first_name = data["name"]
+            member.user.save(update_fields=["first_name"])
+        fields = [f for f in ("birth_date", "earn_percent") if f in data]
+        for f in fields:
+            setattr(member, f, data[f])
+        if fields:
+            member.save(update_fields=fields)
+        return member
+
+
+class AdjustSerializer(serializers.Serializer):
+    """Ручная корректировка: +500 «подарок на ДР», −100 «ошибка кассира»."""
+
+    amount = serializers.IntegerField()
+    comment = serializers.CharField(max_length=255)
 
 
 class EnrollSerializer(serializers.Serializer):

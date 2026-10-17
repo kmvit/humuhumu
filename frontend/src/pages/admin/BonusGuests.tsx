@@ -4,6 +4,7 @@ import Icon from "../../components/Icon";
 import { useToast } from "../../components/ui/Toast";
 import type { LoyaltyMember } from "../../types";
 import BonusImport from "./BonusImport";
+import MemberCard from "./MemberCard";
 
 const SOURCE: Record<string, string> = {
   guest: "сам",
@@ -18,17 +19,28 @@ function birthday(iso: string): string {
   return new Date(y, m - 1, d).toLocaleDateString("ru", { day: "numeric", month: "long" });
 }
 
-/** Гости бонусной программы в панели владельца.
+type Sort = "new" | "balance" | "name";
+const SORTS: { key: Sort; label: string }[] = [
+  { key: "new", label: "Новые" },
+  { key: "balance", label: "Больше бонусов" },
+  { key: "name", label: "По имени" },
+];
 
-    Найти гостя по имени или телефону и завести нового вручную. Гостя из
-    прежней системы заводят с его остатком: тогда приветственных нет —
-    он их уже получал там.
+/** Гости бонусной программы на странице «Бонусы».
+
+    Список виден сразу и догружается по 50; поиск по имени или телефону,
+    касание открывает карточку гостя. Гостя из прежней системы заводят с
+    его остатком: тогда приветственных нет — он их уже получал там.
 */
 export default function BonusGuests({ welcome }: { welcome: number }) {
   const notify = useToast();
   const [q, setQ] = useState("");
-  const [data, setData] = useState<{ count: number; results: LoyaltyMember[] } | null>(null);
+  const [sort, setSort] = useState<Sort>("new");
+  const [rows, setRows] = useState<LoyaltyMember[]>([]);
+  const [count, setCount] = useState<number | null>(null);
   const [total, setTotal] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [openId, setOpenId] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -41,31 +53,41 @@ export default function BonusGuests({ welcome }: { welcome: number }) {
     setAdding(false);
   };
 
-  async function load(query = q) {
-    // Список целиком не показываем: гостей тысячи, нужного находят поиском.
-    // Без запроса берём только общее число.
-    if (query.trim().length < 2) {
-      try {
-        const d = await get<{ count: number }>("/loyalty/members/?limit=0");
-        setTotal(d.count);
-      } catch {
-        setTotal(0);
-      }
-      setData(null);
-      return;
-    }
+  function url(offset: number) {
+    const query = q.trim();
+    return (
+      `/loyalty/members/?sort=${sort}&offset=${offset}` +
+      (query.length >= 2 ? `&q=${encodeURIComponent(query)}` : "")
+    );
+  }
+
+  async function load(more = false) {
+    setLoading(true);
     try {
-      setData(await get(`/loyalty/members/?q=${encodeURIComponent(query)}`));
+      const d = await get<{ count: number; results: LoyaltyMember[] }>(
+        url(more ? rows.length : 0)
+      );
+      setRows((r) => (more ? [...r, ...d.results] : d.results));
+      setCount(d.count);
+      // всего в программе — число без поиска
+      if (q.trim().length < 2) setTotal(d.count);
     } catch {
-      setData({ count: 0, results: [] });
+      if (!more) setRows([]);
+    } finally {
+      setLoading(false);
     }
   }
 
   useEffect(() => {
     // поиск по мере ввода, но без запроса на каждую букву
-    const t = setTimeout(() => load(q), 250);
+    const t = setTimeout(() => load(false), 250);
     return () => clearTimeout(t);
-  }, [q]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [q, sort]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Гость изменился в карточке — обновить строку, не перечитывая список. */
+  function patchRow(m: LoyaltyMember) {
+    setRows((r) => r.map((x) => (x.id === m.id ? { ...x, ...m } : x)));
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -86,6 +108,7 @@ export default function BonusGuests({ welcome }: { welcome: number }) {
       closeForm();
       setTotal((t) => (t ?? 0) + 1);
       setQ(m.phone); // показываем только что добавленного
+      setOpenId(m.id);
 
     } catch (err) {
       notify(err instanceof ApiError ? err.message : "Не удалось добавить гостя", "bad");
@@ -121,6 +144,7 @@ export default function BonusGuests({ welcome }: { welcome: number }) {
           onDone={(imported) => {
             setImporting(false);
             setTotal((t) => (t ?? 0) + imported);
+            load(false);
           }}
         />
       )}
@@ -208,38 +232,55 @@ export default function BonusGuests({ welcome }: { welcome: number }) {
         onChange={(e) => setQ(e.target.value)}
         placeholder="Поиск по имени или телефону"
       />
+      <div className="size-row">
+        {SORTS.map((o) => (
+          <button
+            key={o.key}
+            type="button"
+            className={"size-chip" + (sort === o.key ? " active" : "")}
+            onClick={() => setSort(o.key)}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
 
-      {q.trim().length < 2 ? (
-        <p className="muted sm mt-2 m-0">
-          Введите имя или хотя бы три цифры телефона — покажем подходящих гостей
+      {!loading && rows.length === 0 ? (
+        <p className="muted sm center mt-3">
+          {q.trim().length >= 2 ? "Никого не нашли" : "Гостей пока нет"}
         </p>
-      ) : data && data.results.length === 0 ? (
-        <p className="muted sm center mt-3">Никого не нашли</p>
       ) : (
         <ul className="stack tight list mt-3">
-          {data?.results.map((m) => (
+          {rows.map((m) => (
             <li key={m.id}>
-              <div className="between">
-                <strong>{m.name}</strong>
-                <span className="num" style={{ whiteSpace: "nowrap" }}>
-                  {Number(m.balance).toLocaleString("ru")} б.
-                </span>
-              </div>
-              <div className="muted sm">
-                {m.phone}
-                {m.birth_date
-                  ? ` · ДР ${birthday(m.birth_date)}`
-                  : ""}
-                {m.source ? ` · ${SOURCE[m.source]}` : ""}
-              </div>
+              <button className="member-row" onClick={() => setOpenId(m.id)}>
+                <div className="between">
+                  <strong>{m.name}</strong>
+                  <span className="num" style={{ whiteSpace: "nowrap" }}>
+                    {Number(m.balance).toLocaleString("ru")} б.
+                  </span>
+                </div>
+                <div className="muted sm">
+                  {m.phone}
+                  {m.birth_date ? ` · ДР ${birthday(m.birth_date)}` : ""}
+                  {m.source ? ` · ${SOURCE[m.source]}` : ""}
+                  {m.earn_percent != null
+                    ? ` · личный ${Number(m.earn_percent).toLocaleString("ru")} %`
+                    : ""}
+                </div>
+              </button>
             </li>
           ))}
         </ul>
       )}
-      {q.trim().length >= 2 && data && data.count > data.results.length && (
-        <p className="muted sm center mt-2 m-0">
-          Показаны первые {data.results.length} — уточните поиск
-        </p>
+      {count != null && rows.length < count && (
+        <button className="btn sm ghost block mt-2" onClick={() => load(true)} disabled={loading}>
+          Показать ещё · {rows.length} из {count.toLocaleString("ru")}
+        </button>
+      )}
+
+      {openId != null && (
+        <MemberCard id={openId} onClose={() => setOpenId(null)} onChanged={patchRow} />
       )}
     </div>
   );

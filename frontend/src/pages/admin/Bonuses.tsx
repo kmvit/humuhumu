@@ -56,7 +56,6 @@ export default function Bonuses() {
 
   return (
     <>
-      <h2 className="section-title">Бонусы</h2>
       <div className="card">
         <div className="between">
           <div>

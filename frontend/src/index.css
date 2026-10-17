@@ -732,6 +732,13 @@ h1, h2, h3 { font-family: var(--font-display); color: var(--fg); margin: 0; font
 }
 .day-title { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
 .day-group > .stack { padding-bottom: 12px; }
+/* строка гостя бонусной программы — касание открывает карточку */
+.member-row {
+  width: calc(100% + 8px); display: block; text-align: left; background: none; border: 0;
+  padding: 6px 4px; margin: -6px -4px; color: var(--fg); font: inherit; cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.member-row:hover { background: var(--surface); }
 /* на телефоне каждый пиксель — названию товара, иначе «Кофе в зер…» */
 @media (max-width: 520px) {
   .receipt-line.two { grid-template-columns: minmax(0, 1fr) 4.3rem auto; gap: 6px; }

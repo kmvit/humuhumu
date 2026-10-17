@@ -5,7 +5,6 @@ import Icon, { type IconName } from "../../components/Icon";
 import { useAppearance, useSite } from "../../site";
 import { useToast } from "../../components/ui/Toast";
 import Staff from "./Staff";
-import Bonuses from "./Bonuses";
 import OnlinePayment from "./OnlinePayment";
 import Kassa from "./Kassa";
 import OrderingPause from "./OrderingPause";
@@ -250,8 +249,6 @@ export default function Admin() {
       <OnlinePayment />
 
       <Kassa />
-
-      <Bonuses />
 
       <Staff />
 

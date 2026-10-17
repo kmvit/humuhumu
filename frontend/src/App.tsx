@@ -15,6 +15,7 @@ import Catalog from "./pages/admin/Catalog";
 import Warehouse from "./pages/warehouse/Warehouse";
 import Shifts from "./pages/shifts/Shifts";
 import Finance from "./pages/finance/Finance";
+import BonusesPage from "./pages/admin/BonusesPage";
 import OrdersJournal from "./pages/orders/OrdersJournal";
 import Offer from "./pages/legal/Offer";
 import Privacy from "./pages/legal/Privacy";
@@ -148,6 +149,13 @@ export default function App() {
           <Route
             path="/shifts"
             element={<Gated feature="shifts" what="Смены" need="Максимум"><Shifts /></Gated>}
+          />
+        )}
+        {/* бонусы — настройки программы и гости, отдельной страницей владельца */}
+        {user?.role === "admin" && (
+          <Route
+            path="/bonuses"
+            element={<Gated feature="loyalty" what="Бонусы" need="Максимум"><BonusesPage /></Gated>}
           />
         )}
         {/* финансы — управленческий раздел: ведомость и деньги заведения */}

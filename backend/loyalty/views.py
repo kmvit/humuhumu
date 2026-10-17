@@ -9,13 +9,15 @@ from users.permissions import IsAdminRole, IsStaffRole
 
 from .models import LoyaltyMember
 from .serializers import (
+    AdjustSerializer,
     AdminMemberSerializer,
+    MemberUpdateSerializer,
     BonusTransactionSerializer,
     EnrollSerializer,
     MemberSerializer,
     normalize_phone,
 )
-from .services import LoyaltyError
+from .services import LoyaltyError, adjust_balance, earn_percent_for
 
 
 class EnrollView(generics.CreateAPIView):
@@ -114,8 +116,9 @@ def program(request):
 def members(request):
     """GET/POST /api/loyalty/members/ — гости программы для менеджера.
 
-    GET ?q= ищет по имени или телефону; отдаём первые 50 и общее число —
-    листать тысячи гостей в панели незачем, нужного находят поиском.
+    GET ?q= ищет по имени или телефону, ?sort= — new (новые сверху),
+    balance (больше бонусов), name; отдаём по 50 начиная с ?offset= и общее
+    число — страница бонусов догружает «показать ещё».
     POST заводит гостя: обычной записью или переносом с остатком.
     """
     from django.db.models import Q
@@ -141,11 +144,85 @@ def members(request):
             if digits[0] == "8":
                 cond |= Q(user__phone__contains="7" + digits[1:])
         qs = qs.filter(cond)
+    order = {
+        "balance": ("-balance", "user__first_name"),
+        "name": ("user__first_name", "id"),
+    }.get(request.query_params.get("sort"), ("-created_at", "-id"))
+    qs = qs.order_by(*order)
     # limit=0 — только число гостей, для шапки раздела
     limit = 0 if request.query_params.get("limit") == "0" else 50
+    try:
+        offset = max(0, int(request.query_params.get("offset", 0)))
+    except ValueError:
+        offset = 0
     return Response(
-        {"count": qs.count(), "results": MemberSerializer(qs[:limit], many=True).data}
+        {
+            "count": qs.count(),
+            "results": MemberSerializer(qs[offset:offset + limit], many=True).data,
+        }
     )
+
+
+def _member_card(member) -> dict:
+    """Карточка гостя для владельца: данные, итоги и история операций."""
+    from django.db.models import Count, Max, Q, Sum
+
+    from .models import BonusTransaction as T
+
+    stats = member.transactions.aggregate(
+        earned=Sum("amount", filter=Q(type=T.Type.EARN)),
+        spent=Sum("amount", filter=Q(type=T.Type.REDEEM)),
+        returned=Sum("amount", filter=Q(type=T.Type.RETURN)),
+        visits=Count("id", filter=Q(type=T.Type.EARN)),
+        last=Max("created_at", filter=Q(type__in=[T.Type.EARN, T.Type.REDEEM])),
+    )
+    return {
+        **MemberSerializer(member).data,
+        # сколько ему начисляется сейчас — личный или общий
+        "effective_percent": str(earn_percent_for(member)),
+        "earned_total": str(stats["earned"] or 0),
+        # списания в журнале отрицательные; возвращённые за отмену — плюс
+        "spent_total": str(-(stats["spent"] or 0) - (stats["returned"] or 0)),
+        "visits": stats["visits"],
+        "last_visit": stats["last"],
+        "transactions": BonusTransactionSerializer(
+            member.transactions.select_related("created_by")[:100], many=True
+        ).data,
+    }
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAdminRole, RequiresLoyalty])
+def member_detail(request, pk: int):
+    """GET/PATCH /api/loyalty/members/<id>/ — карточка гостя и её правка."""
+    member = LoyaltyMember.objects.select_related("user").filter(pk=pk).first()
+    if member is None:
+        return Response({"detail": "Гость не найден"}, status=status.HTTP_404_NOT_FOUND)
+    if request.method == "PATCH":
+        ser = MemberUpdateSerializer(member, data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+    return Response(_member_card(member))
+
+
+@api_view(["POST"])
+@permission_classes([IsAdminRole, RequiresLoyalty])
+def member_adjust(request, pk: int):
+    """POST /api/loyalty/members/<id>/adjust/ — начислить или снять руками."""
+    member = LoyaltyMember.objects.select_related("user").filter(pk=pk).first()
+    if member is None:
+        return Response({"detail": "Гость не найден"}, status=status.HTTP_404_NOT_FOUND)
+    ser = AdjustSerializer(data=request.data)
+    ser.is_valid(raise_exception=True)
+    try:
+        adjust_balance(
+            member, ser.validated_data["amount"], ser.validated_data["comment"],
+            by=request.user,
+        )
+    except LoyaltyError as e:
+        return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    member.refresh_from_db()
+    return Response(_member_card(member))
 
 
 @api_view(["POST"])

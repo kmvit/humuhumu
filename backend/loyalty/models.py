@@ -35,6 +35,13 @@ class LoyaltyMember(TenantModel):
     # сам, даёт его формой; за записанного на кассе отвечает сотрудник —
     # отметку ставит он, и момент сохраняем как подтверждение.
     consent_at = models.DateTimeField("Согласие на обработку данных", null=True, blank=True)
+    # Личный процент начисления: постоянному гостю, другу заведения,
+    # сотруднику. Пусто — действует общий процент из настроек программы.
+    earn_percent = models.DecimalField(
+        "Личный процент начисления", max_digits=5, decimal_places=2,
+        null=True, blank=True,
+        help_text="Пусто — общий процент программы",
+    )
     # кэш суммы транзакций; источник правды — журнал BonusTransaction
     balance = models.DecimalField("Баланс бонусов", max_digits=12, decimal_places=2, default=0)
     created_at = models.DateTimeField("В программе с", auto_now_add=True)
@@ -85,6 +92,16 @@ class BonusTransaction(TenantModel):
         verbose_name="Заказ",
     )
     comment = models.CharField("Комментарий", max_length=255, blank=True)
+    # Кто провёл операцию руками (корректировка в панели). У начислений
+    # за заказ пусто — их проводит система.
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+        verbose_name="Кто провёл",
+    )
     created_at = models.DateTimeField("Создана", auto_now_add=True)
 
     class Meta:

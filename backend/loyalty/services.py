@@ -24,7 +24,9 @@ def _whole(value: Decimal) -> Decimal:
     return Decimal(value).quantize(Decimal("1"), rounding=ROUND_DOWN)
 
 
-def _apply(member: LoyaltyMember, *, type_: str, amount: Decimal, order=None, comment=""):
+def _apply(
+    member: LoyaltyMember, *, type_: str, amount: Decimal, order=None, comment="", by=None
+):
     """Внутренняя проводка. Только внутри atomic с заблокированным участником."""
     member.balance += amount
     member.save(update_fields=["balance"])
@@ -35,6 +37,45 @@ def _apply(member: LoyaltyMember, *, type_: str, amount: Decimal, order=None, co
         balance_after=member.balance,
         order=order,
         comment=comment,
+        created_by=by,
+    )
+
+
+def earn_percent_for(member: LoyaltyMember, site=None) -> Decimal:
+    """Процент начисления гостю: личный, если задан, иначе общий."""
+    if member.earn_percent is not None:
+        return Decimal(member.earn_percent)
+    site = site or SiteSettings.load()
+    return Decimal(site.bonus_earn_percent)
+
+
+@transaction.atomic
+def adjust_balance(member: LoyaltyMember, amount, comment: str, *, by=None) -> BonusTransaction:
+    """Ручная корректировка: начислить (+) или снять (−) бонусы с причиной.
+
+    Причина обязательна — без неё через месяц никто не вспомнит, откуда у
+    гостя лишние пятьсот бонусов. В минус баланс не уводим: отрицательные
+    бонусы гость не потратит, а на кассе это выглядело бы как долг.
+    """
+    amount = Decimal(amount)
+    if amount != amount.to_integral_value():
+        raise LoyaltyError("Бонусы целые — укажите сумму без копеек")
+    if amount == 0:
+        raise LoyaltyError("Укажите, сколько начислить или снять")
+    comment = (comment or "").strip()
+    if not comment:
+        raise LoyaltyError("Напишите причину корректировки")
+    member = LoyaltyMember.objects.select_for_update().get(pk=member.pk)
+    if member.balance + amount < 0:
+        raise LoyaltyError(
+            f"У гостя {member.balance.normalize():f} бонусов — снять {-amount.normalize():f} нельзя"
+        )
+    return _apply(
+        member,
+        type_=BonusTransaction.Type.ADJUST,
+        amount=amount,
+        comment=comment[:255],
+        by=by,
     )
 
 
@@ -255,7 +296,7 @@ def earn_for_order(order) -> BonusTransaction | None:
     ).exists():
         return None
     paid = Decimal(order.total) - Decimal(order.bonus_spent)
-    amount = _whole(paid * Decimal(site.bonus_earn_percent) / Decimal(100))
+    amount = _whole(paid * earn_percent_for(member, site) / Decimal(100))
     if amount <= 0:
         return None
     member = LoyaltyMember.objects.select_for_update().get(pk=member.pk)

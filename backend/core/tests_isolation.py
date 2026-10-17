@@ -89,6 +89,7 @@ RESOURCES = [
     ("/api/inventory/receipts/", "receipt", None),
     ("/api/inventory/write-offs/", "write_off", "title"),
     ("/api/finance/expenses/", "expense", None),
+    ("/api/loyalty/members/", "member", None),
     ("/api/finance/expense-categories/", "expense_category", "name"),
 ]
 
@@ -160,6 +161,7 @@ class CrossTenantApiTests(TestCase):
             ("/api/staff/", "staff"),
             ("/api/inventory/items/", "stock_item"),
             ("/api/finance/expense-categories/", "expense_category"),
+            ("/api/loyalty/members/", "member"),
         ):
             with self.subTest(url=url):
                 res = self.client.patch(
@@ -222,6 +224,17 @@ class CrossTenantApiTests(TestCase):
         foreign.refresh_from_db()
         self.assertEqual(foreign.quantity, 0)
         self.assertEqual(StockItem.all_objects.get(pk=self.data_a["stock_item"].pk).quantity, 0)
+
+    def test_cannot_adjust_foreign_guest_bonuses(self):
+        """Начислить бонусы гостю соседнего кафе нельзя."""
+        foreign = self.data_b["member"]
+        res = self.client.post(
+            f"/api/loyalty/members/{foreign.pk}/adjust/",
+            {"amount": 1000, "comment": "подсадка"}, format="json", **self.auth,
+        )
+        self.assertEqual(res.status_code, 404)
+        foreign.refresh_from_db()
+        self.assertEqual(foreign.balance, 500)
 
     def test_cannot_delete_foreign_write_off(self):
         """Удаление чужого списания вернуло бы товар на чужой склад."""

@@ -36,6 +36,7 @@ const NAV: Record<string, { to: string; label: string; icon: IconName }[]> = {
     { to: "/warehouse", label: "Склад", icon: "box" },
     { to: "/shifts", label: "Смены", icon: "user" },
     { to: "/finance", label: "Финансы", icon: "wallet" },
+    { to: "/bonuses", label: "Бонусы", icon: "gift" },
   ],
   guest: [
     // "/" — это лента во весь экран, она живёт без шапки; в шапке (юридические
@@ -53,6 +54,7 @@ const FEATURE_BY_PATH: Record<string, Feature> = {
   "/warehouse": "inventory",
   "/shifts": "shifts",
   "/finance": "finance",
+  "/bonuses": "loyalty",
 };
 
 // Планшетные рабочие роли: у них шапка сжата в тонкую панель, а подвал убран,
