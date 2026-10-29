@@ -185,13 +185,13 @@ CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("REDIS_URL", "redis://redis:6379/0")
 
 # ─────────── Лицензия «Падачи» ───────────
-# Ключ выдаёт пульт (padacha.ru/pult/) при подключении точки. Пустой ключ —
-# лицензирование выключено: автономная установка (дев, свой сервер), тариф
-# правится руками в админке. С ключом инстанс раз в сутки сверяется с
-# пультом (см. core/license.py): забирает тариф и «оплачено до», а
+# Ключ выдаёт общая установка (hub.padacha.ru, billing) при подключении
+# точки. Пустой ключ — лицензирование выключено: автономная установка
+# (дев, свой сервер), тариф правится руками в админке. С ключом инстанс раз в сутки сверяется с
+# hub (см. core/license.py): забирает тариф и «оплачено до», а
 # блокировку за неоплату исполняет сам.
 LICENSE_KEY = os.getenv("LICENSE_KEY", "")
-LICENSE_URL = os.getenv("LICENSE_URL", "https://padacha.ru/api/license/")
+LICENSE_URL = os.getenv("LICENSE_URL", "https://hub.padacha.ru/api/license/")
 
 from celery.schedules import crontab  # noqa: E402
 

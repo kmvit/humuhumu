@@ -198,7 +198,7 @@ class OrganizationAdmin(admin.ModelAdmin):
             {
                 "fields": ("license_key",),
                 "description": (
-                    "Ключ из пульта padacha.ru/pult/. Пусто — заведение не "
+                    "Ключ лицензии внешней установки. Пусто — заведение не "
                     "биллится (своя точка или отдельная установка)."
                 ),
             },

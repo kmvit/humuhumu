@@ -10,7 +10,8 @@
 #            padacha.ru и привязка домена к этому VPS в панели хостинга).
 #
 # Опции:
-#   --license-key KEY  ключ из пульта (padacha.ru/pult/ → точка → Лицензия).
+#   --license-key KEY  ключ лицензии: hub.padacha.ru/admin/ → Заведение
+#                      этой точки → Подписка → «Ключ лицензии».
 #                      Без него инстанс работает автономно: ни сверки
 #                      тарифа, ни блокировок — для клиента так не оставлять.
 #   --port N           локальный порт web-контейнера (по умолчанию — первый
@@ -28,7 +29,7 @@
 set -euo pipefail
 
 REPO="https://github.com/kmvit/humuhumu.git"
-LICENSE_URL="https://padacha.ru/api/license/"
+LICENSE_URL="https://hub.padacha.ru/api/license/"
 
 die() { echo "ОШИБКА: $*" >&2; exit 1; }
 
