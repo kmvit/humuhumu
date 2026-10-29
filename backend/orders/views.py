@@ -4,7 +4,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status, viewsets
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
@@ -12,7 +12,7 @@ from catalog.models import Category
 from core.plans import RequiresStations
 from inventory.services import return_order_item, write_off_order_item
 from users.models import User
-from users.permissions import IsBarOrAdmin, IsCookOrAdmin, IsWaiterOrAdmin
+from users.permissions import IsAdminRole, IsBarOrAdmin, IsCookOrAdmin, IsWaiterOrAdmin
 
 from .models import Order, OrderItem, Table
 from .serializers import (
@@ -1173,3 +1173,12 @@ class OrderViewSet(viewsets.ModelViewSet):
         for order in open_orders:
             record_manual_payment(order, method, request.user)
         return Response({"table": table, "closed": len(open_orders)})
+
+
+@api_view(["GET"])
+@permission_classes([IsAdminRole])
+def dashboard(request):
+    """GET /api/dashboard/?period=today|week|month — «Сводка» владельца."""
+    from .dashboard import summary
+
+    return Response(summary(request.query_params.get("period", "today")))

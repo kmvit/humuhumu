@@ -923,3 +923,39 @@ export interface ImageQuota {
   left: number;
   spent_usd: string;
 }
+
+// ——— «Сводка» владельца (GET /api/dashboard/) ———
+export type DashPeriod = "today" | "week" | "month";
+
+export interface DashTotals {
+  revenue: string;
+  sales: string;
+  checks: number;
+  avg_check: string;
+  cash: string;
+  card: string;
+  online: string;
+  refunds: string;
+  bonuses: string;
+}
+
+export interface DashAttention {
+  kind: "danger" | "warn" | "info";
+  key: string;
+  title: string;
+  text: string;
+  to: string;
+}
+
+export interface Dashboard {
+  period: DashPeriod;
+  from: string;
+  to: string;
+  current: DashTotals;
+  previous: DashTotals;
+  // value === null — корзина ещё впереди (будущий час или день)
+  series: { at: string; value: string | null; prev: string }[];
+  top: { name: string; variant: string; qty: number; sum: string }[];
+  in_work: number;
+  attention: DashAttention[];
+}

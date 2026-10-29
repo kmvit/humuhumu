@@ -30,7 +30,7 @@ from inventory.views import (
     StockItemViewSet,
     WriteOffViewSet,
 )
-from orders.views import OrderViewSet, TableViewSet
+from orders.views import OrderViewSet, TableViewSet, dashboard
 from billing.views import license_view
 from payments.views import (
     AcquiringSettingsView, KassaResyncView, KassaSettingsView, PaymentJournalView,
@@ -87,6 +87,7 @@ api_patterns = [
     path("auth/register/", RegisterView.as_view(), name="register"),
     # сайт (публичные настройки)
     path("site/", SiteSettingsView.as_view(), name="site"),
+    path("dashboard/", dashboard, name="dashboard"),
     # стиль сгенерированных фото меню (только владелец)
     path(
         "menu-images/settings/",

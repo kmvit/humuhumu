@@ -2,7 +2,8 @@ import { useState } from "react";
 import { patch, ApiError } from "../../api";
 import Icon from "../../components/Icon";
 import { useToast } from "../../components/ui/Toast";
-import { useSite } from "../../site";
+import { useSite, useUpdateSite } from "../../site";
+import type { Site } from "../../types";
 
 /** Раздел «Заказы с сайта» — технический перерыв.
 
@@ -17,6 +18,7 @@ import { useSite } from "../../site";
 */
 export default function OrderingPause() {
   const site = useSite();
+  const updateSite = useUpdateSite();
   const notify = useToast();
   // Правку держим локально: контекст сайта читается один раз при загрузке
   // страницы и после сохранения показывал бы прежнее значение.
@@ -35,7 +37,8 @@ export default function OrderingPause() {
     const next = !on;
     setSaving(true);
     try {
-      await patch("/site/", { ordering_paused: next });
+      // в общий контекст — выключатель в «Сводке» покажет то же самое
+      updateSite(await patch<Site>("/site/", { ordering_paused: next }));
       setPaused(next);
       notify(next ? "Заказы с сайта остановлены" : "Заказы с сайта снова принимаются", "ok");
     } catch (e) {

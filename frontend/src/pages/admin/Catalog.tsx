@@ -457,7 +457,7 @@ export default function Catalog() {
                               src={p.thumbnail}
                               alt=""
                               style={{
-                                width: 34, height: 34, borderRadius: 8,
+                                width: 34, height: 34, borderRadius: "var(--radius-sm)",
                                 objectFit: "cover", flexShrink: 0,
                               }}
                             />
@@ -768,7 +768,7 @@ function ProductForm({
             <img
               src={preview}
               alt=""
-              style={{ width: 56, height: 56, borderRadius: 10, objectFit: "cover" }}
+              style={{ width: 56, height: 56, borderRadius: "var(--radius-sm)", objectFit: "cover" }}
             />
           )}
           <input

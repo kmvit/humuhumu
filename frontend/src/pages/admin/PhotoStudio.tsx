@@ -522,7 +522,7 @@ export default function PhotoStudio({
                       width: "100%",
                       aspectRatio: "1 / 1",
                       objectFit: "cover",
-                      borderRadius: 10,
+                      borderRadius: "var(--radius-sm)",
                     }}
                   />
                 ) : (
@@ -533,7 +533,7 @@ export default function PhotoStudio({
                       placeItems: "center",
                       aspectRatio: "1 / 1",
                       border: "1px dashed var(--rule)",
-                      borderRadius: 10,
+                      borderRadius: "var(--radius-sm)",
                       padding: 8,
                       textAlign: "center",
                     }}

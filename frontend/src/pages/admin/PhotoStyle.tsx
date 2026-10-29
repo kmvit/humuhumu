@@ -89,7 +89,7 @@ export default function PhotoStyle({ onClose }: { onClose: () => void }) {
           <img
             src={site[field] as string}
             alt=""
-            style={{ width: 56, height: 56, borderRadius: 10, objectFit: "cover" }}
+            style={{ width: 56, height: 56, borderRadius: "var(--radius-sm)", objectFit: "cover" }}
           />
         )}
         <input

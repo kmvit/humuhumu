@@ -10,7 +10,8 @@ import Waiter from "./pages/waiter/Waiter";
 import Counter from "./pages/counter/Counter";
 import Kitchen from "./pages/kitchen/Kitchen";
 import Bar from "./pages/bar/Bar";
-import Admin from "./pages/admin/Admin";
+import Dashboard from "./pages/admin/Dashboard";
+import Settings from "./pages/admin/Settings";
 import Catalog from "./pages/admin/Catalog";
 import Warehouse from "./pages/warehouse/Warehouse";
 import Shifts from "./pages/shifts/Shifts";
@@ -140,7 +141,8 @@ export default function App() {
             element={<Gated feature="inventory" what="Склад" need="Максимум"><Warehouse /></Gated>}
           />
         )}
-        {user?.role === "admin" && <Route path="/admin" element={<Admin />} />}
+        {user?.role === "admin" && <Route path="/admin" element={<Dashboard />} />}
+        {user?.role === "admin" && <Route path="/settings/:section?" element={<Settings />} />}
         {user?.role === "admin" && <Route path="/catalog" element={<Catalog />} />}
         {/* заказы и платежи за день — выручка, видна только владельцу */}
         {user?.role === "admin" && <Route path="/orders" element={<OrdersJournal />} />}

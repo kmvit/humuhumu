@@ -30,13 +30,14 @@ const NAV: Record<string, { to: string; label: string; icon: IconName }[]> = {
     { to: "/finance", label: "Финансы", icon: "wallet" },
   ],
   admin: [
-    { to: "/admin", label: "Админ", icon: "chart" },
+    { to: "/admin", label: "Сводка", icon: "chart" },
     { to: "/orders", label: "Заказы", icon: "receipt" },
     { to: "/catalog", label: "Каталог", icon: "coffee" },
     { to: "/warehouse", label: "Склад", icon: "box" },
     { to: "/shifts", label: "Смены", icon: "user" },
     { to: "/finance", label: "Финансы", icon: "wallet" },
     { to: "/bonuses", label: "Бонусы", icon: "gift" },
+    { to: "/settings", label: "Настройки", icon: "sliders" },
   ],
   guest: [
     // "/" — это лента во весь экран, она живёт без шапки; в шапке (юридические
@@ -45,6 +46,16 @@ const NAV: Record<string, { to: string; label: string; icon: IconName }[]> = {
     { to: "/menu", label: "Меню", icon: "coffee" },
   ],
 };
+
+// У владельца разделов больше всех, и строка в шапке уже упиралась в края.
+// На широком экране они живут в левой колонке, сгруппированные блоками;
+// на телефоне и планшете — прежняя строка в шапке.
+const SIDE_GROUPS: { title: string; paths: string[] }[] = [
+  { title: "Работа", paths: ["/admin", "/orders"] },
+  { title: "Меню и склад", paths: ["/catalog", "/warehouse"] },
+  { title: "Команда и деньги", paths: ["/shifts", "/finance", "/bonuses"] },
+  { title: "Заведение", paths: ["/settings"] },
+];
 
 // Какая фича тарифа открывает раздел. Раздел без записи доступен всем.
 // Прячем только ссылку — сам запрет держат permissions на бэке.
@@ -84,6 +95,8 @@ export default function Layout() {
       counter && l.to === "/waiter" ? { ...l, label: "Стойка", icon: "receipt" as const } : l
     );
 
+  const side = user?.role === "admin";
+
   const themeBtn = (
     <button
       className="icon-btn"
@@ -103,8 +116,58 @@ export default function Layout() {
     </button>
   );
 
+  const sidebar = side && (
+    <aside className="side">
+      <span className="brand side-brand">
+        <span className="logo">
+          {site?.logo ? <img src={site.logo} alt="" /> : <Icon name="coffee" size={20} />}
+        </span>
+        <span className="brand-name">{site?.name ?? "Кафе"}</span>
+      </span>
+
+      <nav className="side-nav">
+        {SIDE_GROUPS.map((g) => {
+          const items = links.filter((l) => g.paths.includes(l.to));
+          if (!items.length) return null;
+          return (
+            <div className="side-group" key={g.title}>
+              <div className="side-title">{g.title}</div>
+              {items.map((l) => (
+                <NavLink
+                  key={l.to}
+                  to={l.to}
+                  className={({ isActive }) => "side-link" + (isActive ? " active" : "")}
+                >
+                  <span className="side-ico">
+                    <Icon name={l.icon} size={18} />
+                  </span>
+                  {l.label}
+                </NavLink>
+              ))}
+            </div>
+          );
+        })}
+      </nav>
+
+      <div className="side-foot">
+        {user?.balance !== null && user?.balance !== undefined && (
+          <span className="chip">
+            <Icon name="spark" size={15} />
+            <span className="num">{Number(user.balance).toLocaleString("ru")}</span>
+          </span>
+        )}
+        <span className="side-foot-btns">
+          {themeBtn}
+          {authBtn}
+        </span>
+      </div>
+    </aside>
+  );
+
   return (
-    <>
+    <div className={side ? "shell" : undefined}>
+      {sidebar}
+      <div className={side ? "shell-main" : undefined}>
       <header className={"header" + (staff ? " slim" : "")}>
         <div className="header-inner">
           <nav>
@@ -156,6 +219,7 @@ export default function Layout() {
         )}
       </main>
       {!staff && <Footer />}
-    </>
+      </div>
+    </div>
   );
 }

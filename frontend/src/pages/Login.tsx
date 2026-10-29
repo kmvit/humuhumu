@@ -63,7 +63,7 @@ export default function Login() {
         <div style={{ textAlign: "center", marginBottom: 22 }}>
           <span
             className="logo"
-            style={{ width: 56, height: 56, borderRadius: 18, margin: "0 auto 14px" }}
+            style={{ width: 56, height: 56, borderRadius: "var(--radius)", margin: "0 auto 14px" }}
           >
             {site?.logo ? <img src={site.logo} alt="" /> : <Icon name="coffee" size={30} />}
           </span>
@@ -78,7 +78,7 @@ export default function Login() {
           </Link>
         </div>
 
-        <div className="wrap" style={{ background: "var(--brand-soft)", padding: 4, borderRadius: 13, marginBottom: 18 }}>
+        <div className="wrap" style={{ background: "var(--brand-soft)", padding: 4, borderRadius: "calc(var(--radius-sm) + 4px)", marginBottom: 18 }}>
           {(["login", "register"] as const).map((m) => (
             <button
               key={m}
