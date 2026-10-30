@@ -21,6 +21,7 @@ from django.utils import timezone
 
 from catalog.models import Category, Product, ProductVariant
 from core.models import SiteSettings
+from core.demo_access import DEMO_PASSWORD
 from finance.models import Expense, ExpenseCategory, PayrollPayout
 from inventory.models import (
     Receipt,
@@ -36,7 +37,7 @@ from wallet.models import TokenPackage, TokenTransaction, Wallet
 from shifts.models import Shift, ShiftMember, ShiftSettings
 from users.models import User
 
-PASSWORD = "demo12345"
+PASSWORD = DEMO_PASSWORD
 DAYS = 21  # столько дней истории показываем в отчётах
 
 # Доступы показываем прямо на стенде — человек должен зайти каждой ролью
@@ -173,14 +174,10 @@ class Command(BaseCommand):
         site.working_hours = "Пн–Вс · 8:00–22:00"
         site.theme = SiteSettings.Theme.NEUTRAL
         site.accent_color = "#1f58a6"
-        logins = "\n".join(
-            f"{u} / {PASSWORD} — {title}" for u, _, _, title in STAFF if u != "demo_waiter2"
-        )
         site.about = (
             "Демонстрационный стенд «Падачи» — вымышленное кафе с настоящими "
-            "данными за три недели. Заходите любой ролью, экраны у всех разные:\n\n"
-            f"{logins}\n\n"
-            "Меняйте что угодно: это витрина, боевых данных здесь нет."
+            "данными за три недели. Заходите любой ролью — экраны у всех разные. "
+            "Это витрина, боевых данных здесь нет."
         )
         site.save()
 

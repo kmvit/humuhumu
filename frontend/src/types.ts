@@ -18,6 +18,8 @@ export interface Site {
   instagram: string;
   telegram: string;
   about: string;
+  /** Логины временных ролей, только для DEMO_STAND. */
+  demo_access?: { username: string; label: string; password: string }[];
   /** Зал с официантами или стойка с выдачей по номеру. */
   service_mode: "hall" | "counter";
   theme: AppTheme;

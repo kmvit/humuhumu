@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1370" viewBox="0 0 1600 1370">
+<defs>
+ <pattern id="grain" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="3" cy="5" r=".7" fill="#5b4a35" opacity=".12"/><circle cx="18" cy="14" r=".6" fill="#5b4a35" opacity=".1"/></pattern>
+ <filter id="shadow" x="-10%" y="-20%" width="120%" height="150%"><feDropShadow dx="0" dy="9" stdDeviation="12" flood-color="#211b13" flood-opacity=".15"/></filter>
+ <style>.sans{font-family:Arial,Helvetica,sans-serif}.serif{font-family:Georgia,'Times New Roman',serif}.mono{font-family:'Courier New',monospace}.label{font:700 15px Arial,sans-serif;letter-spacing:2px;fill:#716959}</style>
+</defs>
+<rect width="1600" height="1370" fill="#e9e5dc"/>
+<text x="80" y="75" class="sans" font-size="34" font-weight="700" fill="#201b14">ПАДАЧА / визитка — три визуальных направления</text>
+<text x="80" y="110" class="sans" font-size="17" fill="#716959">Один бренд и одна задача: зацепить владельца любого небольшого заведения. Формат каждой стороны 90 × 50 мм.</text>
+
+<!-- concept 1 -->
+<text x="80" y="180" class="label">01 / РЕДАКЦИОННАЯ · ТЁПЛАЯ БУМАГА И КРУПНАЯ ТИПОГРАФИКА</text>
+<g filter="url(#shadow)">
+ <rect x="80" y="210" width="600" height="333" rx="7" fill="#f8f4ea"/><rect x="80" y="210" width="600" height="333" rx="7" fill="url(#grain)"/>
+ <text x="115" y="258" class="sans" font-size="20" font-weight="700" letter-spacing="3" fill="#d2570a">ПАДАЧА</text>
+ <text x="115" y="365" class="serif" font-size="65" font-weight="700" fill="#17130e">Смена</text><text x="115" y="432" class="serif" font-size="65" font-weight="700" fill="#17130e">закончилась.</text>
+ <text x="115" y="490" class="sans" font-size="32" font-weight="700" fill="#d2570a">Хаос — тоже.</text>
+ <rect x="700" y="210" width="600" height="333" rx="7" fill="#d2570a"/><text x="738" y="263" class="sans" font-size="18" font-weight="700" letter-spacing="2" fill="#fff7f0">ПАДАЧА</text>
+ <text x="738" y="320" class="sans" font-size="22" font-weight="700" fill="#fff7f0">Всё для работы кафе —</text><text x="738" y="352" class="sans" font-size="22" font-weight="700" fill="#fff7f0">в одной системе.</text>
+ <text x="738" y="403" class="sans" font-size="16" fill="#fff1e5">Меню · заказы · кухня · склад · смены</text><text x="738" y="432" class="sans" font-size="16" fill="#fff1e5">и финансы</text>
+ <rect x="738" y="458" width="60" height="60" rx="3" fill="#fff7f0"/><g fill="#17130e"><path d="M746 466h18v18h-18zm4 4v10h10v-10zm20-4h18v18h-18zm4 4v10h10v-10zm-28 20h18v18h-18zm4 4v10h10v-10zm24-4h4v4h-4zm8 0h6v6h-6zm-12 8h5v5h-5zm12 5h6v7h-6zm-9-2h4v4h-4z"/></g>
+ <text x="815" y="483" class="sans" font-size="16" font-weight="700" fill="#fff7f0">Попробовать</text><text x="815" y="508" class="sans" font-size="16" fill="#fff1e5">padacha.ru</text>
+</g>
+
+<!-- concept 2 -->
+<text x="80" y="615" class="label">02 / ЧЕК · ЗНАКОМАЯ КАФЕШНАЯ ЭСТЕТИКА, НО СДЕРЖАННО</text>
+<g filter="url(#shadow)">
+ <rect x="80" y="645" width="600" height="333" rx="7" fill="#fffdf7"/><rect x="80" y="645" width="600" height="333" rx="7" fill="url(#grain)"/>
+ <text x="118" y="697" class="mono" font-size="19" font-weight="700" fill="#211b13">ПАДАЧА / СИСТЕМА ДЛЯ КАФЕ</text><path d="M118 718h520" stroke="#b5ad9e" stroke-dasharray="3 7" stroke-width="2"/>
+ <text x="118" y="786" class="mono" font-size="35" font-weight="700" fill="#17130e">ЗАКАЗЫ</text><text x="580" y="786" class="mono" font-size="26" fill="#d2570a">✓</text>
+ <text x="118" y="832" class="mono" font-size="35" font-weight="700" fill="#17130e">УЧЁТ</text><text x="580" y="832" class="mono" font-size="26" fill="#d2570a">✓</text>
+ <text x="118" y="878" class="mono" font-size="35" font-weight="700" fill="#17130e">СПОКОЙСТВИЕ</text><text x="580" y="878" class="mono" font-size="26" fill="#d2570a">✓</text>
+ <path d="M118 907h520" stroke="#b5ad9e" stroke-dasharray="3 7" stroke-width="2"/><text x="118" y="945" class="mono" font-size="17" fill="#716959">ИТОГО: смена под контролем</text>
+ <rect x="700" y="645" width="600" height="333" rx="7" fill="#201b14"/><text x="744" y="704" class="mono" font-size="18" letter-spacing="2" fill="#f3eadb">ВАШЕ ЗАВЕДЕНИЕ</text>
+ <text x="744" y="786" class="serif" font-size="58" font-weight="700" fill="#f8f4ea">Гости — ваши.</text><text x="744" y="848" class="serif" font-size="58" font-weight="700" fill="#f8f4ea">Рутина — наша.</text>
+ <rect x="744" y="885" width="60" height="60" rx="3" fill="#d2570a"/><g fill="#fff7f0"><path d="M752 893h18v18h-18zm4 4v10h10v-10zm20-4h18v18h-18zm4 4v10h10v-10zm-28 20h18v18h-18zm4 4v10h10v-10zm24-4h4v4h-4zm8 0h6v6h-6zm-12 8h5v5h-5zm12 5h6v7h-6z"/></g>
+ <text x="825" y="911" class="sans" font-size="17" font-weight="700" fill="#f8f4ea">Посмотреть демо</text><text x="825" y="938" class="sans" font-size="16" fill="#bfb5a5">padacha.ru</text>
+</g>
+
+<!-- concept 3 -->
+<text x="80" y="1050" class="label">03 / ТИПОГРАФИЧЕСКАЯ · СМЕЛО, ЛАКОНИЧНО, ЗАМЕТНО В РУКЕ</text>
+<g filter="url(#shadow)">
+ <rect x="80" y="1080" width="600" height="230" rx="7" fill="#d2570a"/><text x="112" y="1123" class="sans" font-size="16" font-weight="700" letter-spacing="3" fill="#fff1e5">ПАДАЧА</text>
+ <text x="105" y="1214" class="sans" font-size="82" font-weight="900" letter-spacing="-4" fill="#fff7f0">ВСЁ</text><text x="105" y="1292" class="sans" font-size="82" font-weight="900" letter-spacing="-4" fill="#fff7f0">РАБОТАЕТ.</text>
+ <rect x="700" y="1080" width="600" height="230" rx="7" fill="#f8f4ea"/><text x="738" y="1125" class="sans" font-size="16" font-weight="700" letter-spacing="2" fill="#d2570a">КОГДА ВЫ ЗАНЯТЫ ГОСТЯМИ</text>
+ <text x="738" y="1177" class="sans" font-size="22" font-weight="700" fill="#17130e">Заказы, меню, склад, смены</text><text x="738" y="1208" class="sans" font-size="22" font-weight="700" fill="#17130e">и деньги собраны в одном месте.</text>
+ <rect x="738" y="1230" width="56" height="56" rx="3" fill="#201b14"/><g fill="#fff7f0"><path d="M745 1237h17v17h-17zm4 4v9h9v-9zm20-4h17v17h-17zm4 4v9h9v-9zm-28 20h17v17h-17zm4 4v9h9v-9zm23-3h4v4h-4zm9 0h5v5h-5zm-12 8h5v5h-5zm11 4h6v7h-6z"/></g>
+ <text x="810" y="1254" class="sans" font-size="16" font-weight="700" fill="#17130e">Управление кафе</text><text x="810" y="1281" class="sans" font-size="16" fill="#716959">padacha.ru ↗</text>
+</g>
+<text x="80" y="1348" class="sans" font-size="14" fill="#716959">Макеты для выбора направления. QR-код показан как заглушка; перед печатью заменить на рабочую ссылку и проверить финальный текст.</text>
+</svg>

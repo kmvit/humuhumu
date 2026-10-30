@@ -1,5 +1,9 @@
+import re
+
+from django.conf import settings
 from rest_framework import serializers
 
+from .demo_access import DEMO_ACCOUNTS
 from .models import SiteSettings
 
 
@@ -18,6 +22,7 @@ PROFILE_FIELDS = frozenset({
 
 class SiteSettingsSerializer(serializers.ModelSerializer):
     logo = serializers.SerializerMethodField()
+    demo_access = serializers.SerializerMethodField()
     # Тариф и его фичи: фронт по ним прячет разделы, которых нет в тарифе.
     # Настоящая защита — permission-классы на бэке (core/plans.py), фронт
     # только не показывает лишнего.
@@ -47,6 +52,21 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
         from .plans import current_plan
 
         return current_plan()
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if settings.DEMO_STAND:
+            # Убираем ранее сохранённые строки логин/пароль из публичного
+            # описания, не блокируя редактирование поля about через PATCH.
+            lines = [
+                line for line in (data.get("about") or "").splitlines()
+                if not re.match(r"^\s*demo_[\w-]+\s*/\s*\S+", line, re.I)
+            ]
+            data["about"] = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+        return data
+
+    def get_demo_access(self, obj) -> list[dict[str, str]]:
+        return list(DEMO_ACCOUNTS) if settings.DEMO_STAND else []
 
     def get_features(self, obj) -> list[str]:
         from .plans import features
@@ -81,6 +101,7 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
             "instagram",
             "telegram",
             "about",
+            "demo_access",
             "theme",
             "service_mode",
             "dark_by_default",

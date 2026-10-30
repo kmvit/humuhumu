@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import { get, post, ApiError } from "../../api";
 import type { Category, Order, Product, ProductVariant } from "../../types";
 import OptionsSheet from "../../components/OptionsSheet";
@@ -40,7 +39,6 @@ export default function Menu() {
   const { theme } = useAppearance();
   // Стойка: без столов и официанта, заказ забирают по номеру в окне.
   const site = useSite();
-  const counter = site?.service_mode === "counter";
   // Телефон в форме заказа нужен только бонусной программе: по нему заказ
   // привяжется к гостю и ему будет что начислить.
   const bonusOn = useFeature("loyalty") && !!site?.bonus_enabled;
@@ -172,22 +170,6 @@ export default function Menu() {
 
   return (
     <>
-      <div className="between" style={{ alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-        <h1 className="h1">Меню</h1>
-        {table && !counter && (
-          <span className="chip" style={{ fontSize: 15 }}>
-            <Icon name="store" size={16} /> Ваш стол №{table}
-          </span>
-        )}
-      </div>
-      <p className="muted subtitle">
-        {counter
-          ? "Соберите заказ и отправьте — заберёте в окне по своему номеру"
-          : table
-          ? "Соберите заказ — он придёт официанту с вашим столом"
-          : "Соберите заказ и отправьте — потом подойдите к стойке"}
-      </p>
-
       {/* Технический перерыв. Меню оставляем на месте: гость пришёл по QR
           и должен увидеть, куда попал и почему сейчас не принимают. */}
       {pause && (
@@ -201,25 +183,6 @@ export default function Menu() {
           </div>
         </div>
       )}
-
-      {/* Два вида меню. По умолчанию гость попадает на ленту, список — сюда,
-          на /menu; выбор дублируем крупными плитками, чтобы вернуться в ленту
-          можно было не только кнопкой «назад». */}
-      <div className="menu-modes">
-        <span className="menu-modes-label">Варианты меню</span>
-        <div className="grid cols-2">
-          <div className="card mode-tile active">
-            <Icon name="receipt" size={26} />
-            <strong>Списком</strong>
-            <span className="muted">Все блюда с ценами — быстро собрать заказ</span>
-          </div>
-          <Link className="card hover mode-tile" to="/reels">
-            <Icon name="spark" size={26} />
-            <strong>Лентой с фото</strong>
-            <span className="muted">Листать во весь экран, как в соцсетях</span>
-          </Link>
-        </div>
-      </div>
 
       {/* сцена с пальмами — только в «Островной» теме */}
       {theme === "island" && (

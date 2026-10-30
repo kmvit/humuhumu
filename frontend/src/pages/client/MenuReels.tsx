@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
 import { get, post, ApiError } from "../../api";
 import type { Category, Order, Product, ProductVariant } from "../../types";
 import OptionsSheet from "../../components/OptionsSheet";
@@ -8,6 +7,7 @@ import {
   needsPicking, removeLine, toPayload, variantCount, type Cart,
 } from "../../cart";
 import Icon, { categoryIcon, type IconName } from "../../components/Icon";
+import MenuHeader from "../../components/MenuHeader";
 import Modal from "../../components/ui/Modal";
 import { useToast } from "../../components/ui/Toast";
 import { initTable } from "../../table";
@@ -229,6 +229,9 @@ export default function MenuReels() {
   if (loading) {
     return (
       <div className="reels">
+        <div className="reels-top">
+          <MenuHeader mode="photos" overlay table={table} />
+        </div>
         <div className="reels-loading">Загрузка меню…</div>
       </div>
     );
@@ -237,9 +240,11 @@ export default function MenuReels() {
   if (pages.length === 0) {
     return (
       <div className="reels">
+        <div className="reels-top">
+          <MenuHeader mode="photos" overlay table={table} />
+        </div>
         <div className="reels-loading">
           Нет доступных позиций
-          <Link className="btn sm ghost mt-4" to="/menu">На обычное меню</Link>
         </div>
       </div>
     );
@@ -255,11 +260,7 @@ export default function MenuReels() {
     >
       {/* верхняя лента категорий */}
       <div className="reels-top">
-        <Link className="reels-back" to="/menu" aria-label="Обычное меню">
-          <span className="rot-90">
-            <Icon name="arrowDown" size={18} />
-          </span>
-        </Link>
+        <MenuHeader mode="photos" overlay table={table} />
         {/* полоски-сегменты как в Stories: видно и текущую категорию, и сколько
             их всего. Тап по сегменту — переход к его категории */}
         <div className="reels-nav">

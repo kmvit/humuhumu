@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
 import { useSite } from "../site";
 import { useTheme } from "../theme";
@@ -7,6 +7,7 @@ import Icon, { type IconName } from "./Icon";
 import type { Feature } from "../types";
 import InstallPWA from "./InstallPWA";
 import LicenseGuard from "./LicenseGuard";
+import MenuHeader from "./MenuHeader";
 
 const NAV: Record<string, { to: string; label: string; icon: IconName }[]> = {
   client: [
@@ -80,6 +81,7 @@ export default function Layout() {
   const { theme, toggle } = useTheme();
   const site = useSite();
   const navigate = useNavigate();
+  const location = useLocation();
   const staff = !!user && STAFF_ROLES.includes(user.role);
   const counter = site?.service_mode === "counter";
   const feats = site?.features;
@@ -168,7 +170,9 @@ export default function Layout() {
     <div className={side ? "shell" : undefined}>
       {sidebar}
       <div className={side ? "shell-main" : undefined}>
-      <header className={"header" + (staff ? " slim" : "")}>
+      {!user && location.pathname === "/menu" ? (
+        <MenuHeader mode="list" />
+      ) : <header className={"header" + (staff ? " slim" : "")}>
         <div className="header-inner">
           <nav>
             {links.map((l) => (
@@ -208,6 +212,7 @@ export default function Layout() {
           </div>
         </div>
       </header>
+      }
       <main className={"container" + (staff ? " staff" : "")}>
         {/* подписка касается только сотрудников: гость у меню ни при чём */}
         {user && user.role !== "client" ? (

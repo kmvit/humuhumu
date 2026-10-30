@@ -87,10 +87,8 @@ export default function App() {
         path="/login"
         element={user ? <Navigate to={home} replace /> : <Login />}
       />
-      {/* Меню лентой — полноэкранное, без общего Layout. Оно же главная для
-          гостя: лента с фото продаёт блюда лучше списка, а список остаётся
-          на /menu и доступен из ленты в один тап. Именно Route, а не редирект
-          с "/" — иначе потеряется ?table из QR-кода на столе. */}
+      {/* Полноэкранная фотолента — главная для гостя; ?table из QR остаётся
+          в URL до сохранения номера стола самим меню. */}
       <Route path="/reels" element={<MenuReels />} />
       {!user && <Route path="/" element={<MenuReels />} />}
       <Route element={<Layout />}>

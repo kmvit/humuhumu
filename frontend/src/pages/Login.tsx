@@ -4,6 +4,7 @@ import { useAuth } from "../auth";
 import { useSite, useFeature } from "../site";
 import { ApiError, post } from "../api";
 import Icon from "../components/Icon";
+import DemoAccess from "../components/DemoAccess";
 
 export default function Login() {
   const { login, register } = useAuth();
@@ -91,6 +92,10 @@ export default function Login() {
             </button>
           ))}
         </div>
+
+        {mode === "login" && site?.demo_access?.length ? (
+          <DemoAccess placement="login" accounts={site.demo_access} />
+        ) : null}
 
         {registered ? (
           <div className="enter" style={{ textAlign: "center" }}>

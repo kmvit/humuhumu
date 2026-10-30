@@ -473,12 +473,63 @@ h1, h2, h3 { font-family: var(--font-display); color: var(--fg); margin: 0; font
 .reels { position: fixed; inset: 0; z-index: 40; display: flex; flex-direction: column; background: #0b0b0d; color: #fff; overflow: hidden; }
 .reels-loading { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: rgba(255,255,255,0.75); }
 
+/* Общая шапка гостевого меню: спокойная на странице списка,
+   контрастная поверх фотографий в полноэкранной ленте. */
+.menu-header { z-index: 40; }
+.menu-header-page {
+  position: sticky; top: 0; border-bottom: 1px solid var(--rule);
+  background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(12px);
+}
+.menu-header-overlay { position: relative; z-index: auto; color: #fff; }
+.menu-header-inner {
+  max-width: 920px; min-height: 58px; margin: 0 auto; padding: 10px 16px;
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+}
+.menu-header-overlay .menu-header-inner { max-width: none; min-height: 46px; padding: 0; }
+.menu-header-brand { display: inline-flex; align-items: center; gap: 9px; min-width: 0; color: var(--fg); text-decoration: none; }
+.menu-header-logo { display: grid; place-items: center; flex: 0 0 38px; width: 38px; height: 38px; overflow: hidden; border: 1px solid var(--rule); border-radius: var(--radius-sm); color: var(--fg); }
+.menu-header-logo img { width: 100%; height: 100%; padding: 2px; object-fit: contain; }
+.menu-header-name { min-width: 0; overflow: hidden; color: var(--fg); font-family: var(--font-display); font-size: 16px; font-weight: var(--w-display); letter-spacing: .02em; text-overflow: ellipsis; white-space: nowrap; }
+.menu-header-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; }
+.menu-header-table { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; padding: 7px 9px; border: 1px solid var(--border); border-radius: 999px; background: var(--brand-soft); color: var(--brand); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.menu-header-login { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; flex-shrink: 0; padding: 0 13px; border: 1px solid var(--brand); border-radius: var(--radius-sm); background: var(--grad); color: var(--on-brand); font-size: 13px; font-weight: 700; text-decoration: none; box-shadow: var(--shadow); }
+.menu-header-login:hover { color: var(--on-brand); filter: brightness(1.08); }
+.demo-access-trigger { flex-shrink: 0; padding: 8px 2px; border: 0; background: transparent; color: var(--brand); font: inherit; font-size: 13px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.demo-access-trigger:hover { text-decoration: underline; }
+.menu-header-overlay .menu-header-brand, .menu-header-overlay .menu-header-name { color: #fff; }
+.menu-header-overlay .menu-header-logo { border-color: rgba(255,255,255,.35); background: rgba(255,255,255,.14); color: #fff; backdrop-filter: blur(8px); }
+.menu-header-overlay .menu-header-logo img { padding: 0; object-fit: cover; }
+.menu-header-overlay .menu-header-table { border-color: rgba(255,255,255,.28); background: rgba(0,0,0,.38); color: #fff; backdrop-filter: blur(8px); }
+.menu-header-overlay .menu-mode-switch { border-color: rgba(255,255,255,.28); background: rgba(0,0,0,.42); backdrop-filter: blur(8px); }
+.menu-header-overlay .menu-mode-switch a, .menu-header-overlay .menu-mode-switch .selected { color: rgba(255,255,255,.78); }
+.menu-header-overlay .menu-mode-switch .selected { background: rgba(255,255,255,.95); color: #171717; box-shadow: none; }
+.menu-header-overlay .menu-mode-switch a:hover { background: rgba(255,255,255,.18); color: #fff; }
+.menu-header-overlay .menu-header-theme { border-color: rgba(255,255,255,.3); background: rgba(0,0,0,.35); color: #fff; }
+.menu-header-overlay .menu-header-theme:hover { border-color: #fff; background: rgba(255,255,255,.18); color: #fff; }
+.menu-header-overlay .menu-header-login { border-color: rgba(255,255,255,.5); background: rgba(255,255,255,.95); color: #171717; box-shadow: 0 3px 12px rgba(0,0,0,.16); }
+.menu-header-overlay .menu-header-login:hover { background: #fff; color: #000; }
+.menu-header-overlay .demo-access-trigger { color: #fff; text-shadow: 0 1px 8px rgba(0,0,0,.5); }
+.demo-access-panel { display: flex; flex-direction: column; gap: 10px; margin: 0 0 18px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--brand-soft); }
+.demo-access-panel-head { display: flex; flex-direction: column; gap: 2px; }
+.demo-access-panel-head strong { font-family: var(--font-display); font-size: 16px; }
+.demo-access-panel-head span, .demo-access-password { color: var(--muted); font-size: 12px; }
+.demo-access-roles { display: flex; flex-wrap: wrap; gap: 6px; }
+.demo-access-roles .btn { flex: 1 1 calc(50% - 6px); min-width: 0; }
+.demo-access-password strong { color: var(--fg); }
+.demo-access-list { display: flex; flex-direction: column; gap: 8px; }
+.demo-access-account { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 11px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--fg); text-align: left; cursor: pointer; }
+.demo-access-account:hover:not(:disabled) { border-color: var(--brand); background: var(--brand-soft); }
+.demo-access-account:disabled { opacity: .6; cursor: wait; }
+.demo-access-account-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.demo-access-account-copy strong { font-size: 14px; }
+.demo-access-account-copy > span { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.demo-access-account-action { display: grid; place-items: center; width: 30px; height: 30px; flex: 0 0 30px; border-radius: 50%; background: var(--brand-soft); color: var(--brand); }
+
 /* верхняя лента категорий */
-.reels-top { position: absolute; top: 0; left: 0; right: 0; z-index: 3; display: flex; align-items: center; gap: 8px; padding: calc(10px + env(safe-area-inset-top)) 12px 12px; background: linear-gradient(to bottom, rgba(0,0,0,0.6), rgba(0,0,0,0)); }
-.reels-back { flex-shrink: 0; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; background: rgba(0,0,0,0.4); color: #fff; border: 1px solid rgba(255,255,255,0.25); }
+.reels-top { position: absolute; top: 0; left: 0; right: 0; z-index: 3; display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding: max(16px, calc(8px + env(safe-area-inset-top))) 18px 16px; background: linear-gradient(to bottom, rgba(0,0,0,0.76), rgba(0,0,0,0.3) 76%, rgba(0,0,0,0)); }
 /* Навигация по категориям — сегменты как в Stories: все помещаются на экран,
    поэтому листать ленту не нужно, а позиция «где я» читается с одного взгляда. */
-.reels-nav { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.reels-nav { width: 100%; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .reels-bars { display: flex; gap: 4px; }
 /* кнопка — крупная зона нажатия, сама полоска рисуется внутренним span:
    в 3 px пальцем не попасть */
@@ -491,6 +542,20 @@ h1, h2, h3 { font-family: var(--font-display); color: var(--fg); margin: 0; font
 .reels-count { margin-left: auto; flex-shrink: 0; font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.65); font-variant-numeric: tabular-nums; }
 /* имя категории мягко подменяется при свайпе — иначе смена незаметна */
 @keyframes reelsNowIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (max-width: 560px) {
+  .reels-top { gap: 8px; padding-right: 10px; padding-left: 10px; }
+  .menu-header-inner { gap: 6px; }
+  .menu-header-name { display: none; }
+  .menu-header-actions { gap: 5px; }
+  .menu-header-table { padding: 6px 8px; }
+  .menu-header-login { min-height: 34px; padding: 0 10px; }
+}
+@media (max-width: 760px) {
+  .demo-access-trigger { display: none; }
+}
+@media (max-width: 380px) {
+  .menu-header-table-label { display: none; }
+}
 
 /* горизонтальный пейджер + вертикальные ленты */
 .reels-track { flex: 1; display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none; }
@@ -516,7 +581,7 @@ h1, h2, h3 { font-family: var(--font-display); color: var(--fg); margin: 0; font
 .reel-add-wrap { flex-shrink: 0; }
 .reel-add { width: 60px; height: 60px; border-radius: 50%; display: grid; place-items: center; background: var(--brand); color: #fff; border: none; box-shadow: 0 6px 20px rgba(0,0,0,0.4); cursor: pointer; }
 /* лайк блюда — плавающая кнопка в правом верхнем углу карточки */
-.reel-like { position: absolute; top: calc(66px + env(safe-area-inset-top)); right: 14px; z-index: 2; display: inline-flex; flex-direction: column; align-items: center; gap: 3px; width: 52px; padding: 8px 0; border-radius: 16px; background: rgba(0,0,0,0.35); backdrop-filter: blur(6px); border: none; color: #fff; cursor: pointer; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.4)); transition: transform 0.15s var(--ease); }
+.reel-like { position: absolute; top: calc(132px + env(safe-area-inset-top)); right: 14px; z-index: 2; display: inline-flex; flex-direction: column; align-items: center; gap: 3px; width: 52px; padding: 8px 0; border-radius: 16px; background: rgba(0,0,0,0.35); backdrop-filter: blur(6px); border: none; color: #fff; cursor: pointer; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.4)); transition: transform 0.15s var(--ease); }
 .reel-like:active { transform: scale(0.88); }
 .reel-like.on { color: #ff4d6d; }
 .reel-like-n { font-size: 13px; font-weight: 700; line-height: 1; }
@@ -643,12 +708,7 @@ h1, h2, h3 { font-family: var(--font-display); color: var(--fg); margin: 0; font
 /* номер заказа в очереди у бариста */
 .counter-no { font-family: var(--font-display); font-size: 26px; font-weight: 700; }
 
-/* ——— Выбор вида меню: две крупные плитки под подзаголовком ——— */
-.menu-modes { margin-top: 18px; }
-.menu-modes-label {
-  display: block; margin-bottom: 8px; font-size: 12.5px; font-weight: 700;
-  letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
-}
+/* ——— Плитки выбора роли ——— */
 .mode-tile {
   display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
   padding: 18px; text-decoration: none; color: inherit;
@@ -658,9 +718,22 @@ h1, h2, h3 { font-family: var(--font-display); color: var(--fg); margin: 0; font
 /* текущий вид подсвечен и не кликается */
 .mode-tile.active { border-color: var(--brand); background: var(--brand-soft); cursor: default; }
 .mode-tile.active strong { color: var(--brand); }
+.menu-mode-switch {
+  display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0;
+  padding: 3px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg-2); font-size: 13px; line-height: 1.2; white-space: nowrap;
+}
+.menu-mode-switch a, .menu-mode-switch .selected {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 30px; padding: 0 11px; border-radius: 999px; color: var(--muted);
+  font-weight: 600; text-decoration: none;
+}
+.menu-mode-switch a:hover { background: var(--surface); color: var(--fg); }
+.menu-mode-switch .selected { background: var(--surface); color: var(--fg); box-shadow: var(--shadow); }
 @media (max-width: 420px) {
   .mode-tile { padding: 14px; }
   .mode-tile strong { font-size: 17px; }
+  .menu-mode-switch a, .menu-mode-switch .selected { padding: 0 9px; }
 }
 
 /* ============ Карточка товара: штриховая графика на бумаге ============ */
