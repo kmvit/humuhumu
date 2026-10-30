@@ -3,7 +3,7 @@ import re
 from django.conf import settings
 from rest_framework import serializers
 
-from .demo_access import DEMO_ACCOUNTS
+from .demo_access import DEMO_ACCOUNTS, DEMO_HOST
 from .models import SiteSettings
 
 
@@ -53,9 +53,16 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
 
         return current_plan()
 
+    def _is_demo_stand(self) -> bool:
+        if settings.DEMO_STAND:
+            return True
+        request = self.context.get("request")
+        organization = getattr(request, "organization", None)
+        return getattr(organization, "domain", "").lower().rstrip(".") == DEMO_HOST
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        if settings.DEMO_STAND:
+        if self._is_demo_stand():
             # Убираем ранее сохранённые строки логин/пароль из публичного
             # описания, не блокируя редактирование поля about через PATCH.
             lines = [
@@ -66,7 +73,7 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
         return data
 
     def get_demo_access(self, obj) -> list[dict[str, str]]:
-        return list(DEMO_ACCOUNTS) if settings.DEMO_STAND else []
+        return list(DEMO_ACCOUNTS) if self._is_demo_stand() else []
 
     def get_features(self, obj) -> list[str]:
         from .plans import features

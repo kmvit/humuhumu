@@ -1,6 +1,7 @@
 """Публичные учётные записи отдельного демонстрационного стенда."""
 
 DEMO_PASSWORD = "demo12345"
+DEMO_HOST = "demo.padacha.ru"
 
 DEMO_ACCOUNTS = (
     {"username": "demo_admin", "label": "Владелец", "password": DEMO_PASSWORD},
