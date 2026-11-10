@@ -87,6 +87,27 @@ class ScopedAdminMixin:
 class CafeAdminSite(AdminSite):
     index_template = 'admin/scoped_index.html'
 
+    def get_urls(self):
+        from django.urls import path
+        from .backups import backup_index, backup_create, backup_download
+        return [
+            path('backups/', self.admin_view(lambda request: backup_index(request, self)), name='backups'),
+            path('backups/create/', self.admin_view(backup_create), name='backup-create'),
+            path('backups/download/<str:filename>/', self.admin_view(backup_download), name='backup-download'),
+        ] + super().get_urls()
+
+    def get_app_list(self, request, app_label=None):
+        apps = super().get_app_list(request, app_label)
+        if app_label is None and is_platform_request(request):
+            from django.urls import reverse
+            url = reverse('admin:backups')
+            apps.append({'name': 'Обслуживание', 'app_label': 'maintenance', 'app_url': url,
+                         'has_module_perms': True,
+                         'models': [{'name': 'Резервные копии', 'object_name': 'Backups',
+                                     'admin_url': url, 'view_only': True,
+                                     'perms': {'view': True}}]})
+        return apps
+
     def each_context(self, request):
         return {**super().each_context(request), 'is_platform_hub': is_platform_request(request)}
 

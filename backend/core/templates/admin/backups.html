@@ -1,0 +1,20 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+{% block breadcrumbs %}<div class="breadcrumbs"><a href="{% url 'admin:index' %}">Начало</a> &rsaquo; Резервные копии</div>{% endblock %}
+{% block content %}
+<p>Копии общей базы содержат данные всех заведений. Раздел доступен только операторам хаба.</p>
+<p>База копируется ежедневно, файлы — по воскресеньям. Хранятся последние 30 копий базы и 4 архива файлов.</p>
+{% if backup_stale %}<ul class="messagelist"><li class="error">Нет свежей копии базы за последние 26 часов. Проверьте резервное копирование.</li></ul>{% endif %}
+{% if backup_status.state == 'queued' %}<p role="status">Ожидает запуска. Обновите страницу через минуту.</p>
+{% elif backup_status.state == 'running' %}<p role="status">Создаётся копия. Обновите страницу через минуту.</p>
+{% elif backup_status.state == 'failed' %}<ul class="messagelist"><li class="error">{{ backup_status.message }}</li></ul>
+{% elif backup_status.state == 'complete' %}<p role="status">Последний ручной запуск завершён успешно.</p>{% endif %}
+<form method="post" action="{% url 'admin:backup-create' %}">{% csrf_token %}<div class="submit-row"><input type="submit" value="Создать бэкап базы"{% if backup_status.state == 'running' or backup_status.state == 'queued' %} disabled{% endif %}></div></form>
+<div class="module"><table style="width:100%"><caption>Сохранённые копии</caption><thead><tr><th scope="col">Создана</th><th scope="col">Содержимое</th><th scope="col">Размер</th><th scope="col">Контрольная сумма</th><th scope="col">Файл</th></tr></thead><tbody>
+{% for copy in copies %}<tr><td>{{ copy.created_at|date:"d.m.Y H:i:s" }}</td><td>{{ copy.kind }}</td><td>{{ copy.size|filesizeformat }}</td><td>{% if copy.checksum %}SHA-256 сохранена{% else %}Старая копия без SHA-256{% endif %}</td><td><a href="{% url 'admin:backup-download' copy.name %}">Скачать {{ copy.name }}</a></td></tr>
+{% empty %}<tr><td colspan="5">Копий пока нет.</td></tr>{% endfor %}
+</tbody></table></div>
+<h2>Восстановление</h2>
+<p>Восстановление выполняется на сервере сначала в отдельную базу с проверкой данных. Переключение рабочей базы — отдельный шаг администратора сервера.</p>
+<p>Для полного восстановления понадобятся также архив файлов и сохранённые ключи из конфигурации сервера. Инструкция находится в README проекта, раздел «Резервные копии и восстановление».</p>
+{% endblock %}

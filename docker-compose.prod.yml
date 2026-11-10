@@ -33,6 +33,8 @@ services:
     volumes:
       - static:/app/staticfiles
       - media:/app/media
+      - /opt/backups:/app/backups:ro
+      - /opt/padacha-backup-requests:/app/backup-requests
     depends_on:
       db:
         condition: service_healthy

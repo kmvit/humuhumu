@@ -11,3 +11,6 @@ OFFSITE=root@b5971f2535c5.vps.myjino.ru:/opt/backups-padacha
 OFFSITE_PORT=49294
 
 17 3 * * * root /opt/padacha-app/deploy/backup.sh >> /var/log/padacha-backup.log 2>&1
+
+# Process fixed-operation requests from the hub; no Docker socket in the app.
+* * * * * root python3 /opt/padacha-app/deploy/backup-worker.py >> /var/log/padacha-backup-worker.log 2>&1

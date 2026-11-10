@@ -264,3 +264,7 @@ OPENAI_IMAGE_TIMEOUT = float(os.getenv("OPENAI_IMAGE_TIMEOUT", "180"))
 # Генерация через celery-воркер. Нет воркера — поставь "0", тогда картинка
 # будет рисоваться прямо в запросе (и держать его те самые полминуты).
 IMAGE_GEN_ASYNC = os.getenv("IMAGE_GEN_ASYNC", "1") == "1"
+
+# Backup archives are mounted read-only; only fixed backup requests are writable.
+BACKUP_DIR = os.getenv("BACKUP_DIR", "/app/backups")
+BACKUP_REQUEST_DIR = os.getenv("BACKUP_REQUEST_DIR", "/app/backup-requests")
