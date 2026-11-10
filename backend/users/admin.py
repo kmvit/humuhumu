@@ -12,5 +12,5 @@ class CustomUserAdmin(TenantAdminMixin, UserAdmin):
     list_filter = ("role", "is_active", "is_staff")
     search_fields = ("username", "phone", "email")
     fieldsets = UserAdmin.fieldsets + (
-        ("Кафе", {"fields": ("role", "phone", "organization")}),
+        ("Кафе", {"fields": ("role", "phone", "organization", "is_platform_admin")}),
     )

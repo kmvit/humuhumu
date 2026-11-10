@@ -236,6 +236,10 @@ class OrganizationAdmin(admin.ModelAdmin):
 
     @admin.action(description="Работать от имени этого заведения")
     def switch_to(self, request, queryset):
+        from django.core.exceptions import PermissionDenied
+        from .admin_site import is_platform_request
+        if not is_platform_request(request):
+            raise PermissionDenied
         if queryset.count() != 1:
             self.message_user(
                 request, "Выберите ровно одно заведение", level=messages.WARNING

@@ -15,8 +15,10 @@ if DEBUG:
     # в разработке разрешаем любой хост (фронт ходит на backend:8000 внутри Docker)
     ALLOWED_HOSTS = ["*"]
 
+ADMIN_HOST = os.getenv("ADMIN_HOST", "hub.padacha.ru")
+
 INSTALLED_APPS = [
-    "django.contrib.admin",
+    "core.admin_apps.CafeAdminConfig",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",

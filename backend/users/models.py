@@ -27,6 +27,8 @@ class User(AbstractUser, TenantMixin):
     role = models.CharField(
         "Роль", max_length=16, choices=Role.choices, default=Role.CLIENT
     )
+    is_platform_admin = models.BooleanField("Оператор хаба", default=False)
+
     phone = models.CharField("Телефон", max_length=20, null=True, blank=True)
 
     #: Вход и createsuperuser: ищут по всей базе, иначе не найдут никого

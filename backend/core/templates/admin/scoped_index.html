@@ -1,0 +1,3 @@
+{% extends "admin/index.html" %}
+{# Historical LogEntry rows have no tenant ownership; do not expose them at cafe hosts. #}
+{% block sidebar %}{% if is_platform_hub %}{{ block.super }}{% endif %}{% endblock %}

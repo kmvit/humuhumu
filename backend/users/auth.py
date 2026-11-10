@@ -29,7 +29,13 @@ class OrganizationBackend(ModelBackend):
 
         org = current_organization_or_none()
         qs = User.objects.filter(username=username)
-        if org is not None:
+        from core.admin_site import is_hub_request
+        if request is not None and request.path.startswith("/admin/") and is_hub_request(request):
+            qs = qs.filter(is_platform_admin=True, is_superuser=True, is_staff=True)
+            if qs.count() != 1:
+                User().set_password(password)
+                return None
+        elif org is not None:
             qs = qs.filter(organization=org)
         user = qs.first()
 

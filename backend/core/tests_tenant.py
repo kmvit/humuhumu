@@ -406,14 +406,14 @@ class AdminIsolationTests(TestCase):
         self.assertIn("повар-альфы", body)
         self.assertNotIn("повар-беты", body)
 
-    def test_switcher_changes_what_admin_shows(self):
+    def test_cafe_ignores_platform_switcher(self):
         self.client.force_login(self.root)
         session = self.client.session
         session["tenant_override"] = self.b.pk
         session.save()
         body = self.client.get("/admin/users/user/", HTTP_HOST="alpha.padacha.ru").content.decode()
-        self.assertIn("повар-беты", body)
-        self.assertNotIn("повар-альфы", body)
+        self.assertIn("повар-альфы", body)
+        self.assertNotIn("повар-беты", body)
 
     def test_settings_list_shows_only_current_organization(self):
         with organization_context(self.a):

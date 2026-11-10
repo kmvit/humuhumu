@@ -88,6 +88,18 @@ class TenantMiddleware:
             # прошлого запроса не должно достаться этому по наследству.
             return self._serve(request, None)
 
+        from .admin_site import is_hub_request, is_platform_request
+
+        if request.path.startswith("/admin/") and is_hub_request(request):
+            # Login is resolved globally, but only explicit platform operators qualify.
+            org = None
+            if is_platform_request(request):
+                org = Organization.objects.filter(
+                    pk=request.session.get("tenant_override")
+                ).first() or Organization.objects.order_by("pk").first()
+            request.organization = org
+            return self._serve(request, org)
+
         host = Organization.normalize_host(request.get_host())
         org = Organization.objects.filter(domain=host).first()
 
@@ -102,22 +114,6 @@ class TenantMiddleware:
                     status=404,
                 )
             org = only[0]
-
-        # Поддержка «Падачи»: суперпользователь открывает админку от имени
-        # любого заведения, не заходя на его домен (действие «Работать от
-        # имени» в списке заведений). Только суперпользователь и только для
-        # админки: ни API клиента, ни гостевые страницы так не подменить.
-        override = (
-            request.session.get("tenant_override")
-            if hasattr(request, "session")
-            else None
-        )
-        if (
-            override
-            and request.path.startswith("/admin/")
-            and getattr(request.user, "is_superuser", False)
-        ):
-            org = Organization.objects.filter(pk=override).first() or org
 
         if not org.is_active:
             return JsonResponse(
