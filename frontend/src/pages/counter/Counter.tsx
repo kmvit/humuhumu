@@ -586,22 +586,22 @@ export default function Counter() {
                           </button>
                         </>
                       ))}
-                    {!stations && col.key === "new" && (
+                    {(stations ? o.has_drinks && o.drinks_status === "new" : col.key === "new") && col.key !== "unpaid" && (
                       <button
                         className="btn sm block mt-2"
                         disabled={busy === o.id}
                         onClick={() => move(o, "in_progress")}
                       >
-                        Взять в работу
+                        {stations ? "Напитки в работу" : "Взять в работу"}
                       </button>
                     )}
-                    {(col.key === "in_progress" || (stations && col.key === "new")) && (
+                    {(stations ? o.has_drinks && o.drinks_status === "in_progress" : col.key === "in_progress") && col.key !== "unpaid" && (
                       <button
                         className="btn sm block mt-2"
                         disabled={busy === o.id}
                         onClick={() => move(o, "ready")}
                       >
-                        <Icon name="check" size={16} /> {stations ? "Отметить всё готовым" : "Готов"}
+                        <Icon name="check" size={16} /> {stations ? "Напитки готовы" : "Готов"}
                       </button>
                     )}
                     {col.key === "ready" && o.paid_at && (

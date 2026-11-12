@@ -102,6 +102,18 @@ class CounterModeTests(OrderFlowBase):
         order = Order.objects.get()
         url = f"/api/orders/{order.pk}"
 
+        self.client.force_authenticate(self.waiter)
+        for state in ("in_progress", "ready"):
+            response = self.client.patch(f"{url}/work_status/", {"status": state})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.data["food_status"], "new")
+            self.assertEqual(response.data["drinks_status"], state)
+            order.refresh_from_db()
+            self.assertIsNone(order.food_started_at)
+            self.assertIsNone(order.food_ready_at)
+        self.assertEqual(self.client.post(f"{url}/close/").status_code, 409)
+        self.client.patch(f"{url}/work_status/", {"status": "new"})
+
         self.client.force_authenticate(cook)
         kitchen_orders = self.client.get("/api/orders/?station=kitchen").data
         self.assertEqual([row["daily_number"] for row in kitchen_orders], [order.daily_number])

@@ -822,11 +822,9 @@ class OrderViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["patch"])
     def work_status(self, request, pk=None):
-        """Стойка: перевести ВЕСЬ заказ в new/in_progress/ready.
-
-        В режиме стойки один человек собирает и еду, и напитки, поэтому
-        делить очередь по станциям незачем — статус ставится на весь заказ.
-        """
+        """Стойка готовит бар при включённых станциях, иначе весь заказ."""
+        if self._counter_uses_stations():
+            return self._bulk_station(request, Category.Station.BAR)
         order = self.get_object()
         value = request.data.get("status")
         if not self._valid_status(value):
