@@ -192,7 +192,7 @@ class OrganizationAdmin(admin.ModelAdmin):
     prepopulated_fields = {"slug": ("name",)}
     actions = ["switch_to"]
     fieldsets = (
-        (None, {"fields": ("name", "slug", "domain", "is_active")}),
+        (None, {"fields": ("name", "slug", "domain", "is_active", "counter_stations_enabled")}),
         (
             "Подписка",
             {

@@ -36,6 +36,10 @@ class Organization(models.Model):
         "Активно", default=True,
         help_text="Выключенное заведение не отвечает по своему домену",
     )
+    counter_stations_enabled = models.BooleanField(
+        "Экраны кухни и бара на стойке", default=False,
+        help_text="Разделяет приготовление по станциям при выдаче заказа по номеру.",
+    )
     created_at = models.DateTimeField("Создано", auto_now_add=True)
     # Заполняет внешняя установка, когда приходит за лицензией: по ним
     # видно, жива ли точка и не отстала ли по версии.

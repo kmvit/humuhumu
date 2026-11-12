@@ -65,6 +65,7 @@ export default function App() {
   // Формат заведения: в «стойке» нет столов и официанта — заказ собирает
   // и выдаёт один человек, поэтому у роли официанта другой экран.
   const counter = useSite()?.service_mode === "counter";
+  const stations = useFeature("stations");
 
   // фирменный декор (штриховка, пальмы) — только в «Островной» теме
   const orbs = theme === "island" ? <PaperBackdrop /> : null;
@@ -106,7 +107,7 @@ export default function App() {
           <Route
             path="/kitchen"
             element={
-              counter ? (
+              counter && !stations ? (
                 <Navigate to="/shifts" replace />
               ) : (
                 <Gated feature="stations" what="Экран кухни" need="Зал"><Kitchen /></Gated>
@@ -114,16 +115,12 @@ export default function App() {
             }
           />
         )}
-        {/* На стойке у бара и кухни своих экранов нет (станции — тариф
-            «Зал»): заказ ведут с общего планшета, а лично бариста заходит
-            посмотреть смену и свой КПД — туда и ведём, а не на заглушку.
-            Перенаправляем здесь, а не в home: формат заведения грузится
-            позже входа, и home успел бы увести на /bar. */}
+        {/* На стойке без экранов станций личные аккаунты открывают смены. */}
         {user?.role === "bar" && (
           <Route
             path="/bar"
             element={
-              counter ? (
+              counter && !stations ? (
                 <Navigate to="/shifts" replace />
               ) : (
                 <Gated feature="stations" what="Экран бара" need="Зал"><Bar /></Gated>

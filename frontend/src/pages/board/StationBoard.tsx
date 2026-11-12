@@ -2,6 +2,7 @@ import { useState } from "react";
 import { patch } from "../../api";
 import type { Order, OrderItem, Station, StationStatus } from "../../types";
 import Icon from "../../components/Icon";
+import { useSite } from "../../site";
 import { useLiveOrders } from "../../useLiveOrders";
 import { fmtDuration, minutesBetween } from "../../time";
 
@@ -13,6 +14,7 @@ const COLUMNS: { key: StationStatus; label: string }[] = [
 
 // Канбан станции: карточка в колонке по агрегату, готовность — по каждой позиции.
 export default function StationBoard({ station }: { station: Station }) {
+  const counter = useSite()?.service_mode === "counter";
   const isKitchen = station === "kitchen";
   const title = isKitchen ? "Кухня" : "Бар";
   const subtitle = isKitchen ? "Еда — отмечайте готовность позиций" : "Напитки — отмечайте готовность позиций";
@@ -108,7 +110,7 @@ export default function StationBoard({ station }: { station: Station }) {
                     return (
                       <div className={"card" + (highlight.has(o.id) ? " new-order" : "")} key={o.id}>
                         <div className="between">
-                          <strong className="title">№{o.id}</strong>
+                          <strong className="title">№{counter ? o.daily_number ?? o.id : o.id}</strong>
                           {o.table && <span className="badge open">Стол {o.table}</span>}
                         </div>
                         <div className="muted sm mt-1">

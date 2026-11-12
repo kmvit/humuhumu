@@ -9,7 +9,9 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from catalog.models import Category
+from core.models import SiteSettings
 from core.plans import RequiresStations
+from core.tenancy import current_organization
 from inventory.services import return_order_item, write_off_order_item
 from users.models import User
 from users.permissions import IsAdminRole, IsBarOrAdmin, IsCookOrAdmin, IsWaiterOrAdmin
@@ -795,6 +797,14 @@ class OrderViewSet(viewsets.ModelViewSet):
     def _valid_status(value):
         return value in {c for c, _ in Order.StationStatus.choices}
 
+    @staticmethod
+    def _counter_uses_stations():
+        organization = current_organization()
+        return (
+            organization.counter_stations_enabled
+            and SiteSettings.load().service_mode == SiteSettings.ServiceMode.COUNTER
+        )
+
     def _bulk_station(self, request, station):
         order = self.get_object()
         value = request.data.get("status")
@@ -1080,6 +1090,13 @@ class OrderViewSet(viewsets.ModelViewSet):
             return Response(
                 {"detail": "Закрыть можно только открытый заказ"},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+        if self._counter_uses_stations() and any(
+            item.status != Order.StationStatus.READY for item in order.items.all()
+        ):
+            return Response(
+                {"detail": "Дождитесь готовности всех позиций перед выдачей."},
+                status=status.HTTP_409_CONFLICT,
             )
         try:
             record_manual_payment(order, self._pay_method(request), request.user)

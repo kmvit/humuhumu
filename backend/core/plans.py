@@ -6,9 +6,8 @@
 верхний тариф и прошли мимо нижних, а кофейне без склада и себестоимости
 продукт не нужен вовсе — функциональная граница просто мешала покупать.
 
-Единственная разница в возможностях — экраны кухни и бара (`stations`): в
-режиме стойки один человек собирает заказ целиком, делить его между
-станциями не по чему. То есть это не забор, а следствие формата.
+Экраны кухни и бара (`stations`) входят в тариф «Зал». Для стойки
+оператор хаба может включить их для конкретного заведения.
 
 Тариф заведения (SiteSettings.plan) превращается здесь в набор фич, а
 permission-классы закрывают эндпоинты, которых в тарифе нет. Вьюхи проверяют
@@ -21,6 +20,7 @@ permission-классы закрывают эндпоинты, которых в
 from rest_framework.permissions import BasePermission
 
 from .models import SiteSettings
+from .tenancy import current_organization_or_none
 
 #: Всё, что вообще бывает платного, — полный набор верхнего тарифа.
 ALL_FEATURES = frozenset({"stations", "inventory", "shifts", "finance", "loyalty"})
@@ -83,10 +83,16 @@ def current_plan() -> str:
 
 
 def features(plan: str | None = None) -> frozenset[str]:
-    """Набор фич тарифа; без аргумента — тарифа текущего заведения."""
-    if plan is None:
-        plan = current_plan()
-    return PLAN_FEATURES.get(plan, frozenset())
+    """Фичи заданного тарифа или текущего заведения с учётом его настроек."""
+    if plan is not None:
+        return PLAN_FEATURES.get(plan, frozenset())
+    plan = current_plan()
+    enabled = PLAN_FEATURES.get(plan, frozenset())
+    if plan == SiteSettings.Plan.COUNTER:
+        organization = current_organization_or_none()
+        if organization and organization.counter_stations_enabled:
+            return enabled | {"stations"}
+    return enabled
 
 
 def requires_feature(name: str) -> type[BasePermission]:

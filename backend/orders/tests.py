@@ -76,6 +76,59 @@ class CounterModeTests(OrderFlowBase):
 
     # ——— стойка ———
 
+    def test_counter_with_stations_prepares_mixed_order_before_handoff(self):
+        self.set_mode("counter")
+        organization = self.waiter.organization
+        organization.counter_stations_enabled = True
+        organization.save(update_fields=["counter_stations_enabled"])
+        cook = User.objects.create_user("cook", role=User.Role.COOK)
+        bar = User.objects.create_user("bar", role=User.Role.BAR)
+        kitchen = Category.objects.create(name="Панини", station=Category.Station.KITCHEN)
+        panini = Product.objects.create(name="Панини", category=kitchen)
+        ProductVariant.objects.create(product=panini, price=Decimal("350"))
+
+        site = self.client.get("/api/site/").data
+        self.assertEqual(site["service_mode"], "counter")
+        self.assertIn("stations", site["features"])
+        response = self.client.post(
+            "/api/orders/place/",
+            {"customer_name": "Гость", "items": [
+                {"product": self.latte.pk, "quantity": 2},
+                {"product": panini.pk, "quantity": 1},
+            ]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        order = Order.objects.get()
+        url = f"/api/orders/{order.pk}"
+
+        self.client.force_authenticate(cook)
+        kitchen_orders = self.client.get("/api/orders/?station=kitchen").data
+        self.assertEqual([row["daily_number"] for row in kitchen_orders], [order.daily_number])
+        self.assertEqual(
+            self.client.patch(f"{url}/drinks_status/", {"status": "ready"}).status_code,
+            403,
+        )
+        response = self.client.patch(f"{url}/food_status/", {"status": "ready"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["food_status"], "ready")
+        self.assertEqual(response.data["drinks_status"], "new")
+
+        self.client.force_authenticate(self.waiter)
+        self.assertEqual(self.client.post(f"{url}/close/").status_code, 409)
+
+        self.client.force_authenticate(bar)
+        bar_orders = self.client.get("/api/orders/?station=bar").data
+        self.assertEqual([row["daily_number"] for row in bar_orders], [order.daily_number])
+        response = self.client.patch(f"{url}/drinks_status/", {"status": "ready"})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(all(item["status"] == "ready" for item in response.data["items"]))
+
+        self.client.force_authenticate(self.waiter)
+        self.assertEqual(self.client.post(f"{url}/close/").status_code, 200)
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.PAID)
+
     def test_counter_order_goes_straight_to_work(self):
         self.set_mode("counter")
         res = self.place()

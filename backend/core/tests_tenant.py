@@ -110,6 +110,20 @@ class TenantByDomainTests(TestCase):
             self.assertEqual(res.status_code, 200, host)
             self.assertEqual(res.json()["name"], expected, host)
 
+    def test_counter_stations_are_enabled_only_for_configured_tenant(self):
+        self.a.counter_stations_enabled = True
+        self.a.save(update_fields=["counter_stations_enabled"])
+        SiteSettings.objects.filter(organization__in=[self.a, self.b]).update(
+            plan=SiteSettings.Plan.COUNTER,
+            service_mode=SiteSettings.ServiceMode.COUNTER,
+        )
+        for org, expected in ((self.a, True), (self.b, False), (self.a, True)):
+            with self.subTest(host=org.domain):
+                response = self.client.get("/api/site/", HTTP_HOST=org.domain)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.data["service_mode"], "counter")
+                self.assertEqual("stations" in response.data["features"], expected)
+
     def test_unknown_domain_is_not_served(self):
         res = self.client.get("/api/site/", HTTP_HOST="unknown.example.com")
         self.assertEqual(res.status_code, 404)

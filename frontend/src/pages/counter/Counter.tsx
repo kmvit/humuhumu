@@ -17,7 +17,7 @@ function money(v: string | number | null | undefined): string {
 
 type Stage = "unpaid" | "new" | "in_progress" | "ready";
 
-/** Статус заказа целиком: на стойке один человек собирает и еду, и напитки. */
+/** Заказ готов к выдаче, когда готовы все позиции. */
 function stage(o: Order): Stage {
   // Неоплаченный заказ стоит перед всеми колонками: его не готовят,
   // пока не придут деньги.
@@ -38,6 +38,7 @@ const COLUMNS: { key: Stage; label: string }[] = [
 export default function Counter() {
   const toast = useToast();
   const site = useSite();
+  const stations = site?.features?.includes("stations") === true;
   // Предоплата: заказы, ждущие денег, приезжают этой же доской —
   // отдельный поток разъехался бы с основным по времени опроса.
   // Гостю должно быть чем заплатить: онлайн или на кассе (см. prepay_required
@@ -454,6 +455,7 @@ export default function Counter() {
                               <span className="opts block">{it.options_text}</span>
                             )}
                           </span>
+                          {stations && it.status === "ready" && <span className="badge">Готово</span>}
                         </li>
                       ))}
                     </ul>
@@ -584,7 +586,7 @@ export default function Counter() {
                           </button>
                         </>
                       ))}
-                    {col.key === "new" && (
+                    {!stations && col.key === "new" && (
                       <button
                         className="btn sm block mt-2"
                         disabled={busy === o.id}
@@ -593,13 +595,13 @@ export default function Counter() {
                         Взять в работу
                       </button>
                     )}
-                    {col.key === "in_progress" && (
+                    {(col.key === "in_progress" || (stations && col.key === "new")) && (
                       <button
                         className="btn sm block mt-2"
                         disabled={busy === o.id}
                         onClick={() => move(o, "ready")}
                       >
-                        <Icon name="check" size={16} /> Готов
+                        <Icon name="check" size={16} /> {stations ? "Отметить всё готовым" : "Готов"}
                       </button>
                     )}
                     {col.key === "ready" && o.paid_at && (
