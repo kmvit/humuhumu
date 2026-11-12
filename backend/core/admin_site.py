@@ -29,8 +29,9 @@ class ScopedAdminMixin:
     def has_view_permission(self, request, obj=None):
         return self._allowed(request) and super().has_view_permission(request, obj)
 
-    def has_add_permission(self, request):
-        return self._allowed(request) and super().has_add_permission(request)
+    def has_add_permission(self, request, *args, **kwargs):
+        # InlineModelAdmin also passes the parent object to this permission.
+        return self._allowed(request) and super().has_add_permission(request, *args, **kwargs)
 
     def has_change_permission(self, request, obj=None):
         return self._allowed(request) and super().has_change_permission(request, obj)

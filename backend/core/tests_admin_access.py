@@ -60,6 +60,20 @@ class AdminAuthorityTests(TestCase):
         self.assertNotIn(f'/{self.order_a.pk}/change/', html)
         self.assertEqual(self.client.get('/admin/billing/subscription/', HTTP_HOST='hub.padacha.ru').status_code, 200)
 
+    def test_order_change_with_inline_opens_for_cafe_and_hub(self):
+        response = self.client.get(
+            f'/admin/orders/order/{self.order_a.pk}/change/', HTTP_HOST=self.a.domain)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'items-TOTAL_FORMS')
+        self.client.force_login(self.platform)
+        session = self.client.session
+        session['tenant_override'] = self.b.pk
+        session.save()
+        response = self.client.get(
+            f'/admin/orders/order/{self.order_b.pk}/change/', HTTP_HOST='hub.padacha.ru')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'items-TOTAL_FORMS')
+
     def test_cafe_cannot_switch_or_access_foreign_order(self):
         session = self.client.session
         session['tenant_override'] = self.b.pk
