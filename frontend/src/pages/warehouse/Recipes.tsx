@@ -1,11 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
 import { get, put, ApiError } from "../../api";
 import { decimalInput } from "../../decimal";
-import type { Recipe, StockItem } from "../../types";
+import type { Recipe, RecipeLine, StockItem } from "../../types";
 import Icon from "../../components/Icon";
 import { useToast } from "../../components/ui/Toast";
 
-type Draft = { item: number | ""; quantity: string; comment: string };
+type Draft = {
+  item: number | "";
+  quantity: string;
+  comment: string;
+  original?: RecipeLine;
+};
+
+const emptyLine: Draft = { item: "", quantity: "", comment: "" };
+
+function toDraft(line: RecipeLine): Draft {
+  return {
+    item: line.item,
+    quantity: String(Number(line.quantity)),
+    comment: line.comment,
+    original: line,
+  };
+}
 
 function fmtQty(q: string | number): string {
   return Number(q).toLocaleString("ru", { maximumFractionDigits: 3 });
@@ -23,9 +39,11 @@ export default function Recipes({ items }: Props) {
   const [onlyEmpty, setOnlyEmpty] = useState(false);
 
   // редактирование карты одного блюда
-  const [editId, setEditId] = useState<number | null>(null);
+  const [editing, setEditing] = useState<{ variant: number; focusLine?: number } | null>(null);
   const [draft, setDraft] = useState<Draft[]>([]);
   const [saving, setSaving] = useState(false);
+  const editId = editing?.variant;
+  const itemById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
 
   async function load() {
     setLoading(true);
@@ -65,42 +83,38 @@ export default function Recipes({ items }: Props) {
   }
 
   function copyFrom(source: Recipe) {
-    setDraft(
-      source.lines.map((l) => ({
-        item: l.item,
-        quantity: String(Number(l.quantity)),
-        comment: l.comment,
-      }))
-    );
+    setDraft(source.lines.map(toDraft));
     notify(`Состав скопирован из «${source.product_name}»`, "ok");
   }
 
-  function startEdit(card: Recipe) {
-    setEditId(card.variant);
-    setDraft(
-      card.lines.length
-        ? card.lines.map((l) => ({
-            item: l.item,
-            quantity: String(Number(l.quantity)),
-            comment: l.comment,
-          }))
-        : [{ item: items[0]?.id ?? "", quantity: "", comment: "" }]
-    );
+  function startEdit(card: Recipe, focusLine?: number) {
+    setEditing({ variant: card.variant, focusLine });
+    setDraft(card.lines.length ? card.lines.map(toDraft) : [emptyLine]);
+  }
+
+  function changeLine(index: number, changes: Partial<Draft>) {
+    setDraft((lines) => lines.map((line, i) => (i === index ? { ...line, ...changes } : line)));
   }
 
   async function save(variantId: number) {
-    const lines = draft
-      .filter((d) => d.item !== "" && Number(d.quantity) > 0)
-      .map((d) => ({
-        item: d.item,
-        quantity: Number(d.quantity),
-        ...(d.comment.trim() ? { comment: d.comment.trim() } : {}),
-      }));
+    if (saving) return;
+    const lines = [];
+    for (const [index, line] of draft.entries()) {
+      const { item, original } = line;
+      const quantity = line.quantity.trim();
+      const comment = line.comment.trim();
+      if (!original && item === "" && !quantity && !comment) continue;
+      if (item === "" || !Number.isFinite(Number(quantity)) || Number(quantity) <= 0) {
+        notify(`Строка ${index + 1}. Выберите ингредиент и укажите расход больше нуля.`, "bad");
+        return;
+      }
+      lines.push({ item, quantity, comment });
+    }
     setSaving(true);
     try {
       const saved = await put<Recipe>(`/inventory/recipes/${variantId}/`, { lines });
       setCards((cs) => cs.map((c) => (c.variant === variantId ? saved : c)));
-      setEditId(null);
+      setEditing(null);
       notify(lines.length ? "Тех карта сохранена" : "Тех карта очищена", "ok");
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "Ошибка", "bad");
@@ -155,7 +169,7 @@ export default function Recipes({ items }: Props) {
               </span>
             </div>
             {editId !== card.variant && (
-              <button className="btn sm ghost" onClick={() => startEdit(card)}>
+              <button className="btn sm ghost" onClick={() => startEdit(card)} disabled={saving}>
                 <Icon name="edit" size={15} /> {card.lines.length ? "Изменить" : "Составить"}
               </button>
             )}
@@ -164,7 +178,7 @@ export default function Recipes({ items }: Props) {
           {/* просмотр */}
           {editId !== card.variant && card.lines.length > 0 && (
             <ul className="stack tight list mt-3">
-              {card.lines.map((l) => (
+              {card.lines.map((l, index) => (
                 <li key={l.id} className="between">
                   <span>
                     {l.item_name}
@@ -172,8 +186,17 @@ export default function Recipes({ items }: Props) {
                       <span className="muted sm"> · {l.comment}</span>
                     )}
                   </span>
-                  <span className="num muted">
-                    {fmtQty(l.quantity)} {l.unit_display}
+                  <span className="inline">
+                    <span className="num muted">{fmtQty(l.quantity)} {l.unit_display}</span>
+                    <button
+                      className="icon-btn sm"
+                      aria-label={`Изменить ингредиент «${l.item_name}»`}
+                      title="Изменить ингредиент"
+                      onClick={() => startEdit(card, index)}
+                      disabled={saving}
+                    >
+                      <Icon name="edit" size={14} />
+                    </button>
                   </span>
                 </li>
               ))}
@@ -182,23 +205,28 @@ export default function Recipes({ items }: Props) {
 
           {/* редактор */}
           {editId === card.variant && (
-            <div className="stack mt-3">
+            <fieldset className="stack recipe-editor mt-3" disabled={saving} aria-label="Состав техкарты">
               {draft.map((d, idx) => {
-                const it = items.find((i) => i.id === d.item);
+                const item = d.item === "" ? undefined : itemById.get(d.item);
+                const unavailable = d.original && !itemById.has(d.original.item) ? d.original : undefined;
+                const unit = item?.unit_display ?? (unavailable?.item === d.item ? unavailable?.unit_display : undefined);
                 return (
                   <div className="receipt-line" key={idx}>
                     <select
                       className="input"
                       value={d.item}
-                      onChange={(e) =>
-                        setDraft((ds) =>
-                          ds.map((x, i) =>
-                            i === idx ? { ...x, item: Number(e.target.value) } : x
-                          )
-                        )
-                      }
+                      aria-label={`Ингредиент ${idx + 1}`}
+                      autoFocus={editing?.focusLine === idx}
+                      onChange={(e) => changeLine(idx, {
+                        item: e.target.value === "" ? "" : Number(e.target.value),
+                      })}
                     >
-                      <option value="">— товар —</option>
+                      <option value="">— ингредиент —</option>
+                      {unavailable && (
+                        <option value={unavailable.item}>
+                          {unavailable.item_name} ({unavailable.unit_display}) · скрыт со склада
+                        </option>
+                      )}
                       {items.map((i) => (
                         <option key={i.id} value={i.id}>
                           {i.name} ({i.unit_display})
@@ -209,24 +237,17 @@ export default function Recipes({ items }: Props) {
                       className="input"
                       inputMode="decimal"
                       value={d.quantity}
-                      onChange={(e) =>
-                        setDraft((ds) =>
-                          ds.map((x, i) =>
-                            i === idx ? { ...x, quantity: decimalInput(e.target.value) } : x
-                          )
-                        )
-                      }
-                      placeholder={it ? it.unit_display : "кол-во"}
+                      aria-label={`Расход на порцию, строка ${idx + 1}`}
+                      onChange={(e) => changeLine(idx, { quantity: decimalInput(e.target.value) })}
+                      placeholder={unit ?? "кол-во"}
                       title="Расход на одну порцию"
                     />
                     <input
                       className="input"
                       value={d.comment}
-                      onChange={(e) =>
-                        setDraft((ds) =>
-                          ds.map((x, i) => (i === idx ? { ...x, comment: e.target.value } : x))
-                        )
-                      }
+                      aria-label={`Заметка, строка ${idx + 1}`}
+                      maxLength={200}
+                      onChange={(e) => changeLine(idx, { comment: e.target.value })}
                       placeholder="заметка"
                     />
                     <button
@@ -242,9 +263,7 @@ export default function Recipes({ items }: Props) {
               <div className="wrap">
                 <button
                   className="btn sm ghost"
-                  onClick={() =>
-                    setDraft((ds) => [...ds, { item: "", quantity: "", comment: "" }])
-                  }
+                  onClick={() => setDraft((ds) => [...ds, emptyLine])}
                 >
                   <Icon name="plus" size={15} /> Ингредиент
                 </button>
@@ -255,7 +274,7 @@ export default function Recipes({ items }: Props) {
                 >
                   <Icon name={saving ? "spark" : "check"} size={16} /> Сохранить
                 </button>
-                <button className="btn sm ghost" onClick={() => setEditId(null)}>
+                <button className="btn sm ghost" onClick={() => setEditing(null)}>
                   Отмена
                 </button>
               </div>
@@ -275,7 +294,7 @@ export default function Recipes({ items }: Props) {
                   ))}
                 </div>
               )}
-            </div>
+            </fieldset>
           )}
         </div>
       ))}
