@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { get, ApiError } from "../../api";
+import DishSales from "./DishSales";
 import Icon from "../../components/Icon";
 
 /** Раздел «Заказы» у владельца: заказы и платежи за день.
@@ -110,7 +111,7 @@ function howPaid(channel: Channel, method: string, methodDisplay: string): strin
 export default function OrdersJournal() {
   const today = isoDay(new Date());
   const [day, setDay] = useState(today);
-  const [tab, setTab] = useState<"orders" | "payments">("orders");
+  const [tab, setTab] = useState<"orders" | "payments" | "sales">("orders");
   const [data, setData] = useState<Journal | null>(null);
   const [error, setError] = useState("");
 
@@ -140,7 +141,7 @@ export default function OrdersJournal() {
     <>
       <h1 className="h1">Заказы и платежи</h1>
 
-      <div className="wrap mt-3" style={{ alignItems: "center" }}>
+      {tab !== "sales" && <div className="wrap mt-3" style={{ alignItems: "center" }}>
         <button className="btn sm ghost" onClick={() => setDay(shiftDay(day, -1))} aria-label="Предыдущий день">
           ←
         </button>
@@ -163,11 +164,11 @@ export default function OrdersJournal() {
         {day !== today && (
           <button className="btn sm ghost" onClick={() => setDay(today)}>Сегодня</button>
         )}
-      </div>
+      </div>}
 
-      {error && <p className="muted mt-3">{error}</p>}
+      {tab !== "sales" && error && <p className="muted mt-3">{error}</p>}
 
-      {t && (
+      {tab !== "sales" && t && (
         <div className="grid stats stagger mt-4">
           {tiles.map((s) => (
             <div className="card" key={s.label}>
@@ -192,8 +193,10 @@ export default function OrdersJournal() {
         >
           <Icon name="wallet" size={16} /> Платежи{data ? ` · ${data.rows.length}` : ""}
         </button>
+        <button className={"navlink" + (tab === "sales" ? " active" : "")} onClick={() => setTab("sales")}><Icon name="chart" size={16} /> Продажи блюд</button>
       </div>
 
+      {tab === "sales" && <DishSales />}
       {data && tab === "orders" && (
         <div className="card">
           {data.orders.map((o) => (

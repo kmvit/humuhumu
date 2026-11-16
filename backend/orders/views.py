@@ -83,6 +83,8 @@ class OrderViewSet(viewsets.ModelViewSet):
         # вьюха: у сценариев разные настройки-выключатели
         if self.action == "bonus":
             return [AllowAny()]
+        if self.action == "sales":
+            return [IsAdminRole()]
         if self.action == "create":
             return [IsWaiterOrAdmin()]
         # Экраны кухни и бара — тариф «Зал»: на «Старте» станции не
@@ -101,6 +103,20 @@ class OrderViewSet(viewsets.ModelViewSet):
             return [IsWaiterOrAdmin()]
         # item_status — право проверяем внутри по станции позиции
         return [IsAuthenticated()]
+
+    @action(detail=False, methods=["get"])
+    def sales(self, request):
+        from datetime import date
+        from .sales import sales_report
+
+        try:
+            start = date.fromisoformat(request.query_params.get("start", ""))
+            end = date.fromisoformat(request.query_params.get("end", ""))
+            if start > end or end.year >= 9999:
+                raise ValueError
+        except ValueError:
+            return Response({"detail": "Укажите корректный период: начало не позже окончания."}, status=400)
+        return Response(sales_report(start, end))
 
     def get_queryset(self):
         from django.db.models import Exists, OuterRef, Subquery
