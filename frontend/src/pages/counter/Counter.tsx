@@ -1,4 +1,4 @@
-import { EvotorLanSettings, EvotorLanOrder } from "./EvotorLan";
+import { EvotorLanSettings, EvotorLanOrder, useEvotorPayments } from "./EvotorLan";
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { get, patch, post, ApiError } from "../../api";
 import type { Order, PayMethod, Performer } from "../../types";
@@ -58,6 +58,7 @@ export default function Counter() {
     // человек, и звать его к кофемашине надо, когда пришли деньги.
     { alertWhen: useCallback((o: Order) => o.status !== "unpaid", []) }
   );
+  const evotorPaymentMessage = useEvotorPayments(site?.evotor_lan_payment === true, reload);
   const [busy, setBusy] = useState<number | null>(null);
   const [payFor, setPayFor] = useState<number | null>(null);
   const [cashFor, setCashFor] = useState<number | null>(null);
@@ -267,6 +268,7 @@ export default function Counter() {
   return (
     <>
       {site?.evotor_lan && <EvotorLanSettings />}
+      {site?.evotor_lan_payment && evotorPaymentMessage && <p className="muted sm" role="status">{evotorPaymentMessage}</p>}
       {payingId != null && (
         <PayAtKassa
           order={payingOrder}

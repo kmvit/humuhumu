@@ -31,6 +31,7 @@ export interface Site {
   online_payment_on: boolean;
   /** Подключена касса: гость может выбрать «Оплатить на кассе». */
   evotor_lan?: boolean;
+  evotor_lan_payment?: boolean;
   kassa_payment: boolean;
   /** Стойка: заказ гостя ждёт оплаты и не уходит на кухню без неё. */
   prepay_required: boolean;

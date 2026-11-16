@@ -99,10 +99,26 @@ class OrderViewSet(viewsets.ModelViewSet):
             from core.plans import RequiresLoyalty
 
             return [IsWaiterOrAdmin(), RequiresLoyalty()]
-        if self.action in ("evotor_lan", "close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "item_qty", "confirm", "prepaid", "performer", "refund", "set_comment", "move", "move_items", "serve", "pay_terminal", "pay_result", "kassa_paid"):
+        if self.action in ("evotor_lan_pending", "evotor_lan", "close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "item_qty", "confirm", "prepaid", "performer", "refund", "set_comment", "move", "move_items", "serve", "pay_terminal", "pay_result", "kassa_paid"):
             return [IsWaiterOrAdmin()]
         # item_status — право проверяем внутри по станции позиции
         return [IsAuthenticated()]
+
+    @action(detail=False, methods=["get"], url_path="evotor-lan-pending")
+    def evotor_lan_pending(self, request):
+        from django.conf import settings
+        from uuid import UUID
+        from rest_framework.exceptions import ValidationError, PermissionDenied
+        from payments.models import EvotorLanTransfer
+        if request.get_host().split(":")[0].lower() not in settings.EVOTOR_LAN_PAYMENT_HOSTS:
+            raise PermissionDenied("Подтверждение оплаты на этом сайте не включено.")
+        try:
+            device_id = str(UUID(request.query_params.get("device_id", "")))
+        except (ValueError, TypeError):
+            raise ValidationError("Некорректный ID кассы.")
+        transfers = EvotorLanTransfer.objects.filter(payload__payment_tracking=True,
+            payload__device_id=device_id).filter(Q(result={}) | Q(result__status="receipt_opened")).order_by("created_at")[:100]
+        return Response([{"id":str(t.id), "order_id":t.order_id, "result":t.result} for t in transfers])
 
     @action(detail=True, methods=["post"], url_path="evotor-lan")
     def evotor_lan(self, request, pk=None):
@@ -113,9 +129,9 @@ class OrderViewSet(viewsets.ModelViewSet):
         from payments.evotor_lan import prepare, record_result, data
         order = self.get_object()
         if "result" in request.data:
-            transfer = record_result(order.pk, request.data)
+            transfer = record_result(order.pk, request.data, user=request.user, allow_payment=request.get_host().split(":")[0].lower() in settings.EVOTOR_LAN_PAYMENT_HOSTS)
         else:
-            transfer = prepare(order.pk, request.data.get("tax"), request.data.get("device_id"))
+            transfer = prepare(order.pk, request.data.get("tax"), request.data.get("device_id"), payment_tracking=request.get_host().split(":")[0].lower() in settings.EVOTOR_LAN_PAYMENT_HOSTS)
         return Response(data(transfer))
 
     @action(detail=False, methods=["get"])

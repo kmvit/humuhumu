@@ -36,6 +36,7 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
     # Можно ли гостю выбрать «Оплатить на кассе» — заказ уйдёт на кассу
     # заведения. Тоже только «да/нет»: какая касса и её ключ — не для
     # публичной ручки.
+    evotor_lan_payment = serializers.SerializerMethodField()
     evotor_lan = serializers.SerializerMethodField()
     kassa_payment = serializers.SerializerMethodField()
     accent_color = serializers.RegexField(
@@ -90,6 +91,11 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
 
         return obj.online_payment_on and get_acquirer(obj.acquiring).configured()
 
+    def get_evotor_lan_payment(self, obj) -> bool:
+        from django.conf import settings
+        request = self.context.get("request")
+        return bool(request and request.get_host().split(":")[0].lower() in settings.EVOTOR_LAN_PAYMENT_HOSTS)
+
     def get_evotor_lan(self, obj) -> bool:
         from django.conf import settings
         request = self.context.get("request")
@@ -143,6 +149,7 @@ class SiteSettingsSerializer(serializers.ModelSerializer):
             "online_payment_on",
             "kassa_payment",
             "evotor_lan",
+            "evotor_lan_payment",
             # Ждёт ли заказ гостя оплаты, прежде чем уйти на кухню.
             # Гостю это видно и так по статусу его заказа, а владельцу
             # нужен выключатель в панели.

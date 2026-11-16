@@ -17,6 +17,7 @@ if DEBUG:
 
 # Pilot is enabled explicitly for selected tenant domains.
 EVOTOR_LAN_HOSTS = [h.strip().lower() for h in os.getenv("EVOTOR_LAN_HOSTS", "").split(",") if h.strip()]
+EVOTOR_LAN_PAYMENT_HOSTS = [h.strip().lower() for h in os.getenv("EVOTOR_LAN_PAYMENT_HOSTS", "").split(",") if h.strip()]
 EVOTOR_PROBE_ENABLED = False
 
 ADMIN_HOST = os.getenv("ADMIN_HOST", "hub.padacha.ru")
