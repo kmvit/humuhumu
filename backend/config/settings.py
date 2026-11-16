@@ -15,6 +15,10 @@ if DEBUG:
     # в разработке разрешаем любой хост (фронт ходит на backend:8000 внутри Docker)
     ALLOWED_HOSTS = ["*"]
 
+# Pilot is enabled explicitly for selected tenant domains.
+EVOTOR_LAN_HOSTS = [h.strip().lower() for h in os.getenv("EVOTOR_LAN_HOSTS", "").split(",") if h.strip()]
+EVOTOR_PROBE_ENABLED = False
+
 ADMIN_HOST = os.getenv("ADMIN_HOST", "hub.padacha.ru")
 
 INSTALLED_APPS = [

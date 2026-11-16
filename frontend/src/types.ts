@@ -30,6 +30,7 @@ export interface Site {
   /** Выключатель владельца — сам по себе оплату не включает без доступов. */
   online_payment_on: boolean;
   /** Подключена касса: гость может выбрать «Оплатить на кассе». */
+  evotor_lan?: boolean;
   kassa_payment: boolean;
   /** Стойка: заказ гостя ждёт оплаты и не уходит на кухню без неё. */
   prepay_required: boolean;

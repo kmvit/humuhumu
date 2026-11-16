@@ -36,6 +36,7 @@ from payments.views import (
     AcquiringSettingsView, KassaResyncView, KassaSettingsView, PaymentJournalView,
 )
 from payments.views import callback as payment_callback
+from payments.evotor_probe import page as evotor_probe_page
 from shifts.views import ShiftViewSet
 from users.staff import StaffViewSet
 from users.views import LoginView, MeView, RegisterView
@@ -81,6 +82,7 @@ router.register(
 )
 
 api_patterns = [
+    *([path("evotor-probe/", include("payments.evotor_probe_urls"))] if getattr(settings, "EVOTOR_PROBE_ENABLED", False) else []),
     # авторизация
     path("auth/token/", LoginView.as_view(), name="token_obtain_pair"),
     path("auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
@@ -130,6 +132,7 @@ api_patterns = [
 ]
 
 urlpatterns = [
+    *([path("evotor-probe/", evotor_probe_page)] if getattr(settings, "EVOTOR_PROBE_ENABLED", False) else []),
     path("admin/", admin.site.urls),
     path("api/", include(api_patterns)),
     # PWA: имя и иконка приложения — из настроек заведения, а не из сборки фронта.

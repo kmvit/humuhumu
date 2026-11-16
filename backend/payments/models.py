@@ -1,3 +1,5 @@
+import uuid
+
 from django.conf import settings
 from django.db import models
 
@@ -226,3 +228,50 @@ class PaymentHealth(TenantModel):
 
     def __str__(self):
         return f"Приём оплаты {self.provider}"
+
+
+class EvotorProbeDevice(TenantModel):
+    """Device credentials for the non-payment integration probe only."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=80)
+    token_hash = models.CharField(max_length=64)
+    active = models.BooleanField(default=True)
+    last_seen = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class EvotorProbeCommand(TenantModel):
+    """Durable probe; deliberately has no relation to Payment or paid_at."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    device = models.ForeignKey(EvotorProbeDevice, on_delete=models.CASCADE)
+    kind = models.CharField(max_length=20, choices=[("echo", "Проверка связи"), ("open_receipt", "Открыть тестовый чек")])
+    status = models.CharField(max_length=24, default="queued")
+    result = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    received_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+
+class EvotorProbePairing(TenantModel):
+    """Short-lived, attempt-limited enrollment; one code enrolls one installation."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=80)
+    code_hash = models.CharField(max_length=64)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    claimed_by = models.CharField(max_length=64, blank=True, default="")
+    device = models.ForeignKey(EvotorProbeDevice, null=True, blank=True, on_delete=models.CASCADE)
+
+
+class EvotorLanTransfer(TenantModel):
+    """A draft receipt delivery, never proof of payment."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    order = models.OneToOneField("orders.Order", on_delete=models.PROTECT, related_name="evotor_lan_transfer")
+    payload = models.JSONField()
+    result = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)

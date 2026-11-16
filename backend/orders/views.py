@@ -99,10 +99,24 @@ class OrderViewSet(viewsets.ModelViewSet):
             from core.plans import RequiresLoyalty
 
             return [IsWaiterOrAdmin(), RequiresLoyalty()]
-        if self.action in ("close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "item_qty", "confirm", "prepaid", "performer", "refund", "set_comment", "move", "move_items", "serve", "pay_terminal", "pay_result", "kassa_paid"):
+        if self.action in ("evotor_lan", "close_table", "close", "cancel", "add_items", "remove_item", "item_guest", "item_qty", "confirm", "prepaid", "performer", "refund", "set_comment", "move", "move_items", "serve", "pay_terminal", "pay_result", "kassa_paid"):
             return [IsWaiterOrAdmin()]
         # item_status — право проверяем внутри по станции позиции
         return [IsAuthenticated()]
+
+    @action(detail=True, methods=["post"], url_path="evotor-lan")
+    def evotor_lan(self, request, pk=None):
+        from django.conf import settings
+        from rest_framework.exceptions import PermissionDenied
+        if request.get_host().split(":")[0].lower() not in settings.EVOTOR_LAN_HOSTS:
+            raise PermissionDenied("Прямой обмен с Эвотором для этого заведения не включён.")
+        from payments.evotor_lan import prepare, record_result, data
+        order = self.get_object()
+        if "result" in request.data:
+            transfer = record_result(order.pk, request.data)
+        else:
+            transfer = prepare(order.pk, request.data.get("tax"), request.data.get("device_id"))
+        return Response(data(transfer))
 
     @action(detail=False, methods=["get"])
     def sales(self, request):

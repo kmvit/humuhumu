@@ -1,3 +1,4 @@
+import { EvotorLanSettings, EvotorLanOrder } from "./EvotorLan";
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { get, patch, post, ApiError } from "../../api";
 import type { Order, PayMethod, Performer } from "../../types";
@@ -265,6 +266,7 @@ export default function Counter() {
 
   return (
     <>
+      {site?.evotor_lan && <EvotorLanSettings />}
       {payingId != null && (
         <PayAtKassa
           order={payingOrder}
@@ -496,6 +498,7 @@ export default function Counter() {
                     {col.key === "ready" && o.performer_name && (
                       <p className="muted sm m-0">Выполнил: {o.performer_name}</p>
                     )}
+                    {site?.evotor_lan && !o.paid_at && (o.status === "open" || o.status === "unpaid") && <EvotorLanOrder orderId={o.id} />}
                     {col.key === "unpaid" &&
                       (cashFor === o.id ? (
                         // Друг под другом: колонка доски узкая, и две
