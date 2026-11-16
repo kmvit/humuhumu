@@ -116,11 +116,14 @@ class StockItemViewSet(viewsets.ModelViewSet):
             .order_by("-receipt__created_at", "-id")
             .values("unit_cost")[:1]
         )
-        return (
+        queryset = (
             StockItem.objects.select_related("category")
             .prefetch_related("aliases")
             .annotate(last_unit_cost=Subquery(last_cost))
         )
+        if self.action == "adjust":
+            queryset = queryset.select_for_update(of=("self",))
+        return queryset
     serializer_class = StockItemSerializer
     permission_classes = [IsWarehouseOrAdmin, RequiresInventory]
 
@@ -153,21 +156,30 @@ class StockItemViewSet(viewsets.ModelViewSet):
         item.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-    @action(detail=True, methods=["post"])
+    @action(detail=True, methods=["post", "patch"])
+    @transaction.atomic
     def adjust(self, request, pk=None):
-        """Корректировка/инвентаризация: выставить остаток в новое значение."""
+        """Выставить остаток, при PATCH также изменить название и порог."""
         item = self.get_object()
-        ser = AdjustSerializer(data=request.data)
+        editing = request.method == "PATCH"
+        ser = AdjustSerializer(data=request.data, partial=editing)
         ser.is_valid(raise_exception=True)
-        target = ser.validated_data["quantity"]
-        delta = target - item.quantity
-        item.apply_movement(
-            delta,
-            StockMovement.Kind.ADJUST,
-            user=request.user,
-            comment=ser.validated_data.get("comment", ""),
-        )
-        return Response(StockItemSerializer(item).data)
+        fields = ("name", "min_quantity") if editing else ()
+        changes = {field: request.data[field] for field in fields if field in request.data}
+        if changes:
+            details = self.get_serializer(item, data=changes, partial=True)
+            details.is_valid(raise_exception=True)
+            item = details.save()
+
+        target = ser.validated_data.get("quantity")
+        if target is not None and (not editing or target != item.quantity):
+            item.apply_movement(
+                target - item.quantity,
+                StockMovement.Kind.ADJUST,
+                user=request.user,
+                comment=ser.validated_data.get("comment", ""),
+            )
+        return Response(self.get_serializer(item).data)
 
     @action(detail=True, methods=["get"])
     def movements(self, request, pk=None):

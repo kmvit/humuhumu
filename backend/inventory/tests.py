@@ -33,8 +33,8 @@ from .models import (
 )
 
 
-class StockItemDeleteTests(APITestCase):
-    """Удаление товара склада: чистый — насовсем, с историей — прячем."""
+class StockItemApiTests(APITestCase):
+    """Редактирование и удаление товаров склада."""
 
     def setUp(self):
         # тесты писались до тарифов и проверяют функционал «Максимума»
@@ -56,6 +56,51 @@ class StockItemDeleteTests(APITestCase):
         return StockItem.objects.create(
             category=self.cat, name=name, unit=StockItem.Unit.PIECE
         )
+
+    def test_edit_name_threshold_and_stock_in_one_request(self):
+        item = self._item()
+        res = self.client.patch(
+            f"/api/inventory/items/{item.id}/adjust/",
+            {"name": "Моти", "min_quantity": "4.5", "quantity": "3"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertTrue(res.data["is_low"])
+        item.refresh_from_db()
+        self.assertEqual(item.name, "Моти")
+        self.assertEqual(item.min_quantity, Decimal("4.5"))
+        self.assertEqual(item.quantity, Decimal("3"))
+        self.assertEqual(item.movements.get(kind=StockMovement.Kind.ADJUST).delta, Decimal("3"))
+
+    def test_edit_details_of_item_with_negative_stock(self):
+        item = self._item()
+        item.apply_movement(Decimal("-3"), StockMovement.Kind.ADJUST)
+        StockItem.objects.filter(pk=item.pk).update(min_quantity=Decimal("4"))
+        res = self.client.patch(
+            f"/api/inventory/items/{item.id}/adjust/",
+            {"name": "Моти", "min_quantity": None},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200, res.data)
+        item.refresh_from_db()
+        self.assertIsNone(item.min_quantity)
+        self.assertEqual(item.quantity, Decimal("-3"))
+        self.assertEqual(item.movements.count(), 1)
+
+    def test_invalid_details_leave_stock_unchanged(self):
+        item = self._item()
+        self._item(name="Моти")
+        res = self.client.patch(
+            f"/api/inventory/items/{item.id}/adjust/",
+            {"name": "Моти", "min_quantity": "4", "quantity": "3"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 400, res.data)
+        item.refresh_from_db()
+        self.assertEqual(item.name, "Тест")
+        self.assertIsNone(item.min_quantity)
+        self.assertEqual(item.quantity, Decimal("0"))
+        self.assertFalse(item.movements.exists())
 
     def test_clean_item_is_hard_deleted(self):
         item = self._item()

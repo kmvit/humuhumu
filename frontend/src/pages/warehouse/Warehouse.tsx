@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ChangeEvent } from "react";
+import type { ChangeEvent, FormEvent } from "react";
 import { get, post, patch, del, postForm, ApiError } from "../../api";
 import { decimalInput } from "../../decimal";
 import type {
@@ -45,6 +45,13 @@ type Line = {
   /** Сумму подставили по прошлой цене, а не ввёл человек. Такую пересчитываем
    *  при смене товара или количества; введённую руками — не трогаем. */
   auto?: boolean;
+};
+
+type StockItemEdit = {
+  original: StockItem;
+  name: string;
+  quantity: string;
+  threshold: string;
 };
 
 export default function Warehouse() {
@@ -98,9 +105,8 @@ export default function Warehouse() {
   const [catEdit, setCatEdit] = useState<{ id: number; name: string } | null>(null);
   const [delCat, setDelCat] = useState<number | null>(null);
 
-  // корректировка
-  const [adjustId, setAdjustId] = useState<number | null>(null);
-  const [adjustQty, setAdjustQty] = useState("");
+  const [itemEdit, setItemEdit] = useState<StockItemEdit | null>(null);
+  const [savingItem, setSavingItem] = useState(false);
 
   // удаление товара (подтверждаем прямо в строке — нативные диалоги в киоске подавлены)
   const [delId, setDelId] = useState<number | null>(null);
@@ -485,41 +491,46 @@ export default function Warehouse() {
     }
   }
 
-  // ——— корректировка ———
-  function startAdjust(it: StockItem) {
-    setAdjustId(it.id);
-    setAdjustQty(String(Number(it.quantity)));
-  }
-  async function saveAdjust(id: number) {
-    try {
-      await post(`/inventory/items/${id}/adjust/`, {
-        quantity: Number(adjustQty || 0),
-        comment: "инвентаризация",
-      });
-      await load();
-      setAdjustId(null);
-      notify("Остаток скорректирован", "ok");
-    } catch (e) {
-      notify(e instanceof ApiError ? e.message : "Ошибка", "bad");
-    }
+  function startItemEdit(item: StockItem) {
+    setDelId(null);
+    setVarItem(null);
+    setItemEdit({
+      original: item,
+      name: item.name,
+      quantity: String(Number(item.quantity)),
+      threshold: item.min_quantity == null ? "" : String(Number(item.min_quantity)),
+    });
   }
 
-  // Поле ввода нового остатка — одинаково для товара и для варианта.
-  function adjustBox(id: number) {
-    return (
-      <span className="inline tight">
-        <input
-          className="input"
-          inputMode="decimal"
-          value={adjustQty}
-          onChange={(e) => setAdjustQty(decimalInput(e.target.value))}
-          style={{ width: 92 }}
-          autoFocus
-        />
-        <button className="icon-btn" onClick={() => saveAdjust(id)} aria-label="Сохранить"><Icon name="check" size={16} /></button>
-        <button className="icon-btn" onClick={() => setAdjustId(null)} aria-label="Отмена"><Icon name="close" size={16} /></button>
-      </span>
-    );
+  async function saveItem(event: FormEvent) {
+    event.preventDefault();
+    if (!itemEdit || savingItem) return;
+    const item = itemEdit.original;
+    const name = itemEdit.name.trim();
+    const quantity = itemEdit.quantity.trim() || "0";
+    const threshold = itemEdit.threshold.trim() || null;
+    if (!name) {
+      notify("Укажите название товара", "bad");
+      return;
+    }
+    setSavingItem(true);
+    try {
+      const thresholdChanged = threshold === null || item.min_quantity === null
+        ? threshold !== item.min_quantity
+        : Number(threshold) !== Number(item.min_quantity);
+      const saved = await patch<StockItem>(`/inventory/items/${item.id}/adjust/`, {
+        ...(name !== item.name ? { name } : {}),
+        ...(thresholdChanged ? { min_quantity: threshold } : {}),
+        ...(Number(quantity) !== Number(item.quantity) ? { quantity, comment: "инвентаризация" } : {}),
+      });
+      setItems((current) => current.map((entry) => (entry.id === saved.id ? saved : entry)));
+      setItemEdit(null);
+      notify("Товар сохранён", "ok");
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Ошибка", "bad");
+    } finally {
+      setSavingItem(false);
+    }
   }
 
   if (loading)
@@ -970,38 +981,78 @@ export default function Warehouse() {
                         )}
                       </div>
 
-                      {adjustId === it.id ? (
-                        adjustBox(it.id)
-                      ) : (
-                        <span className="inline">
-                          <span
-                            className={"chip" + (it.is_low ? " low" : "")}
-                            style={{ minWidth: 74, justifyContent: "center" }}
-                          >
-                            {fmtQty(it.quantity)} {it.unit_display}
-                          </span>
-                          <button className="icon-btn" onClick={() => startAdjust(it)} aria-label="Корректировка" title="Корректировка / инвентаризация">
-                            <Icon name="edit" size={16} />
-                          </button>
-                          <button
-                            className="icon-btn"
-                            onClick={() => { setVarItem(it.id); setVarName(""); }}
-                            aria-label="Добавить вариант"
-                            title="Добавить вариант — как товар пишут в чеке"
-                          >
-                            <Icon name="plus" size={16} />
-                          </button>
-                          <button
-                            className="icon-btn danger"
-                            onClick={() => { setDelId(it.id); setVarItem(null); setAdjustId(null); }}
-                            aria-label="Удалить товар"
-                            title="Удалить товар"
-                          >
-                            <Icon name="trash" size={16} />
-                          </button>
+                      <span className="inline">
+                        <span
+                          className={"chip" + (it.is_low ? " low" : "")}
+                          style={{ minWidth: 74, justifyContent: "center" }}
+                        >
+                          {fmtQty(it.quantity)} {it.unit_display}
                         </span>
-                      )}
+                        <button className="icon-btn" onClick={() => startItemEdit(it)} disabled={savingItem} aria-label={`Изменить товар «${it.name}»`} title="Изменить товар">
+                          <Icon name="edit" size={16} />
+                        </button>
+                        <button
+                          className="icon-btn"
+                          onClick={() => { setVarItem(it.id); setVarName(""); setItemEdit(null); }}
+                          disabled={savingItem}
+                          aria-label="Добавить вариант"
+                          title="Добавить вариант — как товар пишут в чеке"
+                        >
+                          <Icon name="plus" size={16} />
+                        </button>
+                        <button
+                          className="icon-btn danger"
+                          onClick={() => { setDelId(it.id); setVarItem(null); setItemEdit(null); }}
+                          disabled={savingItem}
+                          aria-label="Удалить товар"
+                          title="Удалить товар"
+                        >
+                          <Icon name="trash" size={16} />
+                        </button>
+                      </span>
                     </div>
+
+                    {itemEdit?.original.id === it.id && (
+                      <form className="card stack mt-3" onSubmit={saveItem}>
+                        <label className="field">
+                          <span>Название</span>
+                          <input
+                            className="input"
+                            value={itemEdit.name}
+                            onChange={(e) => setItemEdit({ ...itemEdit, name: e.target.value })}
+                            maxLength={200}
+                            required
+                            autoFocus
+                            disabled={savingItem}
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Порог, {it.unit_display}</span>
+                          <input
+                            className="input"
+                            inputMode="decimal"
+                            value={itemEdit.threshold}
+                            onChange={(e) => setItemEdit({ ...itemEdit, threshold: decimalInput(e.target.value) })}
+                            placeholder="Без порога"
+                            disabled={savingItem}
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Остаток, {it.unit_display}</span>
+                          <input
+                            className="input"
+                            inputMode="decimal"
+                            value={itemEdit.quantity}
+                            onChange={(e) => setItemEdit({ ...itemEdit, quantity: decimalInput(e.target.value) })}
+                            disabled={savingItem}
+                          />
+                        </label>
+                        <div className="wrap">
+                          <button className="btn sm" type="submit" disabled={savingItem}>Сохранить</button>
+                          <button className="btn sm ghost" type="button" disabled={savingItem} onClick={() => setItemEdit(null)}>Отмена</button>
+                        </div>
+                      </form>
+                    )}
 
                     {delId === it.id && (
                       <div className="row indent">
