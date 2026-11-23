@@ -1,5 +1,7 @@
+import EvotorConnection from "./EvotorConnection";
+import { type CloudSettings } from "../counter/EvotorCloud";
 import { useEffect, useState } from "react";
-import { del, get, post, put, ApiError } from "../../api";
+import { del, get, patch, post, put, ApiError } from "../../api";
 import Icon from "../../components/Icon";
 import { useToast } from "../../components/ui/Toast";
 
@@ -41,9 +43,17 @@ const when = (iso: string) =>
   new Date(iso).toLocaleString("ru", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
 
 const NONE = "none";
+const EVOTOR = "evotor_cloud";
 
 export default function Kassa() {
   const notify = useToast();
+  const [cloudSettings, setCloudSettings] = useState<CloudSettings | null>(null);
+  const cloudAvailable = cloudSettings !== null;
+  const [prepay, setPrepay] = useState(true);
+  const [counter, setCounter] = useState(false);
+  const [timingBusy, setTimingBusy] = useState(false);
+  const [cloudError, setCloudError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [state, setState] = useState<State | null>(null);
   const [provider, setProvider] = useState(NONE);
   const [values, setValues] = useState<Record<string, string>>({});
@@ -51,9 +61,20 @@ export default function Kassa() {
   const [confirmWipe, setConfirmWipe] = useState(false);
 
   useEffect(() => {
-    get<State>("/kassa/")
-      .then(apply)
-      .catch(() => {});
+    let disposed = false;
+    Promise.all([get<State>("/kassa/"), get<{ prepay_required: boolean; service_mode: string }>("/site/")])
+      .then(([next, site]) => {
+        if (disposed) return;
+        setPrepay(site.prepay_required); setCounter(site.service_mode === "counter");
+        apply(next);
+      })
+      .catch(e => { if (!disposed) setLoadError(e instanceof Error ? e.message : "Не удалось загрузить настройки кассы"); });
+    post<CloudSettings>("/evotor-cloud/admin/settings/", {}).then(cloud => {
+      if (!disposed) setCloudSettings(cloud);
+    }).catch(e => {
+      if (!disposed && !(e instanceof ApiError && e.status === 404)) setCloudError("Подключение Эвотора временно недоступно. Общие настройки и другие кассы доступны.");
+    });
+    return () => { disposed = true; };
   }, []);
 
   function apply(next: State) {
@@ -64,7 +85,18 @@ export default function Kassa() {
     setConfirmWipe(false);
   }
 
-  if (!state) return null;
+  async function saveTiming(next: boolean) {
+    setTimingBusy(true);
+    try {
+      await patch("/site/", { prepay_required: next });
+      setPrepay(next);
+      notify("Порядок оплаты сохранён для новых заказов", "ok");
+    } catch (e) { notify(e instanceof Error ? e.message : "Не удалось сохранить", "bad"); }
+    finally { setTimingBusy(false); }
+  }
+
+  if (loadError) return <p className="error" role="alert">{loadError}. Обновите страницу, чтобы повторить загрузку настроек.</p>;
+  if (!state) return <p className="muted" role="status">Загружаю настройки кассы…</p>;
 
   const kind = state.kassas.find((k) => k.name === provider);
   const same = provider === state.provider;
@@ -73,7 +105,8 @@ export default function Kassa() {
   async function save() {
     setSaving(true);
     try {
-      apply(await put<State>("/kassa/", { provider, values }));
+      const next = await put<State>("/kassa/", { provider, values });
+      apply(next);
       notify(provider === NONE ? "Касса отключена" : "Касса подключена", "ok");
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "Не удалось сохранить", "bad");
@@ -98,7 +131,8 @@ export default function Kassa() {
   async function wipe() {
     setSaving(true);
     try {
-      apply(await del<State>("/kassa/"));
+      const next = await del<State>("/kassa/");
+      apply(next);
       notify("Касса отключена, ключ удалён", "ok");
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "Не удалось удалить", "bad");
@@ -109,11 +143,22 @@ export default function Kassa() {
 
   return (
     <>
+      {counter && <div className="card mb-3">
+        <strong className="title">Когда принимать оплату</strong>
+        <div className="wrap mt-2">
+          <button type="button" className={`btn sm ${prepay ? '' : 'ghost'}`} disabled={timingBusy} aria-pressed={prepay} onClick={() => saveTiming(true)}>До приготовления</button>
+          <button type="button" className={`btn sm ${!prepay ? '' : 'ghost'}`} disabled={timingBusy} aria-pressed={!prepay} onClick={() => saveTiming(false)}>После приготовления</button>
+        </div>
+        <p className="muted sm">Общая настройка заведения для Эвотора, aQsi и других касс. Применяется к новым заказам. Уже созданные заказы сохраняют прежний порядок. Выдача — после оплаты.</p>
+      </div>}
       <h2 className="section-title">Касса</h2>
+      {cloudError && <p className="muted" role="status">{cloudError}</p>}
       <div className="card">
         <strong className="title">Оплата на кассе</strong>
         <p className="muted subtitle m-0">
-          {state.ready
+          {provider === EVOTOR
+            ? "Передавайте заказ кнопкой на стойке. После оплаты на Эвоторе подтверждение вернётся в заказ."
+            : state.ready
             ? "Гость видит кнопку «Оплатить на кассе»: заказ уходит на кассу, после оплаты сам идёт в работу"
             : "Подключите кассу — и заказ с сайта будет приходить на неё с позициями, вбивать не придётся"}
         </p>
@@ -130,12 +175,14 @@ export default function Kassa() {
               }}
             >
               <option value={NONE}>Нет — оплату отмечает бариста</option>
+              {(cloudAvailable || provider === EVOTOR) && <option value={EVOTOR}>Эвотор</option>}
               {state.kassas.map((k) => (
                 <option key={k.name} value={k.name}>{k.title}</option>
               ))}
             </select>
           </label>
 
+          {provider === EVOTOR ? (cloudSettings ? <EvotorConnection settings={cloudSettings} onSaved={next => { setCloudSettings(next); setState({ ...state, provider: EVOTOR }); }} /> : <p role="status">Не удалось загрузить подключение Эвотора. Обновите страницу.</p>) : <>
           {kind?.fields.map((f) => (
             <label className="field" key={f.key}>
               <span className="label">
@@ -235,6 +282,7 @@ export default function Kassa() {
                 ? "При сохранении ключ проверяется у кассы — неверный не сохранится."
                 : "Выберите кассу, которая стоит у вас на точке."}
           </p>
+          </>}
         </div>
       </div>
     </>

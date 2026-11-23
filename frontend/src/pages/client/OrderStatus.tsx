@@ -33,10 +33,12 @@ export default function OrderStatus({
   const counter = site?.service_mode === "counter";
   // кнопку оплаты показываем, только если банк подключён, — иначе гость
   // упрётся в ошибку провайдера
-  const canPayOnline = site?.online_payment === true;
+  const evotor = order.evotor_cloud === true;
+  const canPayOnline = !evotor && site?.online_payment === true;
   // «Оплатить на кассе» — заказ уходит на кассу заведения. Только на
   // стойке: в зале счёт на кассу отправляет официант.
-  const canPayKassa = counter && site?.kassa_payment === true;
+  const canPayKassa = !evotor && counter && site?.kassa_payment === true
+    && (order.payment_timing !== "after" || order.is_ready);
   const notify = useToast();
   const [paying, setPaying] = useState(false);
   // Банку нужен чек (54-ФЗ), а куда его прислать, мы не знаем: спрашиваем
@@ -65,7 +67,11 @@ export default function OrderStatus({
     : st === "paid" ? "Заказ закрыт"
     : "Заказ отменён";
   const note =
-    st === "requested" ? `Подойдите к стойке и назовите имя «${order.customer_name}» — официант оформит заказ.`
+    evotor && !order.paid_at && st === "unpaid"
+      ? `Подойдите к баристе и назовите ${order.customer_name ? `имя «${order.customer_name}»` : `номер заказа ${order.id}`} — оплатить можно на кассе. После подтверждения оплаты начнём готовить. Для отмены обратитесь к баристе.`
+    : evotor && !order.paid_at && st === "open" && order.is_ready
+      ? "Заказ готов. Подойдите к баристе, оплатите на кассе и заберите заказ."
+    : st === "requested" ? `Подойдите к стойке и назовите имя «${order.customer_name}» — официант оформит заказ.`
     : st === "unpaid"
       ? order.kassa_waiting
         ? `Подойдите к кассе и назовите номер ${order.id} — оплатить можно наличными или картой. Начнём готовить сразу после оплаты.`
@@ -207,7 +213,13 @@ export default function OrderStatus({
           нет: ни другой оплаты, ни бонусов (сумма на кассе уже зафиксирована),
           ни отмены — ушедшего гостя отменяет бариста. Иначе гость, стоящий
           в очереди, не понимает, чего от него ещё хотят. */}
-      {atKassa ? null : (
+      {evotor ? (
+        st === "paid" || st === "cancelled" || st === "refunded" ? (
+          <button className="btn ghost block mt-4" onClick={onForget}>
+            <Icon name="plus" size={18} /> Новый заказ
+          </button>
+        ) : null
+      ) : atKassa ? null : (
         <>
           <GuestBonus order={order} onDone={onReload} />
 

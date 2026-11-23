@@ -1,3 +1,4 @@
+import { useCloudOrders, EvotorCloudOrder, EvotorRefunds } from "./EvotorCloud";
 import RemoveOrderItem from "./RemoveOrderItem";
 import { EvotorLanSettings, EvotorLanOrder, useEvotorPayments } from "./EvotorLan";
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
@@ -58,14 +59,16 @@ export default function Counter() {
     site?.prepay_required === true && (site?.online_payment === true || kassa);
   // С кассой «Ждут оплаты» нужна всегда: туда же встаёт и заказ, который
   // бариста принял на словах, — он тоже оплачивается на кассе.
-  const waiting = prepay || kassa;
+  const cloudOrders = useCloudOrders(true, () => reload());
+  const cloudEnabled = cloudOrders.connected === true;
+  const waiting = prepay || kassa || cloudEnabled;
   const { orders, setOrders, highlight, reload } = useLiveOrders(
     waiting ? "/orders/?status=open&with_unpaid=1" : "/orders/?status=open",
     // Сигнал — на оплаченный заказ, а не на оформленный: у окна один
     // человек, и звать его к кофемашине надо, когда пришли деньги.
     { alertWhen: useCallback((o: Order) => o.status !== "unpaid", []) }
   );
-  const evotorPaymentMessage = useEvotorPayments(site?.evotor_lan_payment === true, reload);
+  const evotorPaymentMessage = useEvotorPayments(!cloudEnabled && site?.evotor_lan_payment === true, reload);
   const [busy, setBusy] = useState<number | null>(null);
   const [payFor, setPayFor] = useState<number | null>(null);
   const [cashFor, setCashFor] = useState<number | null>(null);
@@ -278,14 +281,14 @@ export default function Counter() {
   if (composing) {
     return (
       <Compose
-        // Стойка с кассой: сперва оплата, потом готовим — поэтому и кнопка
-        // говорит, что будет дальше.
-        submitLabel={kassa ? "На оплату" : undefined}
+        // The server snapshots the current venue policy when creating the order.
+        // Another tablet may have changed it since this screen was opened.
+        submitLabel="Создать заказ"
         // Гость с бонусами — до создания заказа: на кассу заказ уходит
         // сразу, и списание после касса бы уже не увидела.
         checkout={
           bonusOn
-            ? { label: kassa ? "На кассу" : "Отправить", canRedeem: !!site?.bonus_redeem_waiter }
+            ? { label: "Создать заказ", canRedeem: !!site?.bonus_redeem_waiter }
             : undefined
         }
         onCreated={(created) => {
@@ -295,7 +298,7 @@ export default function Counter() {
             // оплаты открылся бы на пустом месте и тут же закрылся.
             setOrders((os) => [...os.filter((o) => o.id !== created.id), created]);
             lastPaying.current = created;
-            setPayingId(created.id);
+            if (!created.evotor_cloud) setPayingId(created.id);
           }
           reload();
         }}
@@ -306,7 +309,7 @@ export default function Counter() {
 
   return (
     <>
-      {site?.evotor_lan && <EvotorLanSettings />}
+      {!cloudEnabled && site?.evotor_lan && <EvotorLanSettings />}
       {site?.evotor_lan_payment && evotorPaymentMessage && <p className="muted sm" role="status">{evotorPaymentMessage}</p>}
       {payingId != null && (
         <PayAtKassa
@@ -458,6 +461,7 @@ export default function Counter() {
                   <KassaResync />
                 </div>
               )}
+              {cloudEnabled && col.key === "unpaid" && <EvotorRefunds status={cloudOrders} />}
               <div className="stack loose">
                 {byStage[col.key].map((o) => (
                   <div className={"card" + (highlight.has(o.id) ? " new-order" : "")} key={o.id}>
@@ -476,6 +480,8 @@ export default function Counter() {
                         из {money(o.total)} ₽ · {money(o.bonus_spent)} бонусами
                       </div>
                     )}
+                    {Number(o.evotor_refunded_amount || 0) > 0 && <p className="sm">Возвращено {money(o.evotor_refunded_amount!)} ₽ · учтено на складе</p>}
+                    {o.payment_timing === "after" && !o.paid_at && col.key !== "unpaid" && <span className="badge pending mt-1">Оплата после приготовления</span>}
                     {o.paid_at && col.key !== "unpaid" && (
                       <span className="badge paid mt-1">
                         <Icon name="check" size={13} /> Оплачен
@@ -549,8 +555,9 @@ export default function Counter() {
                     {col.key === "ready" && o.performer_name && (
                       <p className="muted sm m-0">Выполнил: {o.performer_name}</p>
                     )}
-                    {site?.evotor_lan && !o.paid_at && (o.status === "open" || o.status === "unpaid") && <EvotorLanOrder orderId={o.id} />}
-                    {col.key === "unpaid" &&
+                    {(!o.evotor_cloud || o.payment_timing === 'before' || col.key === 'ready') && (cloudEnabled || site?.evotor_lan) && !o.paid_at && (o.status === "open" || o.status === "unpaid") && (cloudEnabled ? <EvotorCloudOrder orderId={o.id} status={cloudOrders} /> : <EvotorLanOrder orderId={o.id} />)}
+                    {col.key === "unpaid" && o.evotor_cloud && <p className="muted sm mt-2">После оплаты на кассе заказ появится в «Новых». Пока подтверждение не пришло, повторно оплачивать не нужно.</p>}
+                    {col.key === "unpaid" && !o.evotor_cloud &&
                       (cashFor === o.id ? (
                         // Друг под другом: колонка доски узкая, и две
                         // кнопки в ряд вылезали за край карточки.
@@ -670,11 +677,12 @@ export default function Counter() {
                     {/* Касса: неоплаченный готовый заказ (заведён до подключения
                         кассы) оплачивается на ней же — ручных «наличными /
                         картой» при кассе нет. */}
-                    {col.key === "ready" && !o.paid_at && kassa &&
+                    {col.key === "ready" && !o.paid_at && !o.evotor_cloud && kassa &&
                       (o.kassa_waiting ? (
-                        <span className="badge pending mt-2">
-                          <Icon name="cash" size={13} /> На кассе · №{o.id}
-                        </span>
+                        <div className="mt-2">
+                          <span className="badge pending"><Icon name="cash" size={13} /> На кассе · №{o.id}</span>
+                          <KassaPaid order={o} onDone={() => reload()} />
+                        </div>
                       ) : (
                         <button
                           className="btn sm block mt-2"
@@ -684,7 +692,7 @@ export default function Counter() {
                           <Icon name="cash" size={16} /> На кассу
                         </button>
                       ))}
-                    {col.key === "ready" && !o.paid_at && !kassa &&
+                    {col.key === "ready" && !o.paid_at && !o.evotor_cloud && !kassa &&
                       (payFor === o.id ? (
                         <div className="stack tight mt-2">
                           <button

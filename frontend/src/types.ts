@@ -240,6 +240,9 @@ export type OrderStatus =
 export type PayMethod = "cash" | "card";
 
 export interface Order {
+  evotor_cloud?: boolean;
+  evotor_refunded_amount?: string;
+  payment_timing?: 'before' | 'after';
   evotor_receipt_sent?: boolean;
   id: number;
   /** Номер для выдачи, обнуляется каждый день. */
