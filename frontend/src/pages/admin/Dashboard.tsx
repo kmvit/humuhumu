@@ -213,6 +213,39 @@ function Top({ data }: { data: Data }) {
   );
 }
 
+const cancellationDate = new Intl.DateTimeFormat("ru", {
+  day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+});
+
+function CancelledItems({ items }: { items: Data["cancelled_items"] }) {
+  return (
+    <details className="card dash-wide">
+      <summary className="title">Отменённые позиции · {items.length}</summary>
+      {items.length === 0 ? (
+        <p className="muted mt-3 m-0">За этот период отмен позиций не было.</p>
+      ) : (
+        <ul className="list stack mt-3 m-0">
+          {items.map((item) => (
+            <li className="rule-top pt-2" key={item.id}>
+              <div className="between">
+                <strong>{item.product_name} × {item.quantity}</strong>
+                <span className="num">
+                  {Number(item.subtotal).toLocaleString("ru", { maximumFractionDigits: 2 })} ₽
+                </span>
+              </div>
+              {item.options_text && <div className="muted sm">{item.options_text}</div>}
+              <div className="muted sm">
+                Заказ №{item.daily_number ?? item.order_id} · {item.cancelled_by} ·{" "}
+                <time dateTime={item.cancelled_at}>{cancellationDate.format(new Date(item.cancelled_at))}</time>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </details>
+  );
+}
+
 const ATTENTION_ICON: Record<string, IconName> = {
   license: "lock",
   paused: "lock",
@@ -339,6 +372,7 @@ export default function Dashboard() {
           </div>
           <Channels t={cur} />
           <Top data={shown} />
+          <CancelledItems items={shown.cancelled_items ?? []} />
         </div>
       )}
     </>

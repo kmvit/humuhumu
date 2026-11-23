@@ -1337,3 +1337,22 @@ h1, h2, h3 { font-family: var(--font-display); color: var(--fg); margin: 0; font
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
   .card.hover:hover, .btn:hover { transform: none; }
 }
+
+/* Удаление позиции: тихое действие справа, подтверждение — по нажатию. */
+.counter-order-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 12px; }
+.counter-order-item-copy { display: flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+.order-item-remove { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 10px; color: var(--muted); background: transparent; cursor: pointer; transition: color 150ms, background 150ms; }
+.order-item-remove:hover, .order-item-remove.is-open { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.order-item-remove:focus-visible, .order-item-confirm button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.order-item-confirm { grid-column: 1 / -1; padding: 14px 16px; margin: 4px 0 8px; border: 1px solid var(--border); border-radius: 12px; background: color-mix(in srgb, var(--fg) 3%, var(--surface)); }
+.order-item-confirm-title { font-size: 14px; font-weight: 600; }
+.order-item-confirm-detail { margin: 4px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.order-item-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.order-item-confirm-actions button { min-height: 44px; padding: 0 16px; border-radius: 8px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.order-item-keep { color: var(--fg); background: transparent; border: 1px solid var(--rule); }
+.order-item-delete { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent); }
+.order-item-keep:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.order-item-delete:hover { background: color-mix(in srgb, var(--danger) 20%, transparent); }
+.order-item-confirm-error { color: var(--danger); font-size: 13px; line-height: 1.5; margin: 10px 0; }
+.order-item-confirm button:disabled, .order-item-remove:disabled { opacity: 0.5; cursor: wait; }
+@media (prefers-reduced-motion: reduce) { .order-item-remove { transition: none; } }

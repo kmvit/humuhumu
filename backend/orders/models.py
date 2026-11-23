@@ -267,6 +267,18 @@ class OrderItem(TenantModel):
     def __str__(self):
         return f"{self.variant} × {self.quantity}"
 
+class OrderItemCancellation(TenantModel):
+    """Снимок отменённой позиции для истории, включая выбранные опции и цену."""
+
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="item_cancellations")
+    product_name = models.TextField()
+    options_text = models.TextField(blank=True)
+    quantity = models.PositiveIntegerField()
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2)
+    cancelled_by = models.CharField(max_length=255)
+    cancelled_at = models.DateTimeField(db_index=True)
+
+
 class OrderItemModifier(TenantModel):
     """Выбранная опция в позиции заказа — снимком.
 

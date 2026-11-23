@@ -16,7 +16,7 @@ from inventory.services import return_order_item, write_off_order_item
 from users.models import User
 from users.permissions import IsAdminRole, IsBarOrAdmin, IsCookOrAdmin, IsWaiterOrAdmin
 
-from .models import Order, OrderItem, Table
+from .models import Order, OrderItem, OrderItemCancellation, Table
 from .serializers import (
     ClientOrderSerializer,
     OrderCreateSerializer,
@@ -404,6 +404,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         return Response(OrderSerializer(order).data)
 
     @action(detail=False, methods=["post"], url_path="pay_at_kassa")
+    @transaction.atomic
     def pay_at_kassa(self, request):
         """Гость выбирает «Оплатить на кассе»: заказ уходит на кассу заведения.
 
@@ -427,6 +428,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
+            order = self._lock_order_for_payment_or_item_edit(order.pk)
             start_terminal_payment(order)
         except ProviderRefused:
             # Причину кассы («не приняла API-ключ») гостю не показываем —
@@ -484,6 +486,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["post"])
+    @transaction.atomic
     def prepaid(self, request, pk=None):
         """Гость заплатил на кассе за заказ, который ждал оплаты.
 
@@ -491,7 +494,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         наличными: заказ у них уже оформлен по QR, а принять деньги и
         пустить его в работу некому.
         """
-        order = self.get_object()
+        order = self._lock_order_for_payment_or_item_edit(self.get_object().pk)
         try:
             record_prepayment(order, self._pay_method(request), user=request.user)
         except PaymentError as e:
@@ -976,34 +979,91 @@ class OrderViewSet(viewsets.ModelViewSet):
         order = self.get_queryset().get(pk=order.pk)
         return Response(OrderSerializer(order).data)
 
+    @staticmethod
+    def _lock_order_for_payment_or_item_edit(order_id):
+        # Подтверждение кассы блокирует платёж перед обновлением заказа.
+        list(Payment.objects.select_for_update().filter(
+            order_id=order_id, purpose=Payment.Purpose.ORDER, status=Payment.Status.PENDING,
+        ).order_by("pk").values_list("pk", flat=True))
+        return Order.objects.select_for_update().get(pk=order_id)
+
+    @staticmethod
+    def _prepare_item_edit(request, order, *, counter):
+        from django.conf import settings
+        from payments.models import EvotorLanTransfer
+        from payments.services import pending_kassa_payments, withdraw_from_kassa
+
+        transfer = EvotorLanTransfer.objects.filter(order=order).first()
+        cloud = bool(transfer and transfer.payload.get("transport") == "cloud_demo")
+        lan_enabled = request.get_host().split(":")[0].lower() in settings.EVOTOR_LAN_HOSTS
+        if transfer and ((cloud and "positions" in transfer.payload) or (lan_enabled and not cloud)):
+            raise PaymentError("Заказ передан в Эвотор. Сначала разберите открытый чек на кассе.")
+
+        waiting = pending_kassa_payments(order)
+        on_kassa = waiting.exists()
+        cloud_reserved = cloud and transfer.payload.get("lifecycle") is True
+        counter_awaiting = counter and order.status == Order.Status.AWAITING
+        if order.paid_at or not (
+            order.status == Order.Status.OPEN
+            or (counter and order.status == Order.Status.UNPAID)
+            or (counter_awaiting and (cloud_reserved or on_kassa))
+        ):
+            raise PaymentError("Состав можно менять только до оплаты открытого заказа")
+
+        if Payment.objects.filter(
+            order=order, purpose=Payment.Purpose.ORDER, status=Payment.Status.PENDING,
+        ).exclude(pk__in=waiting.values("pk")).exists():
+            raise PaymentError("Дождитесь завершения или отмены текущей оплаты")
+        if on_kassa:
+            withdraw_from_kassa(order)
+            if counter_awaiting and not cloud_reserved:
+                order.status = Order.Status.OPEN
+                order.save(update_fields=["status"])
+        return on_kassa
+
+    @staticmethod
+    def _restore_item_edit_kassa(order):
+        try:
+            start_terminal_payment(order)
+        except PaymentError:
+            pass  # заказ остаётся на доске с кнопкой «На кассу»
+
     @action(detail=True, methods=["post"], url_path="add_items")
+    @transaction.atomic
     def add_items(self, request, pk=None):
         """Официант дописывает позиции в открытый заказ (гость дозаказал)."""
-        order = self.get_object()
-        if order.status != Order.Status.OPEN:
-            return Response(
-                {"detail": "Добавлять можно только в открытый заказ"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
         items_ser = OrderItemCreateSerializer(data=request.data.get("items", []), many=True)
         items_ser.is_valid(raise_exception=True)
+        if not items_ser.validated_data:
+            return Response({"detail": "Пустой список позиций"}, status=400)
+        order = self._lock_order_for_payment_or_item_edit(self.get_object().pk)
+        counter = SiteSettings.load().service_mode == SiteSettings.ServiceMode.COUNTER
+        try:
+            on_kassa = self._prepare_item_edit(request, order, counter=counter)
+        except PaymentError as e:
+            return Response({"detail": str(e)}, status=400)
         try:
             append_items(order=order, items=items_ser.validated_data)
         except OrderError as e:
+            if on_kassa:
+                self._restore_item_edit_kassa(order)
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         # новые позиции идут со статусом «новый» — освежаем агрегаты/таймстемпы станций
         order = Order.objects.prefetch_related("items__variant__product__category", "items__modifiers").get(pk=order.pk)
         self._sync_times(order, Category.Station.KITCHEN)
         self._sync_times(order, Category.Station.BAR)
+        if on_kassa:
+            self._restore_item_edit_kassa(order)
         return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["post"])
+    @transaction.atomic
     def remove_item(self, request, pk=None):
-        """Официант убирает позицию из открытого заказа (гость передумал)."""
-        order = self.get_object()
-        if order.status != Order.Status.OPEN:
+        """Убрать позицию из заказа и сохранить отмену для сводки стойки."""
+        order = self._lock_order_for_payment_or_item_edit(self.get_object().pk)
+        if order.paid_at or order.status not in (Order.Status.OPEN, Order.Status.UNPAID, Order.Status.AWAITING):
             return Response(
-                {"detail": "Менять можно только открытый заказ"},
+                {"detail": "Отменять позиции можно только до оплаты заказа"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         item = order.items.filter(id=request.data.get("item_id")).first()
@@ -1011,33 +1071,55 @@ class OrderViewSet(viewsets.ModelViewSet):
             return Response(
                 {"detail": "Позиция не найдена"}, status=status.HTTP_404_NOT_FOUND
             )
-        if self._waiter_locked(request, item):
+        counter = SiteSettings.load().service_mode == SiteSettings.ServiceMode.COUNTER
+        if not counter and self._waiter_locked(request, item):
             code = str(request.data.get("code", "")).strip()
             if not self._check_remove_code(code):
                 return Response(
-                    {"detail": "Кухня/бар уже готовят — нужен код на удаление"},
+                    {"detail": "Кухня или бар уже готовят позицию. Нужен код для удаления."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-        # Если по позиции уже списали склад — возвращаем продукты обратно.
-        return_order_item(item, user=request.user)
-        item.delete()
-        order = Order.objects.prefetch_related("items__variant__product__category", "items__modifiers").get(pk=order.pk)
-        if order.items.exists():
-            order.recalc_total()
-            order.save(update_fields=["total"])
-            # агрегат станций мог измениться — освежаем таймстемпы
-            self._sync_times(order, Category.Station.KITCHEN)
-            self._sync_times(order, Category.Station.BAR)
-        else:
-            from loyalty.services import return_for_order
+        try:
+            on_kassa = self._prepare_item_edit(request, order, counter=counter)
+        except PaymentError as e:
+            return Response({"detail": str(e)}, status=400)
+        # При изменении состава возвращаем списанные бонусы: их можно
+        # применить заново к новой сумме, не оставляя переплаты бонусами.
+        from loyalty.services import return_for_order
 
-            return_for_order(order)  # заказ опустел и отменяется — бонусы назад
+        with transaction.atomic():
+            return_for_order(order)
             order.refresh_from_db()
-            order.total = 0
-            order.status = Order.Status.CANCELLED
-            order.closed_by = request.user
-            order.closed_at = timezone.now()
-            order.save(update_fields=["total", "status", "closed_by", "closed_at"])
+            # Если по позиции уже списали склад — возвращаем продукты обратно.
+            return_order_item(item, user=request.user)
+            if counter:
+                OrderItemCancellation.objects.create(
+                    organization_id=order.organization_id,
+                    order=order,
+                    product_name=item.display_name,
+                    options_text=item.options_text,
+                    quantity=item.quantity,
+                    subtotal=item.subtotal,
+                    cancelled_by=request.user.get_username(),
+                    cancelled_at=timezone.now(),
+                )
+            item.delete()
+            order = Order.objects.prefetch_related("items__variant__product__category", "items__modifiers").get(pk=order.pk)
+            if order.items.exists():
+                order.recalc_total()
+                order.save(update_fields=["total"])
+                # агрегат станций мог измениться — освежаем таймстемпы
+                self._sync_times(order, Category.Station.KITCHEN)
+                self._sync_times(order, Category.Station.BAR)
+            else:
+                order.total = 0
+                order.status = Order.Status.CANCELLED
+                order.closed_by = request.user
+                order.closed_at = timezone.now()
+                order.save(update_fields=["total", "status", "closed_by", "closed_at"])
+        if on_kassa and order.status != Order.Status.CANCELLED:
+            self._restore_item_edit_kassa(order)
+        order = self.get_queryset().get(pk=order.pk)
         return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["patch"])
@@ -1127,9 +1209,10 @@ class OrderViewSet(viewsets.ModelViewSet):
         return method if method in Order.PayMethod.values else Order.PayMethod.CASH
 
     @action(detail=True, methods=["post"])
+    @transaction.atomic
     def close(self, request, pk=None):
         """Официант закрывает один заказ (не весь стол), фиксируя способ оплаты."""
-        order = self.get_object()
+        order = self._lock_order_for_payment_or_item_edit(self.get_object().pk)
         if order.status != Order.Status.OPEN:
             return Response(
                 {"detail": "Закрыть можно только открытый заказ"},
@@ -1150,13 +1233,14 @@ class OrderViewSet(viewsets.ModelViewSet):
         return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["post"], url_path="pay_terminal")
+    @transaction.atomic
     def pay_terminal(self, request, pk=None):
         """Официант отправляет счёт на кассу-терминал → заказ «к оплате».
 
         Результат (оплачено/отказ) применяется отдельно: сейчас — дев-ручкой
         pay_result, в бою — вебхуком провайдера (payments.services.apply_payment_result).
         """
-        order = self.get_object()
+        order = self._lock_order_for_payment_or_item_edit(self.get_object().pk)
         method = str(request.data.get("method", Payment.Method.CARD))
         try:
             start_terminal_payment(order, method=method)

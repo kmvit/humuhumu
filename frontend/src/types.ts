@@ -240,6 +240,7 @@ export type OrderStatus =
 export type PayMethod = "cash" | "card";
 
 export interface Order {
+  evotor_receipt_sent?: boolean;
   id: number;
   /** Номер для выдачи, обнуляется каждый день. */
   daily_number: number | null;
@@ -960,6 +961,17 @@ export interface Dashboard {
   // value === null — корзина ещё впереди (будущий час или день)
   series: { at: string; value: string | null; prev: string }[];
   top: { name: string; variant: string; qty: number; sum: string }[];
+  cancelled_items: {
+    id: number;
+    order_id: number;
+    daily_number: number | null;
+    product_name: string;
+    options_text: string;
+    quantity: number;
+    subtotal: string | number;
+    cancelled_by: string;
+    cancelled_at: string;
+  }[];
   in_work: number;
   attention: DashAttention[];
 }

@@ -355,7 +355,11 @@ class AqsiProvider(BaseProvider):
             # Номер, по которому бариста найдёт заказ на кассе. Он же
             # показан гостю и на карточке у баристы.
             "number": str(order.pk),
-            "dateTime": order.created_at.isoformat(),
+            # Each replacement has its own external id and creation time.
+            # Reusing the site's order timestamp with a new id can collide
+            # with aQsi's number/date identity even after DELETE (bonus reprice).
+            # Keep this value stable when retrying the same payment.
+            "dateTime": payment.created_at.isoformat(),
             "shop": self.shop(),
             "comment": (order.customer_name or "Заказ с сайта")[:200],
             # Сумму на кассе не правят: иначе она разойдётся с заказом, и

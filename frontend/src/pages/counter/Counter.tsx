@@ -1,3 +1,4 @@
+import RemoveOrderItem from "./RemoveOrderItem";
 import { EvotorLanSettings, EvotorLanOrder, useEvotorPayments } from "./EvotorLan";
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { get, patch, post, ApiError } from "../../api";
@@ -14,6 +15,12 @@ import KassaPaid from "./KassaPaid";
 
 function money(v: string | number | null | undefined): string {
   return Number(v ?? 0).toLocaleString("ru", { maximumFractionDigits: 2 });
+}
+
+function canEditItems(order: Order): boolean {
+  return !order.paid_at && !order.evotor_receipt_sent
+    && (order.status === "open" || order.status === "unpaid"
+      || (order.status === "awaiting" && order.kassa_waiting));
 }
 
 type Stage = "unpaid" | "new" | "in_progress" | "ready";
@@ -139,11 +146,22 @@ export default function Counter() {
   // Заказ на словах: гость подошёл к окну и назвал позиции. Столов на стойке
   // нет, поэтому Compose открываем без стола — он выдаст номер.
   const [composing, setComposing] = useState(false);
+  const [addFor, setAddFor] = useState<Order | null>(null);
 
   const apply = useCallback(
     (updated: Order) => setOrders((os) => os.map((o) => (o.id === updated.id ? updated : o))),
     [setOrders]
   );
+
+  function itemCancelled(updated: Order) {
+    if (updated.status === "cancelled") {
+      setOrders((os) => os.filter((o) => o.id !== updated.id));
+      if (payingId === updated.id) setPayingId(null);
+    } else {
+      apply(updated);
+    }
+    reload();
+  }
 
   async function move(order: Order, status: "in_progress" | "ready") {
     setBusy(order.id);
@@ -236,6 +254,27 @@ export default function Counter() {
     return map;
   }, [orders]);
 
+  if (addFor) {
+    return (
+      <Compose
+        orderId={addFor.id}
+        orderNumber={addFor.daily_number ?? addFor.id}
+        onCreated={(updated) => {
+          if (updated) {
+            apply(updated);
+            const needsResend = addFor.kassa_waiting && !updated.kassa_waiting;
+            toast(needsResend
+              ? "Позиции добавлены. Отправьте обновлённый заказ на кассу."
+              : "Позиции добавлены, сумма пересчитана");
+          }
+          setAddFor(null);
+          reload();
+        }}
+        onCancel={() => setAddFor(null)}
+      />
+    );
+  }
+
   if (composing) {
     return (
       <Compose
@@ -284,6 +323,8 @@ export default function Counter() {
               />
             ) : null
           }
+          onItemCancelled={itemCancelled}
+          onAddItems={payingOrder && canEditItems(payingOrder) ? setAddFor : undefined}
           busy={busy === payingId}
           onClose={closePaying}
           onResend={sendToKassa}
@@ -452,7 +493,8 @@ export default function Counter() {
                     )}
                     <ul className="stack tight list my-3">
                       {o.items.map((it) => (
-                        <li key={it.id} className="between">
+                        <li key={it.id} className="counter-order-item">
+                          <div className="counter-order-item-copy">
                           <span>
                             {it.product_name} <span className="num muted">× {it.quantity}</span>
                             {it.options_text && (
@@ -460,9 +502,16 @@ export default function Counter() {
                             )}
                           </span>
                           {stations && it.status === "ready" && <span className="badge">Готово</span>}
+                          </div>
+                          {canEditItems(o) && <RemoveOrderItem order={o} item={it} onDone={itemCancelled} />}
                         </li>
                       ))}
                     </ul>
+                    {canEditItems(o) && (
+                      <button className="btn sm ghost block my-2" disabled={busy === o.id} onClick={() => setAddFor(o)}>
+                        <Icon name="plus" size={16} /> Добавить позицию
+                      </button>
+                    )}
 
                     {performers.length > 1 && col.key !== "ready" && (
                       <select

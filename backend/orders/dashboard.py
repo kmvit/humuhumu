@@ -20,7 +20,7 @@ from django.utils import timezone
 from payments.journal import ONLINE, channel_of
 from payments.models import Payment
 
-from .models import Order, OrderItem
+from .models import Order, OrderItem, OrderItemCancellation
 
 PERIODS = ("today", "week", "month")
 
@@ -206,6 +206,29 @@ def top_items(penalty_table: str, start, end) -> list[dict]:
     ]
 
 
+def cancelled_items(start, end) -> list[dict]:
+    rows = OrderItemCancellation.objects.filter(
+        cancelled_at__gte=start, cancelled_at__lt=end,
+    ).order_by("-cancelled_at", "-id").values(
+        "id", "order_id", "order__daily_number", "product_name", "options_text",
+        "quantity", "subtotal", "cancelled_by", "cancelled_at",
+    )
+    return [
+        {
+            "id": row["id"],
+            "order_id": row["order_id"],
+            "daily_number": row["order__daily_number"],
+            "product_name": row["product_name"],
+            "options_text": row["options_text"],
+            "quantity": row["quantity"],
+            "subtotal": row["subtotal"],
+            "cancelled_by": row["cancelled_by"],
+            "cancelled_at": timezone.localtime(row["cancelled_at"]).isoformat(),
+        }
+        for row in rows
+    ]
+
+
 def attention(now: datetime, feats) -> list[dict]:
     """Что владельцу стоит сделать прямо сейчас. Пусто — всё в порядке.
 
@@ -298,6 +321,7 @@ def summary(period: str, now: datetime | None = None) -> dict:
         "previous": totals(penalty, prev_start, prev_end),
         "series": series(penalty, period, start, end, prev_start, prev_end),
         "top": top_items(penalty, start, end),
+        "cancelled_items": cancelled_items(start, end),
         # прямо сейчас, вне периода: сколько заказов готовится
         "in_work": Order.objects.filter(status=Order.Status.OPEN).count(),
         "attention": attention(now, features()),

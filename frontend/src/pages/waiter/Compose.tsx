@@ -16,6 +16,7 @@ import GuestCheckout, { type GuestChoice } from "./GuestCheckout";
 export default function Compose({
   table = "",
   orderId,
+  orderNumber,
   initialGuests = 0,
   submitLabel,
   checkout,
@@ -24,6 +25,7 @@ export default function Compose({
 }: {
   table?: string; // пусто — формат «стойка»: столов нет, заказ зовут по номеру
   orderId?: number; // если задан — дописываем позиции в этот заказ, а не создаём новый
+  orderNumber?: number;
   initialGuests?: number; // сколько именованных гостей уже есть в заказе
   /** Подпись кнопки отправки. Стойка с кассой — «На оплату»: заказ сперва
    *  оплачивают, потом готовят. */
@@ -68,8 +70,8 @@ export default function Compose({
       .finally(() => setLoading(false));
     // Список смены грузим отдельно: без него заказ принимается как прежде,
     // поэтому ошибка здесь не должна мешать работе.
-    get<Performer[]>("/shifts/performers/").then(setPerformers).catch(() => {});
-  }, []);
+    if (!adding) get<Performer[]>("/shifts/performers/").then(setPerformers).catch(() => {});
+  }, [adding]);
 
   const sections = useMemo(() => {
     const all = categories
@@ -164,6 +166,7 @@ export default function Compose({
   }
 
   async function submit(guest: GuestChoice = null) {
+    if (busy) return;
     setBusy(true);
     try {
       const items = Object.entries(cart).map(([k, quantity]) => {
@@ -177,7 +180,7 @@ export default function Compose({
       });
       let created: Order | undefined;
       if (adding) {
-        await post<Order>(`/orders/${orderId}/add_items/`, { items });
+        created = await post<Order>(`/orders/${orderId}/add_items/`, { items });
       } else {
         created = await post<Order>("/orders/", {
           items,
@@ -198,9 +201,9 @@ export default function Compose({
     <>
       <div className="between">
         <h1 className="h1">
-          {adding ? `Заказ №${orderId}` : atTable ? `Стол ${table}` : "Новый заказ"}
+          {adding ? `Заказ №${orderNumber ?? orderId}` : atTable ? `Стол ${table}` : "Новый заказ"}
         </h1>
-        <button className="btn sm ghost" onClick={onCancel}>Назад</button>
+        <button className="btn sm ghost" disabled={busy} onClick={onCancel}>Назад</button>
       </div>
       <p className="muted subtitle">
         {adding

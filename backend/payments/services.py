@@ -517,7 +517,7 @@ def withdraw_from_kassa(order: Order) -> None:
         if payment.status != Payment.Status.PENDING:
             order.refresh_from_db()
             if order.paid_at:
-                raise PaymentError("Заказ уже оплачен на кассе — бонусы к нему не применить")
+                raise PaymentError("Заказ уже оплачен на кассе. Сумму больше нельзя изменить.")
             continue
         try:
             get_provider(payment.provider).cancel(payment)
@@ -647,7 +647,9 @@ def _start_online_payment(order: Order, *, return_url: str) -> tuple[Payment, st
     зависший в «к оплате», официант закрыть не сможет. Статус меняется
     только по факту оплаты — в apply_payment_result.
     """
-    if order.status not in ONLINE_PAYABLE:
+    # Состав мог измениться, пока гость вводил контакт для чека.
+    order = Order.objects.select_for_update().get(pk=order.pk)
+    if order.status not in ONLINE_PAYABLE or order.paid_at:
         raise PaymentError("Оплатить можно только незакрытый заказ")
 
     # Выключатель владельца проверяем и здесь, а не только прячем кнопку:

@@ -35,6 +35,10 @@ class FakeAqsi:
     def __init__(self):
         self.shops = [{"id": "shop-1", "name": "Монти"}]
         self.orders: dict[str, dict] = {}
+        # Regression model for the uniqueness refusal seen after DELETE:
+        # deleting an order must not free its external identity for another id.
+        # Account/external_system are fixed in this fake.
+        self.identities: dict[tuple[str, str], str] = {}
         self.calls: list[tuple[str, str]] = []
         self.key_ok = True
 
@@ -60,6 +64,14 @@ class FakeAqsi:
         if method == "GET" and path == "/v2/Shops/list":
             return httpx.Response(200, json=self.shops, request=request)
         if method == "POST" and path == "/v2/Orders/simple":
+            identity = (json["number"], json["dateTime"])
+            previous = self.identities.get(identity)
+            if previous is not None and previous != json["id"]:
+                return httpx.Response(400, json={"errors": [
+                    "account_id must be unique", "number must be unique",
+                    "external_system must be unique", "date_time must be unique",
+                ]}, request=request)
+            self.identities[identity] = json["id"]
             self.orders[json["id"]] = {**json, "status": "Отложен", "receipts": []}
             return httpx.Response(201, json={"guid": json["id"]}, request=request)
         order_id = path.rsplit("/", 1)[1]
@@ -181,12 +193,18 @@ class PayAtKassaTests(KassaBase):
         """Сумма изменилась — прежний заказ снимаем, иначе кассир возьмёт старую."""
         order = self.place()
         self.to_kassa(order)
+        original = self.kassa_order(order)
         order.bonus_spent = Decimal("40")
         order.save()
-        self.to_kassa(order)
+        response = self.to_kassa(order)
+        self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(len(self.aqsi.orders), 1)
         live = Payment.objects.get(order=order, status=Payment.Status.PENDING)
         self.assertEqual(live.amount, Decimal("440"))
+        sent = self.aqsi.orders[live.external_id]
+        self.assertEqual(sent["number"], original["number"])
+        self.assertNotEqual(sent["dateTime"], original["dateTime"])
+        self.assertNotEqual(sent["id"], original["id"])
 
     def test_kassa_unavailable_is_honest(self):
         site = SiteSettings.load()
@@ -462,6 +480,58 @@ class BaristaOrderKassaTests(KassaBase):
         # Номер выдачи — только после оплаты, как у заказа с сайта.
         self.assertIsNone(response.data["daily_number"])
         self.assertEqual(len(self.aqsi.orders), 1)
+
+    def test_adding_to_order_on_kassa_replaces_the_payment(self):
+        order = Order.objects.get(pk=self.create().data["id"])
+        previous = Payment.objects.get(order=order)
+        response = self.client.post(
+            f"/api/orders/{order.pk}/add_items/",
+            {"items": [{"variant": self.variant.pk, "quantity": 1}]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["kassa_waiting"])
+        previous.refresh_from_db()
+        self.assertEqual(previous.status, Payment.Status.CANCELLED)
+        current = Payment.objects.get(order=order, status=Payment.Status.PENDING)
+        self.assertEqual(current.amount, previous.amount + self.variant.price)
+        self.assertEqual(set(self.aqsi.orders), {current.external_id})
+
+    def test_adding_to_order_just_paid_on_kassa_is_refused(self):
+        order = Order.objects.get(pk=self.create().data["id"])
+        payment = Payment.objects.get(order=order)
+        self.aqsi.paid(payment.external_id)
+        response = self.client.post(
+            f"/api/orders/{order.pk}/add_items/",
+            {"items": [{"variant": self.variant.pk, "quantity": 1}]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        order.refresh_from_db()
+        self.assertIsNotNone(order.paid_at)
+        self.assertEqual(order.items.count(), 1)
+
+    def test_legacy_order_awaiting_kassa_can_be_edited(self):
+        order = Order.objects.create(status=Order.Status.OPEN, total=self.variant.price)
+        first = order.items.create(variant=self.variant, quantity=1, unit_price=self.variant.price)
+        url = f"/api/orders/{order.pk}"
+        sent = self.client.post(f"{url}/pay_terminal/", {})
+        self.assertEqual(sent.data["status"], Order.Status.AWAITING)
+
+        added = self.client.post(f"{url}/add_items/", {
+            "items": [{"variant": self.variant.pk, "quantity": 2}],
+        }, format="json")
+        self.assertEqual(added.status_code, 200, added.data)
+        self.assertEqual(added.data["status"], Order.Status.AWAITING)
+        self.assertTrue(added.data["kassa_waiting"])
+        self.assertEqual(Payment.objects.get(order=order, status=Payment.Status.PENDING).amount, self.variant.price * 3)
+
+        cancelled = self.client.post(f"{url}/remove_item/", {"item_id": first.pk})
+        self.assertEqual(cancelled.status_code, 200, cancelled.data)
+        self.assertTrue(cancelled.data["kassa_waiting"])
+        payment = Payment.objects.get(order=order, status=Payment.Status.PENDING)
+        self.assertEqual(payment.amount, self.variant.price * 2)
+        self.assertEqual(set(self.aqsi.orders), {payment.external_id})
 
     def test_paid_at_kassa_goes_to_work(self):
         order = Order.objects.get(pk=self.create().data["id"])

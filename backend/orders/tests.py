@@ -2,6 +2,7 @@ from datetime import timedelta
 from decimal import Decimal
 from unittest import mock
 
+from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
@@ -18,7 +19,7 @@ from payments.models import Payment
 from payments.services import apply_payment_result
 from users.models import User
 
-from .models import Order, OrderItem
+from .models import Order, OrderItem, OrderItemCancellation
 from .tasks import cancel_stale_unpaid_orders_task
 
 
@@ -360,13 +361,11 @@ class MoveItemsTests(OrderFlowBase):
         self.assertEqual(res.status_code, 404)
 
 
-class RemoveItemCodeTests(OrderFlowBase):
-    """Позицию, которую кухня/бар уже готовят, официант убирает только по
-    коду из настроек (SiteSettings.item_remove_code). Новую позицию —
-    как раньше, свободно.
-    """
-
+class RemoveItemBase(OrderFlowBase):
     def setUp(self):
+        from core.models import Organization
+        if not Organization.objects.exists():
+            Organization.objects.create(name="Тестовая стойка", slug="counter", domain="testserver")
         super().setUp()
         self.set_mode("hall")
         self.auth(self.waiter)
@@ -391,6 +390,10 @@ class RemoveItemCodeTests(OrderFlowBase):
         if code is not None:
             payload["code"] = code
         return self.client.post(f"/api/orders/{order.id}/remove_item/", payload, format="json")
+
+
+class RemoveItemCodeTests(RemoveItemBase):
+    """В зале официант убирает позицию в работе по коду из настроек."""
 
     def test_new_item_removed_without_code(self):
         order = self.create_order()
@@ -436,6 +439,202 @@ class RemoveItemCodeTests(OrderFlowBase):
         self.auth(admin)
         res = self.remove(order, item)
         self.assertEqual(res.status_code, 200)
+
+
+class CounterRemoveItemTests(RemoveItemBase):
+    def setUp(self):
+        super().setUp()
+        self.set_mode("counter")
+
+    def test_barista_cancels_items_without_code_even_if_a_code_is_configured(self):
+        site = SiteSettings.load()
+        site.item_remove_code = "4321"
+        site.save(update_fields=["item_remove_code"])
+        for state in Order.StationStatus.values:
+            with self.subTest(state=state):
+                order = self.create_order()
+                item = order.items.first()
+                item.status = state
+                item.save(update_fields=["status"])
+
+                response = self.remove(order, item)
+
+                self.assertEqual(response.status_code, 200, response.data)
+                self.assertEqual(response.data["status"], Order.Status.CANCELLED)
+                self.assertEqual(order.item_cancellations.get().cancelled_by, "barista")
+
+    def test_unpaid_last_item_cancels_order(self):
+        order = self.create_order()
+        order.status = Order.Status.UNPAID
+        order.save(update_fields=["status"])
+        res = self.remove(order, order.items.first())
+        self.assertEqual(res.status_code, 200)
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.CANCELLED)
+        self.assertEqual(order.total, 0)
+        self.assertEqual(order.item_cancellations.get().product_name, "Латте")
+
+    def test_removing_one_line_recalculates_total(self):
+        order = self.create_order()
+        item = order.items.first()
+        item.pk = None
+        item.quantity = 2
+        item.save()
+        res = self.remove(order, item)
+        self.assertEqual(res.status_code, 200)
+        order.refresh_from_db()
+        self.assertEqual(order.total, Decimal("240"))
+        self.assertEqual(order.items.count(), 1)
+
+    def test_cancelled_line_is_visible_in_dashboard_once(self):
+        order = self.create_order()
+        item = order.items.first()
+        item.quantity = 2
+        item.save(update_fields=["quantity"])
+        group = ModifierGroup.objects.create(name="Молоко", max_choices=1)
+        modifier = Modifier.objects.create(group=group, name="Овсяное")
+        item.modifiers.create(modifier=modifier, name=modifier.name, price_delta=Decimal("60"))
+        self.assertEqual(self.remove(order, item).status_code, 200)
+        self.assertEqual(self.remove(order, item).status_code, 400)
+        self.assertEqual(OrderItemCancellation.objects.filter(order=order).count(), 1)
+        self.assertEqual(self.client.get("/api/dashboard/").status_code, 403)
+        admin = User.objects.create_user(username="owner", role=User.Role.ADMIN)
+        self.client.force_authenticate(admin)
+        dashboard = self.client.get("/api/dashboard/?period=today")
+        self.assertEqual(dashboard.status_code, 200)
+        [entry] = dashboard.data["cancelled_items"]
+        self.assertEqual(entry["order_id"], order.pk)
+        self.assertEqual(entry["product_name"], "Латте")
+        self.assertEqual(entry["options_text"], "Овсяное")
+        self.assertEqual(entry["quantity"], 2)
+        self.assertEqual(entry["subtotal"], Decimal("600"))
+        self.assertEqual(entry["cancelled_by"], "barista")
+        self.assertEqual(dashboard.data["current"]["revenue"], Decimal("0"))
+
+    def add(self, order):
+        return self.client.post(
+            f"/api/orders/{order.pk}/add_items/",
+            {"items": [{"variant": self.latte_v.pk, "quantity": 2}]},
+            format="json",
+        )
+
+    def test_staff_and_qr_orders_are_editable_without_payment_integration(self):
+        site = SiteSettings.load()
+        site.kassa = SiteSettings.Kassa.NONE
+        site.online_payment_on = False
+        site.prepay_required = True
+        site.save(update_fields=["kassa", "online_payment_on", "prepay_required"])
+
+        for source in ("staff", "qr"):
+            with self.subTest(source=source):
+                if source == "staff":
+                    order = self.create_order()
+                else:
+                    placed = self.place()
+                    self.assertEqual(placed.status_code, 201, placed.data)
+                    order = Order.objects.get(pk=placed.data["id"])
+                self.assertEqual(order.status, Order.Status.OPEN)
+                self.assertIsNotNone(order.daily_number)
+                added = self.add(order)
+                self.assertEqual(added.status_code, 200, added.data)
+                self.assertEqual(added.data["total"], "720.00")
+                cancelled = self.remove(order, order.items.first())
+                self.assertEqual(cancelled.status_code, 200, cancelled.data)
+                self.assertEqual(cancelled.data["total"], "480.00")
+                self.assertTrue(order.item_cancellations.exists())
+                self.assertFalse(Payment.objects.filter(order=order).exists())
+                url = f"/api/orders/{order.pk}"
+                for work_status in ("in_progress", "ready"):
+                    moved = self.client.patch(f"{url}/work_status/", {"status": work_status})
+                    self.assertEqual(moved.status_code, 200, moved.data)
+                closed = self.client.post(f"{url}/close/", {"pay_method": "cash"})
+                self.assertEqual(closed.status_code, 200, closed.data)
+                self.assertEqual(Payment.objects.get(order=order).provider, "manual")
+
+    def test_addition_to_unpaid_order_recalculates_total(self):
+        order = self.create_order()
+        order.status = Order.Status.UNPAID
+        order.save(update_fields=["status"])
+        result = self.add(order)
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.data["status"], Order.Status.UNPAID)
+        self.assertEqual(result.data["total"], "720.00")
+        self.assertEqual(len(result.data["items"]), 2)
+
+    def test_addition_after_ready_reopens_station(self):
+        order = self.create_order()
+        order.items.update(status=Order.StationStatus.READY)
+        order.drinks_ready_at = timezone.now()
+        order.save(update_fields=["drinks_ready_at"])
+        result = self.add(order)
+        self.assertEqual(result.status_code, 200)
+        order.refresh_from_db()
+        self.assertIsNone(order.drinks_ready_at)
+        self.assertEqual(order.items.last().status, Order.StationStatus.NEW)
+
+    def test_paid_order_cannot_be_edited(self):
+        order = self.create_order()
+        order.paid_at = timezone.now()
+        order.save(update_fields=["paid_at"])
+        item = order.items.first()
+        self.assertEqual(self.remove(order, item).status_code, 400)
+        self.assertEqual(self.add(order).status_code, 400)
+        self.assertTrue(OrderItem.objects.filter(pk=item.pk).exists())
+
+    def test_pending_online_payment_keeps_item(self):
+        order = self.create_order()
+        item = order.items.first()
+        Payment.objects.create(order=order, purpose="order", provider="tbank", amount=order.total)
+        self.assertEqual(self.remove(order, item).status_code, 400)
+        self.assertEqual(self.add(order).status_code, 400)
+        self.assertTrue(OrderItem.objects.filter(pk=item.pk).exists())
+
+    @override_settings(EVOTOR_LAN_HOSTS=["testserver"])
+    def test_evotor_draft_keeps_item(self):
+        from payments.models import EvotorLanTransfer
+        order = self.create_order()
+        item = order.items.first()
+        EvotorLanTransfer.objects.create(order=order, payload={})
+        self.assertEqual(self.remove(order, item).status_code, 400)
+        self.assertTrue(OrderItem.objects.filter(pk=item.pk).exists())
+
+    @override_settings(EVOTOR_LAN_HOSTS=["demo.padacha.ru"])
+    def test_old_evotor_draft_does_not_block_when_integration_disabled(self):
+        from payments.models import EvotorLanTransfer
+        order = self.create_order()
+        item = order.items.first()
+        transfer = EvotorLanTransfer.objects.create(order=order, payload={})
+        self.assertEqual(self.remove(order, item).status_code, 200)
+        self.assertFalse(OrderItem.objects.filter(pk=item.pk).exists())
+        self.assertTrue(EvotorLanTransfer.objects.filter(pk=transfer.pk).exists())
+
+    @mock.patch("payments.services.withdraw_from_kassa")
+    @mock.patch("orders.views.start_terminal_payment")
+    @mock.patch("payments.services.pending_kassa_payments")
+    def test_kassa_updated_after_removal(self, pending, start, withdraw):
+        pending.return_value.exists.return_value = True
+        pending.return_value.values.return_value = []
+        order = self.create_order()
+        item = order.items.first()
+        item.pk = None
+        item.save()
+        self.assertEqual(self.remove(order, item).status_code, 200)
+        withdraw.assert_called_once()
+        start.assert_called_once()
+        self.assertEqual(start.call_args.args[0].total, Decimal("240"))
+
+    @mock.patch("payments.services.withdraw_from_kassa")
+    @mock.patch("payments.services.pending_kassa_payments")
+    def test_kassa_failure_keeps_item(self, pending, withdraw):
+        from payments.services import PaymentError
+        pending.return_value.exists.return_value = True
+        pending.return_value.values.return_value = []
+        withdraw.side_effect = PaymentError("Касса недоступна")
+        order = self.create_order()
+        item = order.items.first()
+        self.assertEqual(self.remove(order, item).status_code, 400)
+        self.assertTrue(OrderItem.objects.filter(pk=item.pk).exists())
+
 
 class ModifierOrderTests(APITestCase):
     """Опции в заказе: цена с надбавкой и проверки выбора на сервере."""

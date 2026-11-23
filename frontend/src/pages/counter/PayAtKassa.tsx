@@ -1,3 +1,4 @@
+import RemoveOrderItem from "./RemoveOrderItem";
 import { useEffect, useState, type ReactNode } from "react";
 import Icon from "../../components/Icon";
 import Modal from "../../components/ui/Modal";
@@ -25,9 +26,13 @@ export default function PayAtKassa({
   onCancelOrder,
   bonus,
   paidFallback,
+  onItemCancelled,
+  onAddItems,
 }: {
   /** null — заказа на доске больше нет (отменили, истёк). */
   order: Order | null;
+  onItemCancelled: (order: Order) => void;
+  onAddItems?: (order: Order) => void;
   /** Панель бонусов: гость вспомнил про них у окна — сумму пересчитают. */
   bonus?: ReactNode;
   /** «Оплачено» — если касса сама не подтвердила оплату. */
@@ -85,15 +90,23 @@ export default function PayAtKassa({
           </div>
           <ul className="stack tight list m-0">
             {order.items.map((it) => (
-              <li key={it.id} className="between">
+              <li key={it.id} className="counter-order-item">
+                <div className="counter-order-item-copy">
                 <span>
                   {it.product_name}
                   {it.options_text && <span className="muted sm"> · {it.options_text}</span>}
                 </span>
                 <span className="num muted">× {it.quantity}</span>
+                </div>
+                {onAddItems && <RemoveOrderItem order={order} item={it} onDone={onItemCancelled} />}
               </li>
             ))}
           </ul>
+          {onAddItems && (
+            <button className="btn sm ghost block" disabled={busy} onClick={() => onAddItems(order)}>
+              <Icon name="plus" size={16} /> Добавить позицию
+            </button>
+          )}
 
           {bonus}
 
