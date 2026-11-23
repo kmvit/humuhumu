@@ -45,6 +45,15 @@ const when = (iso: string) =>
 const NONE = "none";
 const EVOTOR = "evotor_cloud";
 
+async function loadCloudSettings() {
+  try {
+    return await post<CloudSettings>("/evotor-cloud/admin/settings/", {});
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null;
+    throw error;
+  }
+}
+
 export default function Kassa() {
   const notify = useToast();
   const [cloudSettings, setCloudSettings] = useState<CloudSettings | null>(null);
@@ -62,18 +71,18 @@ export default function Kassa() {
 
   useEffect(() => {
     let disposed = false;
-    Promise.all([get<State>("/kassa/"), get<{ prepay_required: boolean; service_mode: string }>("/site/")])
-      .then(([next, site]) => {
+    const cloud = loadCloudSettings().catch(() => {
+      if (!disposed) setCloudError("Подключение Эвотора временно недоступно. Общие настройки и другие кассы доступны.");
+      return null;
+    });
+    Promise.all([get<State>("/kassa/"), get<{ prepay_required: boolean; service_mode: string }>("/site/"), cloud])
+      .then(([next, site, link]) => {
         if (disposed) return;
         setPrepay(site.prepay_required); setCounter(site.service_mode === "counter");
-        apply(next);
+        setCloudSettings(link);
+        apply(next.provider === NONE && link?.device_id ? { ...next, provider: EVOTOR } : next);
       })
       .catch(e => { if (!disposed) setLoadError(e instanceof Error ? e.message : "Не удалось загрузить настройки кассы"); });
-    post<CloudSettings>("/evotor-cloud/admin/settings/", {}).then(cloud => {
-      if (!disposed) setCloudSettings(cloud);
-    }).catch(e => {
-      if (!disposed && !(e instanceof ApiError && e.status === 404)) setCloudError("Подключение Эвотора временно недоступно. Общие настройки и другие кассы доступны.");
-    });
     return () => { disposed = true; };
   }, []);
 
@@ -105,6 +114,15 @@ export default function Kassa() {
   async function save() {
     setSaving(true);
     try {
+      if (provider === NONE) {
+        const link = await loadCloudSettings();
+        if (link?.device_id) {
+          const disabled = await post<CloudSettings>("/evotor-cloud/admin/settings-save/", {
+            device_id: "", tax: "", revision: link.revision,
+          });
+          setCloudSettings({ ...link, ...disabled });
+        }
+      }
       const next = await put<State>("/kassa/", { provider, values });
       apply(next);
       notify(provider === NONE ? "Касса отключена" : "Касса подключена", "ok");
