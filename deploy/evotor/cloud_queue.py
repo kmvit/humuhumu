@@ -220,12 +220,19 @@ class Queue:
             db.execute('INSERT OR IGNORE INTO refunds(device,receipt,result,created,venue) VALUES(?,?,?,?,?)', (d['id'], receipt, encoded, now, d['venue']))
             return {'ack': receipt}
         if action == 'next':
+            reply = {'command': None}
+            if b.get('include_order_status') is True:
+                selected = db.execute(
+                    'SELECT 1 FROM venue_settings WHERE venue=? AND device_id=?',
+                    (d['venue'], d['id']),
+                ).fetchone()
+                reply['orders_enabled'] = selected is not None
             db.execute("UPDATE commands SET state='expired' WHERE device=? AND state='queued' AND expires<?", (d['id'], now))
             c = db.execute("SELECT * FROM commands WHERE device=? AND state IN ('queued','received') ORDER BY created LIMIT 1", (d['id'],)).fetchone()
-            if not c:
-                return {'command': None}
-            db.execute("UPDATE commands SET state='received',received=COALESCE(received,?) WHERE id=?", (now, c['id']))
-            return {'command': {'id': c['id'], 'kind': c['kind'], 'test_only': c['kind'] != 'order_receipt', 'payload': json.loads(c['payload']) if c['payload'] else None, 'remaining_seconds': max(0, int(c['expires'] - now))}}
+            if c:
+                db.execute("UPDATE commands SET state='received',received=COALESCE(received,?) WHERE id=?", (now, c['id']))
+                reply['command'] = {'id': c['id'], 'kind': c['kind'], 'test_only': c['kind'] != 'order_receipt', 'payload': json.loads(c['payload']) if c['payload'] else None, 'remaining_seconds': max(0, int(c['expires'] - now))}
+            return reply
         cid = identifier(b.get('id'))
         c = db.execute('SELECT * FROM commands WHERE id=? AND device=?', (cid, d['id'])).fetchone()
         if not c:
